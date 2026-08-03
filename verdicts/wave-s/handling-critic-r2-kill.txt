@@ -1,0 +1,64 @@
+== BASELINE, shipped file
+  entry 23.0 deg | centred 2.35 s | tap 2.98 s | held 0.82 s | 1:HIT 2:HIT 3:HIT
+
+== KILL-CONTROL 1: rSustain aims at rTarget again (round 1's behaviour), drift branch only
+  patched line reads: `: rTarget;   // KILL-CONTROL: ...` (anchor matched, else this threw)
+  entry 23.0 deg | centred 0.59 s | tap 0.58 s | held 0.53 s | 1:MISS 2:MISS 3:HIT
+  hands-off hold 2.35 -> 0.59 s  MECHANISM CONFIRMED
+
+== KILL-CONTROL 2: the drift feed-forward (driftYawAuthority * tyreMoment) deleted
+  entry 23.0 deg | centred 0.88 s | tap 1.14 s | held 0.78 s | 1:MISS 2:HIT 3:HIT
+
+== KILL-CONTROL 3: driftFlick -> 0. Ordering 2 (tap LENGTHENS) must collapse if it is the cause
+  entry 23.0 deg | centred 2.35 s | tap 2.37 s | held 0.68 s | 1:HIT 2:HIT 3:HIT
+  tap-vs-centred margin 0.63 -> 0.02 s
+
+== KILL-CONTROL 4: driftCounterGather -> 1e9 (the gather can never engage). Ordering 3 must break
+  entry 23.0 deg | centred 2.35 s | tap 2.98 s | held 3.44 s | 1:HIT 2:HIT 3:MISS
+
+== KILL-CONTROL 5: driftAngularDamping is claimed to be the unwind rate in 1/s (hold ~ 1/k)
+  theory: half-life = ln(2)/k, so the hold should scale as 1/k. Comment at physics.js:343
+  claims 0.24 / 0.30 / 0.60 -> 2.35 / 1.97 / 1.57 s; the verdict's change list says 0.48, not 0.60.
+  k=0.12: hold 3.92 s   (ln2/k = 5.78 s)
+  k=0.24: hold 2.35 s   (ln2/k = 2.89 s)
+  k=0.30: hold 1.97 s   (ln2/k = 2.31 s)
+  k=0.48: hold 1.34 s   (ln2/k = 1.44 s)
+  k=0.60: hold 1.13 s   (ln2/k = 1.16 s)
+
+== KILL-CONTROL 6: gripUse. The comment at physics.js:209-220 argues for 1.00; the constant is 0.95
+  gripUse 0.85: held lock at 250 km/h -> yaw 28.1-28.7 deg/s, peak slip 5.0 deg, drifting 0%
+    yaw curve 12.5..78 m/s: 51.3 41.9 35.7 32.0 30.0 28.8 28.4 28.1 | monotone non-increasing yes | falloff vMax/peak 0.55
+  gripUse 0.95: held lock at 250 km/h -> yaw 31.4-32.5 deg/s, peak slip 5.5 deg, drifting 0%
+    yaw curve 12.5..78 m/s: 47.6 40.4 35.5 34.0 33.2 32.5 31.9 31.6 | monotone non-increasing yes | falloff vMax/peak 0.66
+  gripUse 1.00: held lock at 250 km/h -> yaw 31.8-32.9 deg/s, peak slip 5.8 deg, drifting 0%
+    yaw curve 12.5..78 m/s: 45.4 39.6 35.2 34.1 33.7 33.2 33.0 32.8 | monotone non-increasing yes | falloff vMax/peak 0.72
+
+== KILL-CONTROL 7: put the front-axle bug BACK (fxFront gets 1 - driveRear again)
+  80 km/h, 2 s of W+lock+e-brake: fixed -71% | bug restored 35%
+  130 km/h, 2 s of W+lock+e-brake: fixed -52% | bug restored 13%
+  250 km/h, 2 s of W+lock+e-brake: fixed -44% | bug restored -26%
+
+== KILL-CONTROL 8: the collision. hitNormalSpeed back to 12, and the shunt reverted separately
+  shipped                : 3deg 94% | 10deg 78% | 20deg 55% | 45deg 26% | 90deg 0%
+  hitNormalSpeed 12      : 3deg 90% | 10deg 39% | 20deg 36% | 45deg 26% | 90deg 0%
+  round-1 shunt reverted : 3deg 94% | 10deg 79% | 20deg 58% | 45deg 38% | 90deg 38%
+
+== KILL-CONTROL 9: driftTapSlip -> 0 (the brake tap stops COMMANDING a slip angle)
+  100 km/h  shipped: armed true, peak 10.0 deg, held 1.18 s  |  tap command off: armed true, peak 8.7 deg, held 0.40 s
+  130 km/h  shipped: armed true, peak 9.6 deg, held 1.13 s  |  tap command off: armed true, peak 8.4 deg, held 0.39 s
+  150 km/h  shipped: armed true, peak 9.7 deg, held 1.10 s  |  tap command off: armed true, peak 8.5 deg, held 0.39 s
+
+== KILL-CONTROL 10/11: driftEnterRatio back to 1.4, and the exit back to rear slip alone
+  shipped                     : 100: armed Y peak 10.0 held 1.18s | 130: armed Y peak 9.6 held 1.13s | 150: armed Y peak 9.7 held 1.10s
+  driftEnterRatio 1.4 (round 1): 100: armed Y peak 11.3 held 1.66s | 130: armed Y peak 11.0 held 1.59s | 150: armed Y peak 10.9 held 1.56s
+  exit on rear slip alone     : 100: armed Y peak 10.0 held 1.18s | 130: armed Y peak 9.6 held 1.13s | 150: armed Y peak 9.7 held 1.10s
+
+== KILL-CONTROL 12: the exit, both halves, separately and together
+  shipped (max(rearSlip,|slipAngle|), exitRatio 0.7): drift held 1.13 s after a 200 ms tap at 130 km/h
+  rear slip only, exitRatio 0.7                    : drift held 1.13 s after a 200 ms tap at 130 km/h
+  max(...), exitRatio 1.0                          : drift held 0.51 s after a 200 ms tap at 130 km/h
+  ROUND 1 EXIT: rear slip only, exitRatio 1.0      : drift held 0.51 s after a 200 ms tap at 130 km/h
+
+== KILL-CONTROL 13: the alternating chain, per beat, shipped vs driftEnterRatio 1.4
+  shipped (enter 1.0): 9.7deg/93% | 15.6deg/50% | 6.6deg/0% | 6.0deg/0% | 6.1deg/0% | 6.1deg/0%   final 139 km/h
+  enter 1.4 (round 1): 11.0deg/87% | 18.1deg/54% | 6.7deg/0% | 6.0deg/0% | 6.0deg/0% | 6.0deg/0%   final 137 km/h

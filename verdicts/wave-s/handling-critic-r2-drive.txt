@@ -1,0 +1,117 @@
+== RENDER SIZE, verbatim from ctx.renderSize()
+  {"w":1280,"h":720,"cssW":1280,"cssH":720,"pixelRatio":1,"devicePixelRatio":1}
+
+== 1. SIGN INVARIANT (automatic FAIL if broken) + BODY ROLL, from world matrices
+  D: displacement . screen-right 55.0 m -> went RIGHT PASS
+     lean 1.139  up.carLeft 0.11861 -> banks AWAY FROM the turn centre PASS
+     body roll: mid 3.50 deg, peak 6.71 deg (round 1: 3.31 deg)
+  A: displacement . screen-right -78.6 m -> went LEFT PASS
+     lean -1.146  up.carLeft -0.11939 -> banks AWAY FROM the turn centre PASS
+     body roll: mid 3.76 deg, peak 7.05 deg (round 1: 3.31 deg)
+
+== 2. THE THREE ORDERINGS, real keys, UNCLAMPED slipAngle, entry = W+A+Space 0.9 s at 145 km/h
+  entry peak 25.6 / 25.6 / 24.7 deg (the three entries must match for the comparison to mean anything)
+  A centred         half-peak 2.22 s | >10 deg 2.85 s | drifting 90% | 118->160 km/h | contact false
+      26 25 23 21 20 18 17 15 14 13 11 10 9 8 7 5 1 0
+  B 0.15 s tap ctr  half-peak 2.72 s | >10 deg 3.38 s | drifting 98% | 117->142 km/h | contact false
+      26 28 23 19 17 14 12 10 8 5
+  C HELD counter    half-peak 0.80 s | >10 deg 0.85 s | drifting 18% | 119->183 km/h | contact false
+      25 26 -3 -3 -4 -4 -4 -4 -5
+  ORDERING 1, persists centred:  2.22 s (round 1: 0.63 s; target >= 2.0 s)
+  ORDERING 2, tap LENGTHENS:     2.72 vs 2.22 HIT   [10 deg bar: 3.38 vs 2.85 HIT]
+  ORDERING 3, held ENDS it:      0.80 vs 2.22 HIT   [10 deg bar: 0.85 vs 2.85 HIT]
+  free-energy check, biggest one-frame GROUND-SPEED gain after entry:
+      centred +1.60 km/h in one frame at t=5.23 s, peak accelG 8.9 m/s^2
+      tap     +2.79 km/h in one frame at t=1.06 s, peak accelG 16.1 m/s^2
+      held    +2.18 km/h in one frame at t=1.08 s, peak accelG 13.0 m/s^2
+
+== 3. CHAIN DRIFT: six beats of "tap brake, turn" through the real keys and the frozen 0.6 cap
+  130 km/h: peak slipAngle 6.2 deg (round 1: 6 deg) | drift-state samples 0% (round 1: 0%) | 128->167 km/h | contact false
+   slip trace: -0 -0 3 3 3 5 -0 -4 -6 2 4 6 -2 -4 -5 2 4 4 1 -4 -3 -1 -0
+
+== 4. ONE 200 ms BRAKE TAP after 0.5 s of load, at 100 / 130 / 150 km/h (brief target 2)
+  100 km/h: armed true at t=0.65 s, held 1.22 s (1.0 s beat) | peak slip 8.4 deg | contact false
+   3 6D 4D 3 3 3
+  130 km/h: armed true at t=0.61 s, held 1.13 s (1.0 s beat) | peak slip 8.8 deg | contact false
+   3 7D 5D 4D 4 4 4 4 4
+  150 km/h: armed true at t=0.63 s, held 1.29 s (1.0 s beat) | peak slip 9.9 deg | contact false
+   4 9D 7D 5D 4D 4 4 4 4
+
+== 5. THE E-BRAKE: monotone in hold time? never accelerates? does it ROTATE the car?
+  (all figures are ground speed = hypot(speed, vLat), i.e. how fast the car is really going)
+  80 km/h: 1s -27% | 2s -71% | 3s -93%  monotone-down YES  ever faster than entry: no
+     slide depth 27/32/32 deg | peak yaw 78/78/105 deg/s vs 53 without | heading in 2 s 112 vs 80 deg without | contact false
+  130 km/h: 1s -20% | 2s -50% | 3s -81%  monotone-down YES  ever faster than entry: no
+     slide depth 27/34/34 deg | peak yaw 64/64/65 deg/s vs 40 without | heading in 2 s 77 vs 68 deg without | contact false
+  200 km/h: 1s -20% | 2s -44% | 3s -67%  monotone-down YES  ever faster than entry: no
+     slide depth 28/35/35 deg | peak yaw 59/59/59 deg/s vs 33 without | heading in 2 s 65 vs 64 deg without | contact false
+  250 km/h: 1s -20% | 2s -44% | 3s -63%  monotone-down YES  ever faster than entry: no
+     slide depth 28/35/35 deg | peak yaw 60/60/60 deg/s vs 32 without | heading in 2 s 63 vs 62 deg without | contact false
+
+== 6. IS THERE A GRIP EDGE? six seconds of held lock at 250 km/h (round 1: dead-flat 28-29 deg/s)
+  throttle held: yaw 32-33 deg/s | peak slipAngle 5.5 deg | drifting 0% | 245->212 km/h | contact false
+   yaw trace: 32 32 32 32 32 32 32 32 32 33
+  lift off: yaw 32-59 deg/s | peak slipAngle 6.3 deg | drifting 0% | 245->82 km/h | contact false
+   yaw trace: 32 34 35 37 39 42 45 48 53 58
+
+== 7. THE CHASE RIG. Does it rotate FURTHER than the car, as the user reported?
+  Three bearings, all from the live page: the physics yaw, the DRAWN nose (carRoot.rotation.y,
+  which is what the player actually sees) and the rig azimuth (camera->car bearing).
+  118 samples with |slip| > 4.6 deg; peak slipAngle 33 deg
+  rig LEADS the physics heading (wrong side) in 0 / 118 samples; max |rig - yaw| 11.6 deg
+  max |rig - DRAWN nose| 5.3 deg  <- this is the readable lag on screen, and main.js:320 already rotates the drawn nose into the slide by s.slip*0.22
+  sample (t, slipAngle, rig-yaw, rig-drawnNose), all deg:
+    0.27  slip 4.6  rig-yaw -6.6  rig-drawn -5.3
+    0.74  slip 21.4  rig-yaw -10.5  rig-drawn -1.9
+    1.18  slip 30.6  rig-yaw -11.0  rig-drawn 1.5
+    1.60  slip 32.1  rig-yaw -10.5  rig-drawn 2.1
+    2.03  slip 27.7  rig-yaw -11.2  rig-drawn 1.4
+    2.41  slip 24.5  rig-yaw -11.6  rig-drawn 0.8
+    2.78  slip 21.8  rig-yaw -11.3  rig-drawn -0.3
+    3.13  slip 19.5  rig-yaw -10.9  rig-drawn -1.0
+    3.46  slip 17.4  rig-yaw -10.6  rig-drawn -1.7
+    3.79  slip 15.5  rig-yaw -10.1  rig-drawn -2.2
+  ORDERING HOLDS: the rig never leads the car.
+
+== 8. BOOST ECONOMY. (a) is there still a passive refill? (b) does an event actually pay?
+  (a) 20 s of held W from an EMPTY bar at 250 km/h: bar 0.0000 -> 0.0000 (round 1: a full bar in 28.6 s, so 20 s should have bought 0.70)
+  (a2) 4 s including a 2 s e-brake slide: bar 0.0000 -> 0.3250 (boostEarnDrift 0.10/s at full angle), drifting 95%
+  (b) setEventSource exists. 20 nearMiss events at intensity 1.0 (boostPerNearMiss 0.060): bar 0.0000 -> 1.0000, state.eventEarn 0.917
+  (b2) malformed payload (null, unknown type, missing amount, a string, a valid check): no throw, bar reached 0.7189 (only the 'check' should pay)
+  (b3) is the join made in the shipped build? traffic.drainEvents() EXISTS, but nothing calls physics.setEventSource() -> UNJOINED
+
+== 9. ONE WALL. Drive into a downtown facade at a shallow angle and at a square one.
+  (36 colliders in the live world)
+  10 deg from the face: normal closing speed 11.7 m/s (hitNormalSpeed is 34, grazeNormalSpeed 2.5 -> severity 0.29 predicted)
+     242 -> 186 km/h (77% kept, impact 0.00), and 3.6 s later 34 km/h
+     state.crashed false; wrecks published (drained every frame, as the routed main.js join will): 1 -> t=3.36 sev=1.00
+  20 deg from the face: normal closing speed 22.8 m/s (hitNormalSpeed is 34, grazeNormalSpeed 2.5 -> severity 0.64 predicted)
+     240 -> 126 km/h (53% kept, impact 0.25), and 3.6 s later 29 km/h
+     state.crashed false; wrecks published (drained every frame, as the routed main.js join will): 1 -> t=3.88 sev=1.00
+  45 deg from the face: normal closing speed 47.2 m/s (hitNormalSpeed is 34, grazeNormalSpeed 2.5 -> severity 1.00 predicted)
+     240 -> 47 km/h (20% kept, impact 0.67), and 3.7 s later 111 km/h
+     state.crashed false; wrecks published (drained every frame, as the routed main.js join will): 1 -> t=1.32 sev=1.00
+  90 deg from the face: normal closing speed 66.9 m/s (hitNormalSpeed is 34, grazeNormalSpeed 2.5 -> severity 1.00 predicted)
+     241 -> 3 km/h (1% kept, impact 0.63), and 3.6 s later 70 km/h
+     state.crashed false; wrecks published (drained every frame, as the routed main.js join will): 1 -> t=1.33 sev=1.00
+
+== 10. THE CHAIN, PER BEAT. Which beat does the builder's 15 deg / 21% actually come from?
+  builder: 0.6 s load then [tap 200, drive 800] x6
+    WHOLE RUN: peak 15.8 deg | drifting 20% | 127->157 km/h | contact false
+    beat 1: peak 9.6 deg, drifting 92%
+    beat 2: peak 15.8 deg, drifting 52%
+    beat 3: peak 6.6 deg, drifting 0%
+    beat 4: peak 6.1 deg, drifting 0%
+    beat 5: peak 6.0 deg, drifting 0%
+    beat 6: peak 6.1 deg, drifting 0%
+  per-beat: [turn 500, tap 200, drive 300] x6
+    WHOLE RUN: peak 15.6 deg | drifting 59% | 128->54 km/h | contact false
+    beat 1: peak 10.8 deg, drifting 47%
+    beat 2: peak 15.3 deg, drifting 78%
+    beat 3: peak 12.1 deg, drifting 47%
+    beat 4: peak 15.6 deg, drifting 88%
+    beat 5: peak 8.8 deg, drifting 78%
+    beat 6: peak 9.4 deg, drifting 45%
+
+== CONSOLE / PAGE ERRORS ACROSS THE WHOLE SESSION
+  NONE
