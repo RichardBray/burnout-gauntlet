@@ -255,54 +255,76 @@ const BoostShader = {
       // ramps from just outside the FOE, so the road beside the car carries 40+ px of streak and
       // the car's sharp edge cuts straight through it.
       float falloff = pow(smoothstep(0.04, 1.05, r), 1.15);
-      // The speed split was (0.55 + 0.45 * uSpeed01), i.e. a 55% kernel at a dead stop. That
-      // constant is a range violation of the same family as the rest of this round's bugs: a
-      // shutter smear is a distance travelled during the exposure, so at uSpeed01 = 0 it is zero,
-      // and 55% of the full kernel is not a defensible floor for it. It matters because uAmount is
-      // driven by max(boostBlend, crash.shutter01), so the crash beat runs this pass at
-      // uSpeed01 = 0 exactly (measured, '--scene crash-cam') where the floor was ALL of the kernel
-      // there: 0.271 * 0.55 * 72 = 10.7 px of directional blur wrapped around every one of
-      // crash.js's debris chips, taking areaMed 44 -> 97 in patch A and bridging neighbours into
-      // fused blobs. 0.30 + 0.70 * uSpeed01 keeps the top of the range identical (both sum to
-      // 1.00, so a full-speed boost is unchanged), costs boost-blur 21% of its kernel at
-      // uSpeed01 = 0.385 (52.1 -> 41.0 px, still above reference/boost-blur-02's 40+ px near-edge
-      // figure in INDEX), and cuts the crash beat 45% to 5.9 px.
+      // ---- THE SPEED SPLIT IS ALREADY EXACTLY RIGHT. DO NOT "FIX" IT. (wave R) --------------
       //
-      // WAVE R: THE ARGUMENT ABOVE IS WRONG ABOUT ITS OWN VARIABLE, and the 0.30 is NOT the lever.
-      // uSpeed01 is set at :1370 as clamp((|speed| - 26) / 66, 0, 1) — an AFFINE map with a 26 m/s
-      // dead zone, not a speed fraction. "at uSpeed01 = 0 a shutter smear is zero" is therefore
-      // false: uSpeed01 = 0 means "at or below 26 m/s", and the crash beat is at 21.1 m/s (probed,
-      // '--scene crash-cam'), moving. Driving the kernel to 0 there would be right by accident and
-      // wrong by construction; a linear-in-speed term still leaves 4.5 px of kernel at that beat,
-      // so no reshaping of this factor can fix the crash damage. The lever is the LENGTH GATE below.
+      // Every wave since N has read the 0.30 as an arbitrary floor and reached for it. Both the
+      // wave-P comment that used to stand here and the wave-Q brief's headline gap argued the same
+      // thing: "a shutter smear is a distance travelled during the exposure, so at uSpeed01 = 0 it
+      // is zero, and a 30% floor is not defensible." That argument is WRONG, and it is wrong for a
+      // reason you can only see by reading the producer rather than this line.
+      //
+      //   boost.js:1425   const spd01 = clamp((Math.abs(speed) - 26) / 66, 0, 1);
+      //
+      // uSpeed01 is NOT a speed fraction. It is an AFFINE map with a 26 m/s dead zone, so
+      // uSpeed01 = 0 means "at or below 26 m/s", NOT "stopped". Inverting it, speed = 26 + 66*s,
+      // and a smear that is genuinely linear in speed, normalised to 1.0 at s = 1 (92 m/s), is
+      //
+      //   (26 + 66*s) / 92  =  0.2826 + 0.7174*s
+      //
+      // against the shipped 0.30 + 0.70*s. Within 6% at s = 0 and exact at s = 1. **The 0.30 IS
+      // the physically correct affine reconstruction of the dead zone, arrived at by accident.**
+      // Driving it to zero would be a range violation in the other direction: it would claim the
+      // car is stationary at 26 m/s.
+      //
+      // So this factor cannot be the lever at either end, and the arithmetic bounds how much is on
+      // the table. Replacing 0.30 + 0.70*s with the exact 0.2826 + 0.7174*s moves the crash beat
+      // (s = 0, uAmount 0.27087) from 5.85 px to 5.51 px, a 6% change. Even the *maximally*
+      // aggressive reading - pretend uSpeed01 really is a speed fraction and use bare uSpeed01 -
+      // only takes the crash beat to 0 while also taking boost-blur 41.0 -> 27.7 px, i.e. it pays
+      // for the crash beat with a third of the scene the pass exists for. The crash-beat damage is
+      // NOT here. It is in the mean at :378-396, and it is fixed by the length gate below.
       float lenPix = uAmount * (0.30 + 0.70 * uSpeed01) * 72.0 * falloff * mask * velo;
 
-      // ---- THE SUB-FEATURE GATE: a mean shorter than what it consumes is pure attenuation -----
+      // ---- THE SUB-FEATURE LENGTH GATE: a mean shorter than what it consumes is pure loss ----
       //
-      // Rule 4, in the spatial domain. A trailing mean of length L over a feature of width w
-      // attenuates that feature's peak to roughly w/L while producing a streak only L long. So the
-      // pass has a band of kernel lengths in which it is ALL cost and NO smear, and both edges of
-      // that band are set by the narrowest, shortest thing in frame rather than chosen:
+      // Rule 4 in the spatial domain. A trailing mean of length L over a feature of width w
+      // attenuates that feature's peak to roughly w/L while producing a streak only L long. So
+      // there is a band of kernel lengths in which this pass is ALL cost and NO smear, and both
+      // edges of that band are SET by the narrowest, shortest thing in frame rather than chosen:
       //
-      //   * lower knee 3.0 px = 2 x the spark sliver's own width (widPx p50 1.426, standing
+      //   * lower knee 3.0 px = 2x the spark sliver's own width (widPx p50 1.426, standing
       //     constraint 2j). At L = 2w the sliver has already lost half its contrast.
       //   * upper knee 12.5 px = the sliver's own LENGTH (lenPx p50 12.52). A smear shorter than
-      //     the object it smears is not a smear; it is a softer copy of the object.
+      //     the object it smears is not a smear, it is a softer copy of the object.
       //
-      // This is the same conclusion the bright-biased branch's gate at :460 reached independently
+      // This is the same conclusion the bright-biased branch's gate at :507 reached independently
       // ("below ~9 px the pk ray and the mean ray cover the same handful of pixels"), applied to
-      // the branch that was actually doing the damage. MEASURED (wave-Q '_debrismeas', patch S,
-      // spark-attributable = visible minus hidden, beauty frames, uAmount 0.27087, uSpeed01 0):
-      // boost LIVE deleted 34% of the spark-attributable blob population and 42% of its contrast,
-      // at lenPix ~5.9 px, where this gate now stands at 0.216.
+      // the branch that was actually doing the damage.
       //
-      // It gates the OUTPUT, not lenPix. Shortening the kernel instead would keep the attenuation
-      // and merely shrink the streak — the wrong half of the trade.
+      // It gates the OUTPUT, not lenPix. Shortening the kernel instead keeps the attenuation and
+      // merely shrinks the streak - the wrong half of the trade.
+      //
+      // MEASURED, paired A/B interleaved A,B,A,B with peer md5 held (wave R; tools/_sparkboost.mjs,
+      // beauty frames, spark-attributable = visible minus hidden, patch S 0.30,0.75,0.42,0.72,
+      // uAmount 0.27087, uSpeed01 0). At lenPix 5.85 px this gate stands at 0.216, and boost LIVE's
+      // retention of the boost-0 spark population improves as follows. It is a real recovery of
+      // roughly 2x on the tail and it is NOT a pass of T3's >= 90% bar; do not read it as one.
+      //   _debrismeas blob count      63% -> 79%   (46/73 -> 56/71)
+      //   _sparkdiff diff-image p99   46% -> 65%   (50.45/109.75 -> 71.57/109.75)
+      //   _sparkdiff pctGE40          32% -> 72%   (0.038/0.119 -> 0.086/0.119)
+      // and the fusion the gate was aimed at is measurably reduced: patch-S areaMed 14 -> 9,
+      // majMed 6.2 -> 4.8, with the blob count on the sparks-visible frame 136 -> 220 because
+      // slivers that were bridged into one component now resolve separately.
+      // _debrismeas meanContrast is quoted here only as a ratio and only because T3 asks for it
+      // (patch-A delta 55% -> 61%); standing constraint 2j retired it as a brightness target.
       //
       // At boost-blur the near tarmac runs lenPix 38.9-41.2 px ('_boostkernel'), so kg is exactly
-      // 1.0 over the entire road and that scene is untouched by construction. It is the sky
-      // (lenPix 2.0), the horizon (1.6) and the viaduct (7.8-8.6) that come back toward sharp,
-      // which is what reference/boost-blur-02 asks for anyway: "at center it is nearly zero".
+      // 1.0 over the entire road and T1/T2 are untouched there BY CONSTRUCTION — verified, not
+      // assumed: A and B agree to the printed digit on P1a/P1b/P1/P2roadL/P6sky, fx and nofx, over
+      // two independent interleaved pairs (T1 ratio 0.394 both legs). What does come
+      // back toward sharp is the sky (lenPix 2.0), the horizon (1.6) and the viaduct (7.8-8.6) -
+      // which is what reference/boost-blur-02's INDEX line asks for anyway: the kernel "scales
+      // with radial distance from the vanishing point ... at center it is nearly zero".
       float kg = smoothstep(3.0, 12.5, lenPix);
 
       if (uDebug > 2.5 && uDebug < 3.5) { gl_FragColor = vec4(vec3(lenPix / 100.0), 1.0); return; }
@@ -495,9 +517,11 @@ const BoostShader = {
       // the plain mean, which is what it was originally for.
       float bb = smoothstep(9.0, 34.0, lenPix) * (0.45 + 0.55 * uSpeed01);
       vec3 blurred = mean + bb * max(pk - mean, vec3(0.0));
-      // The t = 0 tap of the mean loop, i.e. the same pixel with the barrel distortion, the heat
-      // haze and the chromatic split all still applied, and only the SMEAR removed. Gating against
-      // a bare texture2D(tDiffuse, vUv) would make 'kg' a gate on three unrelated effects.
+      // 'kg' (declared at the kernel-length block above) crossfades the whole smear out where the
+      // kernel is shorter than the features it is averaging. The sharp end is the t = 0 tap of the
+      // mean loop, i.e. THIS pixel with the barrel distortion, the heat haze and the chromatic
+      // split all still applied and only the SMEAR removed. Gating against a bare
+      // texture2D(tDiffuse, vUv) would silently make kg a gate on three unrelated effects.
       vec2 co0 = caOff * 0.45;
       vec3 sharp = vec3(texture2D(tDiffuse, uv0 + co0).r,
                         texture2D(tDiffuse, uv0 - co0 * 0.5).g,
