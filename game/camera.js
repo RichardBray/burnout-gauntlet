@@ -92,6 +92,39 @@ const FRAME = {
   pitchChassis: 1.5,
   pitchCrest: 0.55,       // deg per m/s of vertical velocity, raising the aim over crests
   pitchRate: 3.2,         // smoothing rate of the pitch angle itself
+
+  // ---- BOOST ONSET (wave S) ---------------------------------------------------------------
+  // WHAT IS SOURCED AND WHAT IS NOT, stated plainly because it matters here more than anywhere
+  // else in this file. docs/BURNOUT-HANDLING.md section 5 marks every boost-camera figure
+  // `NOT FOUND`: no source publishes Paradise's fov push, pull-back, shake or chromatic edge, and
+  // the research agent's own attempt to measure it off footage was retracted as confounded (the
+  // A/B frames differed in speed, a collision was in shot, and the red mask picked up sparks).
+  // So there is NO Burnout number to match, and the four constants below are OURS. What IS sourced
+  // is the character: `BoostKickAcceleration`, an initial burst rather than a sustained ceiling
+  // lift, is the felt event of Paradise boost. Everything here is therefore keyed to
+  // `state.boostKick` — physics.js's front-loaded envelope of exactly that burst, set to 1 on the
+  // rising edge of the boost button and decaying with a 0.9 s time constant.
+  //
+  // The design consequence that is NOT arbitrary: these are TRANSIENTS, worth nothing after ~2 s.
+  // The steady boost pose is authored by the scenes and was solved against the reference stills,
+  // and the `boost-blur` preset captures at simTime 8.0 s with boost held from t=0, where
+  // boostKick is e^(-8/0.9) = 1.2e-4. Measured, that preset's rendered fov and standoff are
+  // unchanged to 0.01 deg and 0.01 m by everything below, which is exactly the point: the punch is
+  // felt while driving and cannot move a still.
+  // 5.0 deg, sized by a measurement rather than by taste: the scene's own boost swing arrives
+  // through cfg.fovAttack over ~0.5 s, so for the onset to read as a PUNCH the kick has to deliver
+  // most of the total swing inside the first 100 ms and then hand it back. At 3.5 deg it delivered
+  // 57% of the swing in 100 ms and never exceeded the settled boost lens at all; at 5.0 it
+  // delivers 76% in 100 ms and overshoots the settled value by 1.2 deg before decaying.
+  kickFov: 5.0,
+  kickPunch: 0.55,        // m the lens dives IN at kick = 1, on top of the steady boost standoff
+  kickShake: 0.045,       // added shake amplitude at kick = 1
+  kickLead: 0.30,         // extra fraction of lookAhead at kick = 1
+  // Collision. physics.js now grades a contact by its closing speed along the wall normal and
+  // publishes `state.impact` (0..1, decaying). The old rig could only see `crashed`, which crash.js
+  // sets for a full wreck, so a 100 km/h square hit into a facade that did not trigger the crash
+  // module moved the camera not at all.
+  impactShake: 0.85,
 };
 
 const DEFAULTS = {
@@ -270,6 +303,9 @@ export function createCamRig(camera) {
       const speed = Math.abs(s.speed || 0);
       const speedN = clamp(speed / V_REF, 0, 1.35);
       const boostN = clamp(s.boostBlend || 0, 0, 1);
+      // The BURST, not the level: 1 on the frame boost engages, decaying with physics.js's
+      // boostKickTau. boostBlend is the sustained state and is already handled everywhere below.
+      const kickN = clamp(s.boostKick || 0, 0, 1);
       const slip = s.slip || 0;
       const steer = s.steer || 0;
 
@@ -300,7 +336,18 @@ export function createCamRig(camera) {
         + impact * 1.5);
       if (first) fov = targetFov;
       else fov = damp(fov, targetFov, targetFov > fov ? cfg.fovAttack : cfg.fovRelease, dt);
-      if (Math.abs(camera.fov - fov) > 0.001) { camera.fov = fov; camera.updateProjectionMatrix(); }
+      // The kick rides ON TOP of the damped lens rather than through it, and outside fovMax, for
+      // two reasons. Through the damp it is not a punch: at cfg.fovAttack = 7.5 the lens needs
+      // ~0.3 s to chase a step, by which time the 0.9 s kick envelope has already given a third of
+      // itself back, and the measured overshoot above the held boost lens was only +0.91 deg
+      // arriving 0.82 s late. Applied directly it lands the full +3.5 deg on the frame the button
+      // goes down and then decays exactly as the physics envelope does. Outside fovMax because it
+      // is an overshoot past the scene's authored boost lens, and scenes that already sit near the
+      // 58 deg ceiling (boost-blur renders 56.4) would otherwise lose the punch entirely.
+      const fovRender = fov + kickN * FRAME.kickFov;
+      if (Math.abs(camera.fov - fovRender) > 0.001) {
+        camera.fov = fovRender; camera.updateProjectionMatrix();
+      }
 
       // ---- desired pose --------------------------------------------------------------------
       let pitchTarget = pitch;
@@ -342,10 +389,13 @@ export function createCamRig(camera) {
         // authored standoff is compensated; the small residual acceleration term below is a real
         // dolly-out and is meant to shrink the car slightly, so it is added after the scaling.
         // The rest of the surge is an impulse into the spring velocity, see FRAME.accelImpulse.
-        const zoomComp = Math.tan(cfg.fov * 0.5 * DEG) / Math.tan(fov * 0.5 * DEG);
+        const zoomComp = Math.tan(cfg.fov * 0.5 * DEG) / Math.tan(fovRender * 0.5 * DEG);
+        // The onset punch is a metre-denominated dive on top of the authored standoff, so it
+        // survives the counter-zoom above (which only compensates the authored term) and reads as
+        // the lens lunging at the car for the length of the burst.
         const dist = cfg.distance * FRAME.distScale * zoomComp
           * (1 + speedN * FRAME.distSpeed + boostN * FRAME.distBoost)
-          + accel * FRAME.distAccel;
+          + accel * FRAME.distAccel - kickN * FRAME.kickPunch;
         const hgt = Math.max(cfg.minHeight, cfg.height * FRAME.heightScale
           * (1 - speedN * FRAME.heightDroop) + boostN * 0.05);
         const swing = slip * cfg.slipSwing;
@@ -408,7 +458,7 @@ export function createCamRig(camera) {
       // ---- aim point: leads along the velocity vector and into the steering -----------------
       const lk = chase ? cfg.lookStiffness * (1 + speedN * 0.4) : 20;
       if (chase) {
-        const la = cfg.lookAhead * (1 + speedN * 0.30 + boostN * 0.22);
+        const la = cfg.lookAhead * (1 + speedN * 0.30 + boostN * 0.22 + kickN * FRAME.kickLead);
         // Lead angle: where the car is steering to, not where its nose currently points.
         const lead = steer * cfg.steerLead * (0.35 + 0.65 * smoothstep(0, 0.5, speedN))
           + slip * 0.18;
@@ -445,8 +495,11 @@ export function createCamRig(camera) {
       const jerk = -(s.accelG || 0);
       if (jerk > 70) impact = Math.max(impact, clamp((jerk - 70) / 150, 0, 1));
       if (s.crashed) impact = Math.max(impact, 0.35);
+      // Graded collision, not just the binary wreck flag. See FRAME.impactShake.
+      if (s.impact) impact = Math.max(impact, clamp(s.impact * FRAME.impactShake, 0, 1));
       const amp = clamp(cfg.shake * (0.008 + speedN * speedN * 0.032 + boostN * 0.038
-        + clamp(cfg.surface, 0, 1) * 0.028 + impact * 0.09), 0, 0.085);
+        + kickN * FRAME.kickShake
+        + clamp(cfg.surface, 0, 1) * 0.028 + impact * 0.09), 0, 0.085 + kickN * 0.03);
 
       camFwd.subVectors(look, pos);
       const lookDist = Math.max(0.5, camFwd.length());
