@@ -16,6 +16,9 @@
 //   t.vehicles                    array of {pos, yaw, speed, halfLen, halfWid} for collision
 //   t.reset(heroPos)              respawn the whole population around a new hero position
 //   t.signalPhase(gx, gz)         -> 0 (E-W green) | 1 (N-S green) | -1 (idle), for the lights
+//   t.drainEvents()               drain-on-read boost event queue (see the contract on it below)
+//   t.setPool(n) / t.POOL / t.POOL_CAP      live population ceiling, movable at runtime
+//   t.eventsTotal()               cumulative events since boot, for a harness
 //
 // ---------------------------------------------------------------------------------------
 // THE FOUR MECHANISMS, and why each one is the simple version rather than the clever one.
@@ -41,28 +44,88 @@
 //    reservation table, no per-pair conflict test, no deadlock to unwind.
 //
 // 4. FOLLOWING. IDM (Treiber's intelligent-driver model) against ONE leader, where "leader"
-//    is the nearest of {car ahead in my lane, the stop bar at a red junction, the hero if he
-//    is ahead in my lane}. All three are the same "gap + closing speed" shape, so they are
-//    the same four lines of arithmetic evaluated three times and the lowest acceleration
-//    wins. IDM rather than a hand-rolled brake curve because it cannot telescope: the
-//    (sStar/gap)^2 term diverges as the gap closes, so the gap is a barrier and not a hint.
+//    is the nearest of {any body that geometrically fouls my corridor, the stop bar at a red
+//    junction, the hero if he is ahead in my lane}. All three are the same "gap + closing
+//    speed" shape, so they are the same four lines of arithmetic evaluated three times and
+//    the lowest acceleration wins. IDM rather than a hand-rolled brake curve because it
+//    cannot telescope: the (sStar/gap)^2 term diverges as the gap closes, so the gap is a
+//    barrier and not a hint. The first clause was a same-line/same-lane KEY MATCH in round 1
+//    and is now geometric, which is what lets the junction signal be given a watchdog: a body
+//    stalled across a box is an obstacle in its own right and not only a fact about the signal.
 
 import * as THREE from 'three';
 import { makeRng, rngRange, rngPick, clamp, damp, makeCanvas, canvasTexture } from './util.js';
 
 // ---- population budget ------------------------------------------------------------------
-// 56 LIVE VEHICLES, against 2667 baked ones. The number is set by what one frame can
-// actually see, not by what fits: down a city street the fog and the next junction close the
-// view at roughly 300 m, and 56 spread over the ~8 road lines that pass within 200 m of the
-// hero, weighted toward the line he is on, puts 20-30 of them in the corridor ahead — about
-// one every 60-80 m of lane, which is denser than Burnout Paradise's own traffic in a typical
-// downtown shot. Raising it buys vehicles behind the camera.
-const POOL = 56;
+// 30 LIVE VEHICLES. The number is a PLAYED decision, re-derived in
+// `verdicts/wave-s/traffic-r2.md` section 10, and it replaces two earlier ones:
+//
+//   56  (round 1) reasoned from what one frame can SEE. That is the wrong quantity — it
+//       counts vehicles behind the camera and vehicles the fog has already eaten, and at 56
+//       the hero passed a car every 40 m of highway, which reads as a jam and not as traffic.
+//   22  (inherited, uncommitted, unmeasured) was the user's "cut the count hard" applied by
+//       eye. Direction right, and process rule 2 says an unmeasured inherited edit is
+//       justified or reverted, never inherited silently.
+//
+// The quantity I set it by is the CORRIDOR AHEAD: live vehicles inside the hero's forward
+// view cone within 200 m, and the near-miss rate per kilometre that follows from it, because
+// that is what the boost economy is actually paid out of (`drainEvents` below).
+//
+// Measured with `tools/_traffic-r2.mjs`, which sweeps the ceiling inside ONE boot through
+// `setPool()` so all four values share a machine and a code path. Cars in the corridor and
+// near-miss events per kilometre, highway (n=2 at 22 and 30) then city:
+//
+//   POOL   highway ahead / ev-per-km      city ahead / ev-per-km
+//    22        3.8  /  5.8                   2.5  /  3.0
+//    30        5.7  /  9.5                   3.5  /  6.8
+//    40        8.0  / 14.1                   4.3  /  5.4
+//    56       12.3  / 20.3                   6.9  / 11.8
+//
+// 30 is the smallest value that keeps three or more moving cars in the corridor in BOTH
+// scenes: 22 puts 2.5 downtown, which is the empty-city read this comment used to warn about,
+// and 56 puts twelve on an open freeway, which reads as a jam. At 30 the hero earns a near
+// miss every ~1.4 s of highway at 279 km/h and every ~3 s downtown. It is a 46% cut on 56.
+const POOL_CAP = 64;      // instanced CAPACITY. POOL may be moved at runtime, never past this.
+let POOL = 30;
 const SPAWN_R = 300;      // half-length of the along-road window a spawn may land in
-const SPAWN_MIN = 62;     // never pop a car into existence inside this radius of the hero
+const SPAWN_MIN = 62;     // behind or beside the hero this is invisible, so it stays
+// IN THE HERO'S VIEW CONE nothing may appear closer than this. `SPAWN_MIN` alone is a radius
+// and a radius cannot tell "40 m behind the camera" from "63 m dead ahead on an unoccluded
+// six-lane straight" — the traffic critic measured 26 cars materialising inside 120 m of
+// clear view in 40 s of highway, nearest 62.9 m, and that is the whole of that defect.
+const SPAWN_FWD_MIN = 240;
+// cos of the half-angle counted as "in view". ZERO, i.e. the whole half-plane in front of the
+// hero, and it has to be: the CHASE CAMERA sits ~20 m behind the car, so a point 70 m out at 60
+// deg off the car's heading is only ~48 deg off the camera's and lands on screen. A 56 deg gate
+// measured 10 spawns still visible inside 240 m; the half-plane measured none.
+const SPAWN_CONE = 0.0;
 const DESPAWN_R = 345;    // retire outside this; > SPAWN_R so a spawn is never instantly retired
+// A LINE-END retire this close inside the view cone is DEFERRED rather than taken, because
+// the second and third clauses of the retire test ignore the hero completely and the critic
+// watched cars wink out 119-177 m dead ahead as the hero drove at the end of the highway.
+const END_HIDE_R = 260;
+const END_HOLD_MAX = 5.0; // s. Bounded, so a deferred retire can never become a car park.
 const LINE_LAT_MAX = 210; // ignore road lines further sideways than this
 const SPAWN_PER_FRAME = 4;
+
+// ---- lateral behaviour ------------------------------------------------------------------
+const SHY_LAT = 1.2;      // m of shy when the hero comes past from behind
+const EVADE_LAT = 3.2;    // m of shy when the hero comes at me head-on (clamped by the line)
+const OVERTAKE_LAT = 2.6; // m of shy to get round a body that is not going to move
+const OVERTAKE_STALL = 2.0; // s stopped behind that body before I go round it
+const OVERTAKE_HOLD = 4.0;  // s the manoeuvre is held for once armed, so it cannot oscillate
+const LAT_INNER = 1.7;    // m: never come closer than this to the centreline, so two vehicles
+                          // travelling opposite ways can never be inside each other's corridor
+
+// ---- boost event stream ------------------------------------------------------------------
+const NEAR_MISS_R = 3.4;    // m of body-to-body clearance that opens a pass
+const NEAR_MISS_OUT = 1.4;  // m of EXTRA clearance that closes it and fires the event
+const EVENT_SPEED_MIN = 12; // m/s (43 km/h) hero speed floor: a crawl past a car is not an event
+const EVENT_REL_MIN = 8;    // m/s relative speed floor, same reason
+const HERO_HALF_W = 0.95;   // hero body half-width; a pass is a LATERAL event so this is the
+                            // right inflation radius for a point-vs-box clearance
+const CHECK_SHUNT = 2.6;    // m/s-ish lateral shove a traffic check puts on the vehicle
+const EVENT_CAP = 96;       // queue ceiling, so an undrained queue cannot grow without bound
 
 // ---- IDM (Treiber) ----------------------------------------------------------------------
 const IDM_A = 2.6;        // m/s^2 comfortable acceleration
@@ -76,6 +139,15 @@ const BOX_HALF = 12.4;    // half-width of the junction box: road half-width 10 
 const APPROACH = 62;      // register demand for the box from this far back
 const COMMIT = 6.0;       // inside BOX_HALF + this, a vehicle is past the point of stopping
 const GREEN_MIN = 7.0;    // s minimum green before cross demand may take the box
+// s: a watchdog on the occupancy latch, and it is deliberately long. The latch is now armed by
+// MOVING occupancy only (see the demand pass), and a vehicle crossing a 24.8 m box at the city's
+// 12.5-16.5 m/s clears it in under 2 s, so a moving occupant is self-limiting and does not need a
+// tight bound. A tight one is actively harmful: at 3.2 s the phase could be handed to the cross
+// axis while a car was still crawling across the box, and two vehicles from perpendicular axes
+// inside the box at once measured 2.17 m of body-on-body overlap in the parked-in-a-junction
+// repro. What broke the deadlock was never the bound — it is that a STALLED body no longer arms
+// the latch at all, and the geometric leader test is what stops anyone driving into it.
+const OCC_HOLD_MAX = 8.0;
 
 /**
  * Build the axis-aligned road network out of world.js's LAYOUT.
@@ -97,16 +169,25 @@ function buildNetwork(layout) {
   // excuses. It also reads correctly: kerbside lane stopped and loading, inside lane flowing.
   const cityLanes = [2.5];
   const half = layout.roadW / 2;
+  // `latMax` is how far a vehicle may shy from its lane centre. It is NOT the road edge: on a
+  // city street world.js stands its stopped kerbside queue at 7.4 m and parks at 10.5 m, and
+  // those are baked bodies this module cannot see, so a shy of 2.8 m from the 2.5 m lane puts
+  // the far flank at 6.2 m and keeps 0.4 m of daylight to the nearest baked car. The road-edge
+  // clamp (`half - 1.0`) still applies on top and wins on the highway's outer lane.
   for (const c of G) {
-    lines.push({ axis: 0, c, lo: -EX, hi: EX, lanes: cityLanes, junc: true, half, vLo: 12.5, vHi: 16.5 });
-    lines.push({ axis: 1, c, lo: -EX, hi: EX, lanes: cityLanes, junc: true, half, vLo: 12.5, vHi: 16.5 });
+    lines.push({ axis: 0, c, lo: -EX, hi: EX, lanes: cityLanes, junc: true, half, vLo: 12.5, vHi: 16.5, latMax: 2.8 });
+    lines.push({ axis: 1, c, lo: -EX, hi: EX, lanes: cityLanes, junc: true, half, vLo: 12.5, vHi: 16.5, latMax: 2.8 });
   }
   // The highway crosses nothing — it lies at z = -700, clear of the grid's z = -480..480 —
   // so it carries no junction state and all three of its lanes per direction are live. It is
   // also the only road in the map where nothing is parked, so it gets the full width.
+  // lo/hi were -1150/1150 and are now the road's REAL extent: world.js:1139 builds the highway
+  // ribbon from -1200 to 1200, so 1150 put the line end 50 m short of the tarmac and left the
+  // hero (whose own path runs to x = 1000, and who overshoots it past 1150 under boost) staring
+  // at the place cars stop existing.
   lines.push({
-    axis: 0, c: layout.highwayZ, lo: -1150, hi: 1150, lanes: [3, 9, 15],
-    junc: false, half: layout.highwayW / 2, vLo: 25, vHi: 33,
+    axis: 0, c: layout.highwayZ, lo: -1200, hi: 1200, lanes: [3, 9, 15],
+    junc: false, half: layout.highwayW / 2, vLo: 25, vHi: 33, latMax: 3.0,
   });
   return lines;
 }
@@ -168,10 +249,12 @@ export function createTraffic(scene, { rng, layout, blocks = [], roadKit } = {})
     group.add(m);
     return m;
   }
-  const bodyMesh = inst(boxGeo, paintMat, POOL * 2, true);   // sill/slab + roof cap
-  const cabMesh = inst(boxGeo, glassMat, POOL, true);        // glasshouse
-  const trimMesh = inst(boxGeo, trimMat, POOL * 2, false);   // bumpers
-  const wheelMesh = inst(wheelGeo, tyreMat, POOL * 4, false);
+  // Allocated at POOL_CAP, DRAWN at POOL. `applyPool()` below moves every mesh's `count`, so a
+  // smaller pool really is fewer instances submitted and not just more zero-scale matrices.
+  const bodyMesh = inst(boxGeo, paintMat, POOL_CAP * 2, true);   // sill/slab + roof cap
+  const cabMesh = inst(boxGeo, glassMat, POOL_CAP, true);        // glasshouse
+  const trimMesh = inst(boxGeo, trimMat, POOL_CAP * 2, false);   // bumpers
+  const wheelMesh = inst(wheelGeo, tyreMat, POOL_CAP * 4, false);
   bodyMesh.name = 'trafficBody';
 
   const padMat = new THREE.MeshBasicMaterial({
@@ -180,7 +263,7 @@ export function createTraffic(scene, { rng, layout, blocks = [], roadKit } = {})
   });
   const padGeo = new THREE.PlaneGeometry(1, 1);
   padGeo.rotateX(-Math.PI / 2);
-  const padMesh = inst(padGeo, padMat, POOL, false);
+  const padMesh = inst(padGeo, padMat, POOL_CAP, false);
   padMesh.renderOrder = 2;
   padMesh.receiveShadow = false;
 
@@ -188,8 +271,8 @@ export function createTraffic(scene, { rng, layout, blocks = [], roadKit } = {})
   // sources rather than as bright paint. Night only: main.js hands us `tod === 'night'`.
   const tailMat = new THREE.MeshBasicMaterial({ color: 0xff2d14, toneMapped: false });
   const headMat = new THREE.MeshBasicMaterial({ color: 0xfff2d6, toneMapped: false });
-  const tailMesh = inst(boxGeo, tailMat, POOL * 2, false);
-  const headMesh = inst(boxGeo, headMat, POOL * 2, false);
+  const tailMesh = inst(boxGeo, tailMat, POOL_CAP * 2, false);
+  const headMesh = inst(boxGeo, headMat, POOL_CAP * 2, false);
   tailMesh.receiveShadow = false; headMesh.receiveShadow = false;
 
   const dummy = new THREE.Object3D();
@@ -203,11 +286,17 @@ export function createTraffic(scene, { rng, layout, blocks = [], roadKit } = {})
   // repack. Packing the live ones densely would mean rewriting every instanceColor whenever
   // any single vehicle died, which is the more expensive of the two by a wide margin.
   const pool = [];
-  for (let k = 0; k < POOL; k++) {
+  for (let k = 0; k < POOL_CAP; k++) {
     pool.push({
       k, live: false, line: null, dir: 1, lane: 0, s: 0, lat: 0, swerve: 0,
       speed: 0, vDes: 0, van: false, halfLen: 2.4, halfWid: 0.91,
       pos: new THREE.Vector3(), yaw: 0, jIdx: -1, jDist: 1e9, jOk: false,
+      endHold: 0,          // s this vehicle's line-end retire has been deferred for
+      stallT: 0, otT: 0,   // s stopped behind a body that is not moving / overtake left to run
+      shove: 0, shoveT: 0, // lateral impulse from a traffic check, and its remaining life
+      // one open near-miss pass, per slot: min clearance, peak relative speed, whether it
+      // turned into contact, whether the hero was travelling against my lane at the closest point
+      nmOn: false, nmMin: 0, nmRel: 0, nmHit: false, nmOnc: false, ctOn: false,
     });
   }
   const vehicles = [];   // the live subset; same array object every frame, so no per-frame alloc
@@ -218,7 +307,7 @@ export function createTraffic(scene, { rng, layout, blocks = [], roadKit } = {})
   const NJ = G.length;
   const junc = [];
   for (let i = 0; i < NJ * NJ; i++) {
-    junc.push({ owner: -1, heldT: 0, occ: 0, occAxis: -1, dem: [0, 0], imm: [0, 0] });
+    junc.push({ owner: -1, heldT: 0, occT: 0, occ: 0, occStill: 0, occMove: 0, occAxis: -1, dem: [0, 0], imm: [0, 0] });
   }
 
   function progOf(v) { return v.dir * v.s; }
@@ -240,6 +329,28 @@ export function createTraffic(scene, { rng, layout, blocks = [], roadKit } = {})
   // ---- spawn -----------------------------------------------------------------------------
   const _p = new THREE.Vector3();
   const cand = [];
+  // The hero's heading, kept here so both the spawn gate and the retire gate can ask the one
+  // question that matters for pop-in: is this point somewhere the player is looking?
+  // physics.js:381 defines forward as (sin yaw, 0, cos yaw); that is the convention here too.
+  let hfx = 0, hfz = 1, hpx = 0, hpz = 0;
+  // The cone gate is a POP-IN gate, and a whole-scene reset has no pop-in to hide: the entire
+  // frame appears at once. It is also the one moment the hero's heading is not known (main.js
+  // calls reset(pos) with no yaw), so gating there would leave the road ahead permanently
+  // empty on every boot and every press of R.
+  let spawnGate = true;
+
+  /**
+   * Is (x, z) inside the hero's forward view cone AND within `r`? A radius on its own cannot
+   * tell a spawn behind the camera from one dead ahead, which is why round 1's SPAWN_MIN could
+   * not fix highway pop-in at any value that still kept the road populated.
+   */
+  function inHeroView(x, z, r) {
+    const dx = x - hpx, dz = z - hpz;
+    const d = Math.hypot(dx, dz);
+    if (d > r) return false;
+    if (d < 1e-3) return true;
+    return (dx * hfx + dz * hfz) / d > SPAWN_CONE;
+  }
 
   function collectCandidates(hx, hz) {
     cand.length = 0;
@@ -279,11 +390,14 @@ export function createTraffic(scene, { rng, layout, blocks = [], roadKit } = {})
     const pz = L.axis === 0 ? L.c + c.dir * c.lane : s;
     const d = Math.hypot(px - hx, pz - hz);
     if (d < SPAWN_MIN || d > SPAWN_R) return false;
+    // NOT IN PLAIN SIGHT. Behind or beside the hero, SPAWN_MIN is enough; in the cone he is
+    // looking down, nothing may appear closer than SPAWN_FWD_MIN.
+    if (spawnGate && inHeroView(px, pz, SPAWN_FWD_MIN)) return false;
     for (const o of pool) {   // never land on top of another car in the same lane
       if (!o.live || o.line !== L || o.dir !== c.dir || o.lane !== c.lane) continue;
       if (Math.abs(o.s - s) < 26) return false;
     }
-    const slot = pool.find((v) => !v.live);
+    const slot = pool.find((v) => !v.live && v.k < POOL);
     if (!slot) return false;
     slot.live = true;
     slot.line = L; slot.dir = c.dir; slot.lane = c.lane; slot.s = s;
@@ -294,6 +408,8 @@ export function createTraffic(scene, { rng, layout, blocks = [], roadKit } = {})
     slot.halfLen = slot.van ? 2.55 : 2.40;
     slot.halfWid = slot.van ? 0.96 : 0.91;
     slot.jIdx = -1; slot.jDist = 1e9;
+    slot.endHold = 0; slot.stallT = 0; slot.shove = 0; slot.shoveT = 0;
+    slot.nmOn = false; slot.ctOn = false;
     slot.pos.set(px, 0, pz);
     slot.yaw = yawOf(slot);
     const col = rngPick(R, COLORS);
@@ -327,6 +443,39 @@ export function createTraffic(scene, { rng, layout, blocks = [], roadKit } = {})
     const sStar = IDM_S0 + Math.max(0, v * IDM_T + (v * dv) / SQ);
     const g = Math.max(gap, 0.5);
     return IDM_A * (1 - (v / vDes) ** 4 - (sStar / g) ** 2);
+  }
+
+  // ---- the boost event stream -------------------------------------------------------------
+  // Round 1's traffic was scenery, so the boost economy was fake: `physics.boostEarnDanger`
+  // filled the bar off nothing but held throttle and fourteen seconds of lane-kept highway
+  // through traffic produced ZERO events. Paradise has no passive refill at all — every point
+  // of boost is a near miss, an oncoming pass, a traffic check, air, a takedown or a barrel
+  // roll. This queue is the traffic half of that, drain-on-read, and `amount` is deliberately
+  // an INTENSITY and not a boost quantity: what a near miss is WORTH is physics.js's business.
+  const events = [];
+  let eventsTotal = 0;
+
+  function emit(type, amount, x, z, meta) {
+    if (events.length >= EVENT_CAP) events.shift();   // an undrained queue must not grow
+    events.push({ type, amount: clamp(amount, 0, 1), at: { x, z }, meta });
+    eventsTotal++;
+  }
+
+  /**
+   * Close an open pass on `v` and fire its event if it earned one. A pass is scored at its
+   * CLOSEST POINT rather than per frame, so one car passed once is one event however many
+   * frames the hero spent beside it — the alternative pays sixty times for standing still
+   * next to a bus, which is rule 3's failure mode in a boost economy.
+   */
+  function closePass(v) {
+    if (!v.nmOn) return;
+    v.nmOn = false;
+    if (v.nmHit) return;                    // contact already fired a 'check'; not also a near miss
+    if (v.nmRel < EVENT_REL_MIN) return;    // drove past at walking pace relative to it
+    const close = clamp((NEAR_MISS_R - v.nmMin) / NEAR_MISS_R, 0, 1);
+    const fast = clamp((v.nmRel - EVENT_REL_MIN) / 25, 0, 1);
+    emit(v.nmOnc ? 'oncoming' : 'nearMiss', 0.6 * close + 0.4 * fast, v.pos.x, v.pos.z,
+      { clearance: +v.nmMin.toFixed(2), relSpeed: +v.nmRel.toFixed(1) });
   }
 
   // ---- state -----------------------------------------------------------------------------
@@ -414,11 +563,60 @@ export function createTraffic(scene, { rng, layout, blocks = [], roadKit } = {})
     }
   }
 
+  /** Move every mesh's drawn `count` to match POOL. Capacity stays at POOL_CAP. */
+  function applyPool() {
+    bodyMesh.count = POOL * 2;
+    cabMesh.count = POOL;
+    trimMesh.count = POOL * 2;
+    wheelMesh.count = POOL * 4;
+    padMesh.count = POOL;
+    tailMesh.count = night ? POOL * 2 : 0;
+    headMesh.count = night ? POOL * 2 : 0;
+    api.POOL = POOL;
+  }
+
   const api = {
     group,
     vehicles,
     count: 0,
     POOL,
+    POOL_CAP,
+
+    /**
+     * Returns and CLEARS the events accrued since the last call. Never returns null.
+     * Each event: { type, amount, at: {x, z}, meta }
+     *   'nearMiss' | passed within NEAR_MISS_R of a vehicle body above a speed floor
+     *   'oncoming' | ... while travelling against that vehicle's lane direction
+     *   'check'    | hero contact that shunts a vehicle. Whether the hero SURVIVED it is
+     *                physics.js's call, not this module's; a wreck vetoes the award there.
+     * `amount` is a 0..1 INTENSITY (how close / how fast), NOT a boost quantity.
+     *
+     * THE JOIN IS PENDING. The wiring is one line in the FROZEN main.js —
+     * `physics.setEventSource(() => traffic.drainEvents())` — and the session driver adds it
+     * after both halves land. Until then this queue is written, capped and never read in the
+     * shipped path, which is why EVENT_CAP exists.
+     */
+    drainEvents() {
+      if (!events.length) return [];
+      const out = events.slice();
+      events.length = 0;
+      return out;
+    },
+
+    /** Cumulative event count since boot. Observability only; drainEvents does not move it. */
+    eventsTotal() { return eventsTotal; },
+
+    /**
+     * Move the live population ceiling at runtime, so the POOL decision can be A/B'd inside one
+     * boot instead of being argued from a constant. Clamped to POOL_CAP because that is the
+     * instanced capacity the meshes were allocated with.
+     */
+    setPool(n) {
+      POOL = clamp(Math.round(n), 0, POOL_CAP);
+      for (const v of pool) if (v.k >= POOL && v.live) { v.live = false; v.nmOn = false; }
+      applyPool();
+      return POOL;
+    },
 
     /**
      * Live junction phase, so a later piece can drive world.js's traffic-light props from the
@@ -433,15 +631,21 @@ export function createTraffic(scene, { rng, layout, blocks = [], roadKit } = {})
 
     setNight(v) {
       night = !!v;
-      tailMesh.count = night ? POOL * 2 : 0;
-      headMesh.count = night ? POOL * 2 : 0;
+      applyPool();
     },
 
     reset(heroPos) {
-      for (const v of pool) v.live = false;
-      for (const j of junc) { j.owner = -1; j.heldT = 0; j.occ = 0; }
+      for (const v of pool) {
+        v.live = false; v.nmOn = false; v.ctOn = false;
+        v.endHold = 0; v.stallT = 0; v.otT = 0; v.shove = 0; v.shoveT = 0;
+      }
+      for (const j of junc) { j.owner = -1; j.heldT = 0; j.occT = 0; j.occ = 0; }
+      events.length = 0;
       const hx = heroPos ? heroPos.x : 0, hz = heroPos ? heroPos.z : 0;
+      hpx = hx; hpz = hz; hfx = 0; hfz = 1;
+      spawnGate = false;
       fill(hx, hz, POOL);
+      spawnGate = true;
       api.update(0, _hero.set(hx, 0, hz), 0, 0);
     },
 
@@ -450,14 +654,31 @@ export function createTraffic(scene, { rng, layout, blocks = [], roadKit } = {})
       _hero.set(hx, 0, hz);
       const heroFx = Math.sin(heroYaw), heroFz = Math.cos(heroYaw);
       const step = clamp(dt, 0, 0.05);
+      hpx = hx; hpz = hz; hfx = heroFx; hfz = heroFz;
 
       // ---- retire ------------------------------------------------------------------------
       for (const v of pool) {
         if (!v.live) continue;
         place(v, _p);
-        if (_p.distanceTo(_hero) > DESPAWN_R || v.s < v.line.lo + 4 || v.s > v.line.hi - 4) {
-          v.live = false;
+        if (_p.distanceTo(_hero) > DESPAWN_R) { closePass(v); v.live = false; v.endHold = 0; continue; }
+        // THE LINE-END RETIRE IS NOT A DISTANCE TEST AND WAS NEVER GATED ON THE HERO. Round 1
+        // retired on `v.s > v.line.hi - 4` alone, so driving toward either end of the highway
+        // you watched cars wink out 119-177 m dead ahead of you. Now a line-end retire in
+        // plain sight is DEFERRED — the vehicle simply keeps driving, off the end of the ribbon
+        // if it comes to that — and taken as soon as the player is not looking at it, or after
+        // END_HOLD_MAX either way, so a deferral can never turn into a permanently parked car.
+        // I tried BRAKING for the road end instead, so a deferred vehicle stopped on the last of
+        // the tarmac. It measured worse on the thing that matters: the leader behind it stops
+        // 6.2 m short, which is not `atEnd`, so it is never retired at all, and 40 s of highway
+        // went from 0.00% stationary to 7.76% with a 13.9 s standstill and a queue of five cars
+        // parked at x = 1180. A car that drives on for a few seconds past the last white line
+        // 200 m away in the fog is a much smaller lie than a car park at the end of the map.
+        if (v.s >= v.line.lo + 4 && v.s <= v.line.hi - 4) { v.endHold = 0; continue; }
+        if (v.endHold < END_HOLD_MAX && inHeroView(_p.x, _p.z, END_HIDE_R)) {
+          v.endHold += step;
+          continue;
         }
+        closePass(v); v.live = false; v.endHold = 0;
       }
       // ---- replenish ---------------------------------------------------------------------
       // At most four spawns a frame: sixteen cars appearing in one tick is visible as a pop
@@ -468,6 +689,7 @@ export function createTraffic(scene, { rng, layout, blocks = [], roadKit } = {})
       // ---- junction demand ---------------------------------------------------------------
       for (const j of junc) {
         j.occ = 0; j.occAxis = -1; j.dem[0] = 0; j.dem[1] = 0; j.imm[0] = 0; j.imm[1] = 0;
+        j.occStill = 0; j.occMove = 0;
       }
       for (const v of pool) {
         const prevIdx = v.jIdx;
@@ -487,7 +709,15 @@ export function createTraffic(scene, { rng, layout, blocks = [], roadKit } = {})
         const j = junc[idx];
         v.jIdx = idx; v.jDist = bestD;
         if (idx !== prevIdx) v.jOk = false;   // a new junction ahead: permission is not inherited
-        if (bestD <= BOX_HALF) { j.occ++; j.occAxis = L.axis; continue; }
+        if (bestD <= BOX_HALF) {
+          j.occ++;
+          // MOVING occupancy and STALLED occupancy are two different facts and round 1 conflated
+          // them. A moving body in the box will be out of it in under two seconds, so it can own
+          // the phase outright; a stalled body will not, so it must not.
+          if (v.speed < 1.0) j.occStill++;
+          else { j.occMove++; j.occAxis = L.axis; }
+          continue;
+        }
         if (bestD < APPROACH) {
           j.dem[L.axis]++;
           // "imminent" is a BRAKING FACT, not a distance band: this vehicle can no longer be
@@ -500,10 +730,20 @@ export function createTraffic(scene, { rng, layout, blocks = [], roadKit } = {})
       }
       // ---- junction phase ----------------------------------------------------------------
       for (const j of junc) {
-        if (j.occ > 0) {
-          // Whoever is in the box keeps it. Nothing is ever granted across a moving car, and
-          // that single line is what makes "cars do not drive through each other" true rather
-          // than likely.
+        // THE LATCH IS NOW BOUNDED. Round 1 read `if (j.occ > 0) { j.owner = j.occAxis; ... }`
+        // with no watchdog, so whoever was in the box kept the green for as long as they were
+        // in it — and a body STOPPED in the box is a body in the box. Park the hero in a
+        // junction and one car stops behind him inside the box, latches the phase, and the
+        // crossing axis never gets a green again: measured, 30 s of sitting in the box at
+        // (0, 0) held owner = 1 for the entire window and froze 15 of 56 vehicles solid. That
+        // is this piece's original defect regenerating locally under an input players perform
+        // constantly. The hold is now capped at OCC_HOLD_MAX, and it is safe to cap because
+        // the drive block below no longer relies on the signal to keep bodies apart: it takes
+        // the nearest body that geometrically fouls its own corridor, whatever axis that body
+        // is on, so a cross-axis car released across a stalled one brakes for it and then goes
+        // round it rather than through it.
+        if (j.occMove > 0) j.occT += step; else j.occT = 0;
+        if (j.occMove > 0 && j.occT < OCC_HOLD_MAX) {
           j.owner = j.occAxis; j.heldT += step;
           continue;
         }
@@ -522,23 +762,48 @@ export function createTraffic(scene, { rng, layout, blocks = [], roadKit } = {})
       }
 
       // ---- drive -------------------------------------------------------------------------
+      const hvx = heroFx * heroSpeed, hvz = heroFz * heroSpeed;
+      const heroFast = Math.abs(heroSpeed) > EVENT_SPEED_MIN;
+      const heroTravel = Math.sign(heroSpeed) || 1;
       vehicles.length = 0;
       for (const v of pool) {
         if (!v.live) continue;
         const L = v.line;
+        const a0 = L.axis === 0;
         const p = progOf(v);
         let a = idm(v.speed, v.vDes, 1e5, v.vDes);
 
-        // (1) car ahead in my lane. O(POOL^2) with an early key reject; at 56 vehicles that
-        // is ~3 k cheap comparisons a frame, far below the cost of maintaining a sorted
-        // per-lane index and a great deal harder to get wrong.
-        let gap = 1e5, vLead = v.vDes;
+        // (1) THE NEAREST BODY THAT FOULS MY CORRIDOR, whatever line, lane or axis it is on.
+        //
+        // Round 1 compared only same-line/same-dir/same-lane pairs, so a car stalled ACROSS a
+        // junction box was not an obstacle to anybody and the ONLY thing keeping the crossing
+        // safe was the signal — which is exactly why the signal's occupancy latch could not be
+        // given a watchdog without cars driving through each other. This is the geometric
+        // version: project every other body into my (along, lateral) frame and take the nearest
+        // one whose lateral extent actually overlaps mine. It subsumes the old same-lane case,
+        // it makes a perpendicular body in a junction box a real obstacle, and it makes a
+        // shy or a shunt into an adjacent lane something the car in that lane can see.
+        //
+        // Still O(POOL^2) with an early reject, ~900 comparisons a frame at POOL 30.
+        const myLatW = a0 ? v.pos.z : v.pos.x;
+        let gap = 1e5, vLead = v.vDes, blocker = null;
         for (const o of pool) {
-          if (o === v || !o.live || o.line !== L || o.dir !== v.dir || o.lane !== v.lane) continue;
-          const g = (progOf(o) - p) - (v.halfLen + o.halfLen);
-          if (g > -1 && g < gap) { gap = g; vLead = o.speed; }
+          if (o === v || !o.live) continue;
+          const same = o.line.axis === L.axis;
+          const oLatW = a0 ? o.pos.z : o.pos.x;
+          const oHalfLat = same ? o.halfWid : o.halfLen;
+          if (Math.abs(oLatW - myLatW) > v.halfWid + oHalfLat + 0.30) continue;
+          const oAlong = v.dir * (a0 ? o.pos.x : o.pos.z);
+          const g = (oAlong - p) - (v.halfLen + (same ? o.halfLen : o.halfWid));
+          if (g > -1 && g < gap) {
+            gap = g;
+            // Only a body travelling my way is a moving leader; a crossing body is a wall.
+            vLead = same && o.dir === v.dir ? o.speed : 0;
+            blocker = o;
+          }
         }
         if (gap < 1e4) a = Math.min(a, idm(v.speed, v.vDes, gap, vLead));
+
 
         // (2) the stop bar of a junction my axis does not own.
         //
@@ -560,31 +825,147 @@ export function createTraffic(scene, { rng, layout, blocks = [], roadKit } = {})
         // player is scenery, and traffic that dodges perfectly is not Burnout. Braking for
         // him when he is ahead, and shying away from his line when he is closing from
         // behind, is the honest middle — you can still put him through the back of it.
-        const myLat = L.axis === 0
+        const myLat = a0
           ? L.c + v.dir * (v.lane + v.lat)
           : L.c - v.dir * (v.lane + v.lat);
-        const heroLat = L.axis === 0 ? hz : hx;
-        const heroP = v.dir * (L.axis === 0 ? hx : hz);
-        const heroAlong = heroSpeed * (v.dir * (L.axis === 0 ? heroFx : heroFz));
+        const heroLat = a0 ? hz : hx;
+        const heroP = v.dir * (a0 ? hx : hz);
+        const heroAlong = heroSpeed * (v.dir * (a0 ? heroFx : heroFz));
+        // d(world lateral)/d(v.lat). Round 1 wrote the shy as `sign(myLat - heroLat) * 1.2`
+        // WITHOUT this factor, and `place()` maps a positive `lat` to +z only for axis 0 dir +1
+        // — so on the other three of the four (axis, dir) combinations the "shy away from the
+        // hero" moved the car TOWARD him. That is half the network and both highway
+        // carriageways minus one.
+        const latSign = a0 ? v.dir : -v.dir;
+        const away = (Math.sign(myLat - heroLat) || 1) * latSign;
         let swerve = 0;
-        if (Math.abs(heroLat - myLat) < 3.4) {
+        let heroWall = false;
+        if (Math.abs(heroLat - myLat) < 3.6) {
           const hg = (heroP - p) - (v.halfLen + 2.4);
-          if (hg > -1 && hg < 90) a = Math.min(a, idm(v.speed, v.vDes, hg, Math.max(0, heroAlong)));
-          if (hg < -1 && hg > -36 && heroAlong - v.speed > 8) {
-            swerve = (Math.sign(myLat - heroLat) || 1) * 1.2;
+          if (hg > -1 && hg < 24 && Math.abs(heroSpeed) < 2) heroWall = true;
+          if (hg > -1 && hg < 90) {
+            // A hero coming the other way is a closing wall, not a slow leader, and IDM already
+            // says so: a negative vLead blows sStar up and the (sStar/gap)^2 term with it.
+            a = Math.min(a, idm(v.speed, v.vDes, hg, Math.max(heroAlong, -12)));
+            // ONCOMING. The wrong-way hero closes at 60-70 m/s, so there is no gap to brake
+            // into and the only real reaction is to leave the lane. TIME to contact, not a
+            // distance band: round 1's 90 m band is 1.3 s at a 250 km/h closing speed, which is
+            // why the critic measured max lane error 0.000 m with the whole population coming
+            // at the hero head-on and called the reaction non-existent.
+            const closing = v.speed - heroAlong;
+            if (heroAlong < -3 && closing > 1 && hg / closing < 3.0) swerve = away * EVADE_LAT;
+          } else if (hg > -36 && heroAlong - v.speed > 8) {
+            swerve = away * SHY_LAT;         // he is coming past me from behind
           }
         }
+        // (4) GO ROUND WHAT IS NOT GOING TO MOVE. Round 1 had no way to do this at all, so a
+        // single immovable body froze everything behind it for as long as the player left it
+        // there, and that is the car park this whole module exists to delete. THE HERO COUNTS AS
+        // A BLOCKER, and he is the important one: he is not in the pool, so the head of a queue
+        // stopped by clause (3) has no `blocker` at all and would queue behind him forever —
+        // measured, parking in a junction box still froze 12 of 30 vehicles once the signal
+        // latch was bounded, because the fan of cars stopped by the HERO simply replaced the
+        // fan stopped by the signal. Not applied to a vehicle waiting at a red it can still
+        // stop for: queue-jumping a stop bar is worse than waiting, and not applied over an
+        // evasion, which is already a lateral move with a better reason.
+        // THE MANOEUVRE IS LATCHED FOR A FIXED TIME and is not re-decided per frame. Recomputing
+        // it every frame oscillates and gets nowhere: the shy that clears the blockage is the
+        // same shy that makes the blockage stop registering, so `stallT` resets, the car damps
+        // back into the lane, and the whole thing repeats. Measured mid-oscillation with
+        // `_traffic-r2.mjs --sit`: nine cars stopped round a parked hero with `lat` 0.00-0.23
+        // and `stallT` cycling at 0.5-1.8 s, i.e. never once reaching the 2.0 s trigger.
+        const stalled = v.speed < 8
+          && (heroWall || (blocker && blocker.speed < 2.0 && gap < 24));
+        if (stalled) v.stallT += step; else v.stallT = 0;
+        const atRed = v.jIdx >= 0 && v.jDist > BOX_HALF && !v.jOk;
+        if (v.otT > 0) {
+          v.otT -= step;
+          if (swerve === 0) swerve = OVERTAKE_LAT;
+        } else if (v.stallT > OVERTAKE_STALL && !atRed) {
+          v.otT = OVERTAKE_HOLD; v.stallT = 0;
+          if (swerve === 0) swerve = OVERTAKE_LAT;
+        }
+
+        // a traffic check outranks everything: it is not a decision, it is being hit
+        if (v.shoveT > 0) { v.shoveT -= step; swerve = v.shove; }
         v.swerve = swerve;
 
         v.speed = Math.max(0, v.speed + clamp(a, -IDM_BRAKE_MAX, IDM_A) * step);
         v.s += v.dir * v.speed * step;
-        v.lat = damp(v.lat, clamp(v.swerve, -1.3, 1.3), 3.0, step);
-        // keep the body on the carriageway whatever the shy asked for: 1.0 m clear of the
-        // centreline on the inside, 1.0 m clear of the road edge on the outside
-        v.lat = clamp(v.lat, 1.0 - v.lane, L.half - 1.0 - v.lane);
+        // An evasion has to happen inside the second it has; a shy is a lean.
+        const latRate = Math.abs(v.swerve) > 2 ? 7.0 : 3.0;
+        let want = damp(v.lat, clamp(v.swerve, -EVADE_LAT, EVADE_LAT), latRate, step);
+        // Keep the body on the carriageway whatever the shy asked for, and keep it out of the
+        // baked population's lanes: `latMax` (buildNetwork) is the shy ceiling, the road edge
+        // wins over it on the highway's outer lane, and LAT_INNER is the floor — two vehicles
+        // travelling opposite ways must never be able to enter each other's corridor, which
+        // with the geometric leader test above would lock them nose to nose.
+        want = clamp(want,
+          Math.max(-L.latMax, LAT_INNER - v.lane),
+          Math.min(L.latMax, L.half - 1.0 - v.lane));
+        // LATERAL NON-INTERPENETRATION. The leader test above only sees bodies AHEAD (g > -1),
+        // so it cannot stop a shy that moves sideways INTO a body already alongside — and this
+        // module's hardest-won invariant is 0.000 m of body-on-body overlap over nine million
+        // pair tests. The first version of the overtake broke it: 1.776 m of overlap in 23
+        // frames of the parked-in-a-junction repro, cars shying across each other inside the
+        // box. So a lateral move that would reduce an already-too-small separation is simply
+        // not taken. It never LOCKS, because it only refuses moves that make things worse.
+        if (want !== v.lat) {
+          const latBase = a0 ? L.c + v.dir * v.lane : L.c - v.dir * v.lane;
+          const newLatW = latBase + latSign * want;
+          for (const o of pool) {
+            if (o === v || !o.live) continue;
+            const same = o.line.axis === L.axis;
+            const oAlong = v.dir * (a0 ? o.pos.x : o.pos.z);
+            if (Math.abs(oAlong - p) > v.halfLen + (same ? o.halfLen : o.halfWid) + 0.2) continue;
+            const oLatW = a0 ? o.pos.z : o.pos.x;
+            const minSep = v.halfWid + (same ? o.halfWid : o.halfLen) + 0.2;
+            const newSep = Math.abs(newLatW - oLatW);
+            if (newSep < minSep && newSep < Math.abs(myLatW - oLatW)) { want = v.lat; break; }
+          }
+        }
+        v.lat = want;
 
         place(v, v.pos);
         v.yaw = yawOf(v);
+
+        // ---- events ----------------------------------------------------------------------
+        // Clearance from the hero's body to this one, 2-D. Every traffic yaw is a multiple of
+        // 90 deg so this box is axis-aligned and the point-to-box part is exact; the hero is
+        // taken as a disc of his own half-width, which is the right inflation for a pass
+        // because a pass is a LATERAL event.
+        const ex = a0 ? v.halfLen : v.halfWid;
+        const ez = a0 ? v.halfWid : v.halfLen;
+        const cdx = Math.max(0, Math.abs(hx - v.pos.x) - ex);
+        const cdz = Math.max(0, Math.abs(hz - v.pos.z) - ez);
+        const clr = Math.hypot(cdx, cdz) - HERO_HALF_W;
+        const vvx = a0 ? v.dir * v.speed : 0;
+        const vvz = a0 ? 0 : v.dir * v.speed;
+        const rel = Math.hypot(hvx - vvx, hvz - vvz);
+        if (clr < NEAR_MISS_R && heroFast) {
+          if (!v.nmOn) { v.nmOn = true; v.nmMin = clr; v.nmRel = rel; v.nmHit = false; v.nmOnc = false; }
+          if (clr <= v.nmMin) {
+            v.nmMin = clr;
+            // against my lane direction at the closest point = an oncoming pass
+            v.nmOnc = heroTravel * (a0 ? heroFx : heroFz) * v.dir < -0.4;
+          }
+          if (rel > v.nmRel) v.nmRel = rel;
+        }
+        if (v.nmOn) {
+          if (clr <= 0) {
+            if (!v.ctOn) {
+              v.ctOn = true; v.nmHit = true;
+              emit('check', 0.2 + 0.8 * clamp((rel - 5) / 28, 0, 1), v.pos.x, v.pos.z,
+                { relSpeed: +rel.toFixed(1) });
+              // and it SHUNTS. physics.js does not collide with traffic yet (routed, round 1),
+              // so this is one-sided until it does, but a car that is hit has to move: it is
+              // knocked toward the hero's own speed and shoved out of his line.
+              v.speed = Math.max(0, v.speed * 0.55 + Math.max(0, heroAlong) * 0.45);
+              v.shove = away * CHECK_SHUNT; v.shoveT = 0.7;
+            }
+          } else if (clr > 0.6) v.ctOn = false;
+          if (clr > NEAR_MISS_R + NEAR_MISS_OUT) closePass(v);
+        }
         vehicles.push(v);
       }
       api.count = vehicles.length;
