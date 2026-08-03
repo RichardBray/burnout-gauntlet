@@ -20,7 +20,16 @@
 //   a.setSpace(id)                  'open' | 'city' | 'tunnel'
 //   a.setListener(pos, fwd, up, vel)
 //   a.addRival(id, opts) / a.updateRival(id, s) / a.removeRival(id)
-//   a.setEnabled(bool) / a.setVolume(0..1) / a.running / a.ready / a.info()
+//   a.setEnabled(bool) / a.setVolume(0..1) / a.getVolume() / a.running / a.ready / a.info()
+//
+// THIS MODULE IS THE **SFX** SIDE OF THE MIX, AND `setVolume` IS THE SFX CONTROL.
+// wave-s/menu-music added `game/music.js`, which owns the soundtrack on its OWN
+// AudioContext with its own gain straight to `destination`. Music is deliberately NOT
+// routed through the chain described above: the glue bus, the level rider and the
+// per-space convolver are correct for an engine and wrong for a commercial master, and
+// sharing them would duck the soundtrack under the exhaust and give it tunnel reverb.
+// So `setVolume`/`getVolume` here move engine, tyres, wind, impacts and rivals ONLY, and
+// the menu shows them under the label SFX beside a separate MUSIC slider.
 //
 // PARAMS for update(dt, s): rpm01, load, throttle, brake, handbrake, speed (m/s),
 //   boost 0..1, boosting, slip 0..1, gear, airborne, wet 0..1, listener {pos,fwd,up,vel}.
@@ -42,7 +51,7 @@ function makeNoop() {
     ready: Promise.resolve(false),
     enabled: false,
     start: f, stop: f, update: f, crash: f, gearShift: f, boostHit: f,
-    setSpace: f, setListener: f, setEnabled: f, setVolume: f,
+    setSpace: f, setListener: f, setEnabled: f, setVolume: f, getVolume: () => 0,
     addRival: () => null, updateRival: f, removeRival: f,
     info: () => ({ mode: 'noop', running: false, state: 'closed', space: 'open', samples: 0, rivals: 0, sampleRate: 0 }),
   };
@@ -1390,10 +1399,25 @@ export function createAudio({ enabled = true, volume = 0.62, space = 'city' } = 
       ramp(master.gain, muted ? 0 : masterVol, ctx.currentTime, 0.08);
     },
 
+    /**
+     * THE SFX VOLUME. Engine, tyres, wind, impacts, rivals and the reverb return —
+     * everything on this module's master sum. It does NOT touch the soundtrack:
+     * `music.js` runs on its own AudioContext (see the header note), so there is no node
+     * shared between the two and no ordering in which this call can move the music.
+     * `verdicts/wave-s/menu-music.md` proves that by kill-control: `setVolume(0)` here
+     * leaves the music's post-gain RMS unchanged.
+     */
     setVolume(v) {
       masterVol = clamp(v, 0, 1);
       if (running && !muted) ramp(master.gain, masterVol, ctx.currentTime, 0.08);
     },
+
+    /**
+     * The live SFX volume. Added for wave-s/menu-music: the menu's SFX slider has to
+     * reflect the value the mix is actually at, and a shadow copy in the menu would drift
+     * the moment anything else called setVolume (a scene preset, a harness, the console).
+     */
+    getVolume() { return masterVol; },
 
     /**
      * 'open' | 'city' | 'tunnel' - swaps the IR under a short return mute and moves
