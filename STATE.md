@@ -516,7 +516,172 @@ Every one of these reproduced its builder's figures exactly and then overturned 
 
 Wave P DONE (9/9 + determinism). Wave Q DONE (9/9). Both wave-R prerequisites DONE (session 12).
 
-### SESSION 14 — TWO INFRASTRUCTURE FIXES. THE FIRST ONE IS WHY ROUND 13 PRODUCED NOTHING.
+### SESSION 15 (round 16) — WAVE R BATCH 1 LANDED, 4/4, PLUS THE RESOLVER. FIVE COMMITS.
+
+**WHY ROUNDS 13 AND 14 BOTH DIED, FINALLY SETTLED. THERE WERE TWO INDEPENDENT CAUSES.**
+1. Session 14's `CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0` patch to `run-gauntlet.sh` **never took
+   effect.** The driver (PID 60615) started 2026-08-02 21:46, bash had already parsed the
+   `while :; do` body, so the running loop kept using the pre-fix invocation — round 14 died the
+   same death as 13. Tell: driver.log's round lines lack the `on <account>` field the current
+   script writes, and `env | grep CLAUDE_CODE_PRINT` was empty inside round 16.
+   **FIXED DRIVER-INDEPENDENTLY in `.claude/settings.json` (`env` block)**, which every future
+   round loads at startup no matter how stale the driver is. Session 15 itself still ran under the
+   old env, so it launched its agents **synchronously (`run_in_background: false`)** — that works,
+   and it is the fallback if the ceiling ever returns.
+2. **`game/audio.js:955 THUMP_PK = 0.00`** — round 13's abandoned edit — made every boost ignition
+   throw a `RangeError` (`exponentialRampToValueAtTime` target of exactly 0 is forbidden), and in
+   `audio-isolate.mjs` the throw lands inside the `off.suspend().then()` callback so `off.resume()`
+   never runs. The audio builder reproduced a **19:33 deadlock at 0% CPU with `lint ok` throughout.**
+   A 19-minute stall under a 600 s ceiling is a guaranteed kill. **So audio would have been killed
+   even with the env fixed.** `lint ok` does not mean runnable — nothing lints a forbidden Web Audio
+   argument.
+
+**THE NEW RULE THAT PAID FOR ITSELF IMMEDIATELY — verdict-first.** `tools/WAVE-R-ADDENDUM.md` §3
+now makes `verdicts/wave-r/<piece>.md` the FIRST file a builder writes, appended as it works.
+Rounds 13 and 14 both left real edits with zero verdicts; the loss was never the edits, it was that
+no record existed of what any edit was *for*. Keep this rule permanently.
+
+**`e1c1e82` IS NOT A CLEAN BASELINE AND TWO BUILDERS PROVED IT INDEPENDENTLY.** Step 0 of the
+addendum was the highest-value instruction of the round: round 13's abandoned edits included one
+**fatal** defect (audio `THUMP_PK 0`) and one **scored-failing** defect (`road.js:1428`, a `0.25 *`
+inserted into `float k`, a 4x mirror cut: d5 hfRmsNorm 11.82 -> 17.40, failing its own T3 band).
+Both were reverted. One abandoned edit was measured and KEPT (sky's `warmL`, now a scored T3 hit).
+**Two of three unmeasured inherited edits were actively harmful. Never inherit one silently.**
+
+| piece | commit | headline result |
+|---|---|---|
+| sky-lighting | `333e59c` | T0 re-registered; `skyGain` NOT shipped; T1 MISS; T3 HIT; **handoff NULL** |
+| boost-fx | `2c7f7cc` | brief's headline gap DISPROVED; T1 0.394 in band; T2 RETIRED; T3 scored miss |
+| road-surface | `0958bc3` | **T1 HIT, all four figures**; briefed mechanism disproved; hump still dead |
+| audio | `5c6cfa9` | `THUMP_PK 0.48` VERIFIED, 9 targets hit 0 missed; fatal round-13 edit reverted |
+| resolver | `b4b4794` | 4 dangling citations reconstructed; `-02`/`-04` ruled; 2 items evidence-lost |
+
+**THREE BRIEFED TARGETS WERE THE WRONG OBJECT, AND ALL THREE WERE KILL-CONTROLLED, NOT ARGUED.**
+The kill-control rule is now the most productive rule in the project — keep demanding it.
+- **sky: `skyGain` is NOT the lever.** At 1.00 the 20.9 deg row goes 1.10x -> **1.74x** and 18.3 deg
+  0.95x -> 1.49x — both *already passed*, so the lever overshoots the top of the ladder while
+  10.3 deg is still 0.80x. It is a **SHAPE deficit, not a level one**: our 20.9->7.65 deg span is
+  **2.17x against the registered reference's 3.96x**, and deleting all three cloud decks moves it
+  only to 2.21x. The real object is the **atmosphere bake** (ozone tent / rayleigh / turbidity /
+  `msW` at `sky.js:528` / the aerial terminal). Blind crop agrees: ref ramps teal->lemon, ours
+  stalls at sage. **Wave P's refusal to spend `skyGain` unilaterally was correct for three waves.**
+- **boost: `:270`'s speed curve is CORRECT and my brief was wrong to call it a range violation.**
+  `boost.js:1425 spd01 = clamp((|speed|-26)/66,0,1)` is affine with a 26 m/s dead zone, so a smear
+  linear in speed is `(26+66s)/92 = 0.2826+0.7174s` — the shipped `0.30+0.70*uSpeed01` is its exact
+  reconstruction within 6%. `:286` unchanged byte for byte. The 12-line comment at `:258-285` that
+  argued against the constant is replaced by the derivation. **A wave-Q critic's headline gap
+  survived into a builder brief without anyone deriving the constant it attacked.**
+- **road: `:1137` and `:262` are NOT the mechanism.** Kill-control: flake=1 everywhere at RGH 0.42
+  reaches only 35.1% top-5% share against a 42-52% band — under two points of authority. The win
+  came from new `FLK_*`/`SPARSE_*` constants at `:776-786` plus a `sparseShape()` on `lensC`.
+
+**RETIREMENTS AND ANCHOR CORRECTIONS FROM THIS ROUND — the count of broken anchors is now FOUR.**
+- **FOURTH WRONG-OBJECT REFERENCE ANCHOR: the dusk reference horizon at y 0.593-0.602 is WRONG.**
+  It is y **0.455 +/- 0.020**. Crop-verified tarmac with lane dashes at y 520 caps it at 0.481, and
+  at y 630-650 *both* hills' bases are OCCLUDED by the spoiler, the barrier row and the billboard
+  wall. **And ours was wrong too: y 0.4923, not 0.5077** — wave Q inverted the sign of its own pitch
+  term (pitch is -0.358 deg; looking down moves the horizon UP). Offset is **+0.037 of frame,
+  OPPOSITE IN SIGN to wave Q's +0.087.** Consequence: of the two briefed deficits the **55 R
+  frame-fraction figure is approximately right and the 111 R elevation-registered figure is WRONG**;
+  registered, the 13 deg deficit is 33-53 R. Ref vfov could not be pinned — rows are a band over
+  43-52 deg. **Every dusk row anchor quoted before this round must be re-registered.**
+- **RETIRED: boost T2 as an anchor.** Its two clauses have an **empty intersection** ([2.7,8.1] vs
+  [20,60]); an ideal radial blur of our own nofx frame is **non-monotone in length** (5.4/4.4/6.5 px
+  at 41/78/160); and the crop shows ref-02's P1a is **two full-length yellow lane lines** against
+  our bare, paint-free, grain-free tarmac. **Lengthening the kernel is affirmatively wrong** — an
+  ideal 78 px blur scores T1 = 0.232, *below the band's own floor*.
+- **RETIRED: `boost-blur`'s +/-6% variance claim.** Measured determinism is **0.00** on every
+  `_smearmeas` metric across 5 patches, fx and nofx, over two boots (PNG md5 differs — the
+  documented GPU tie-break residual), and 0.00 on every `_debrismeas`/`_sparkdiff` column over two
+  `crash-cam` boots. **Standing §4 item 4.1 is RESOLVED.**
+- **`daytime-downtown-04` RULED OUT as "the reference with our camera".** It is a static low
+  three-quarter-front hero shot of a *stationary* car — a car-presentation framing, not a driving
+  view — and it fails on shot type before photometry ever enters. `-02` is the forward boulevard
+  view (green gantry route signs, lit signals and headlights, roadway humping over a crest,
+  convergence near source y 937, **no visible horizon**). `reference/INDEX.md` labels rewritten:
+  `-02` is the shot-type match, `-01` the lighting-class match, and **neither `-02` nor `-04` may
+  ever carry a frame-fraction row anchor.**
+- **Sky's T2 gate is self-anchored** — it forbids the reference's own +38 R correction. Flagged for
+  re-issue by the wave-S critic; do not score it as a pass.
+
+**CROSS-PIECE HANDOFF IS NULL — BATCH 2 IS UNBLOCKED WITH NO RE-BASELINING.** Because `skyGain` did
+not ship, `scene.environment` B/A is upward-cosine **0.99700x**, sunward-horizontal 0.99133x, net
+0.99700x, upward B/R 1.00853x, sodium band 0.99904x; the car's own cube probe is upward 0.99930x,
+sunward 0.99880x. **Wave Q's 1.136 probe ratio STANDS (x0.9993).** car-paint, environment and hud
+may baseline against wave-Q numbers directly. Note sky also **found and fixed a cube-face
+vertical-convention bug in its own probe** that had reported upward as bit-identical and pushed the
+whole delta below the horizon — a reminder that the measuring tool is as likely to be wrong as the
+thing measured.
+
+**ONE CROSS-PIECE DEBT AND ONE CROSS-PIECE HAZARD, both owned by road:**
+- boost's biggest remaining gap **is not boost's**. Our P1a has no lane paint and no grain (relative
+  HF 1.03% post-blur, ~1.3 LSB) where ref-02 has two lane lines and a mat of striations at 5.95%.
+  Evidence handed over as `shots/r/crop-ref-P1a.png` vs `crop-ours-P1a-nofx.png`. **Route to
+  road-surface next wave.**
+- **HAZARD: boost's T1 denominator is `road.js`-owned.** A peer road edit moved P1a nofx 0.99 ->
+  1.08 (T1 0.394 -> 0.361) while our fx frame stayed bit-stable. boost x road is a **newly
+  discovered coupling** — add it to the known-couplings list and put them in different batches.
+
+**SCORED RESULTS WORTH CARRYING FORWARD.**
+- road T1 **HIT on all four figures**: d5 share 33.4 -> **51.5%** [42,52] and p99/p50 4.63 -> **7.91**
+  [6.5,8.5] (ref 50.7 / 7.88); d4 33.0 -> **44.9%** [40,50] and 4.60 -> **6.67** (ref 46.6 / 7.52).
+  `_anisonull` PASSES — the null is a constant across four region aspects, not `sqrt(H/W)`. Hump
+  still dead, all five T3 bands held, T2 improved. Honest untargeted side effect, stated not
+  rounded: the d4/d5 inversion went +0.32 -> **-0.02** where the plate is +0.48.
+- road's next gap: **residual SKEW.** Ours d5 **+1.404** / d4 +0.852 against the plate's +0.059 /
+  **-0.217** — right concentration, wrong shape. Our sparse population is **bright-only**; the
+  plate's is symmetric (specks *and* voids). Fix arm: a signed twin of `flk` from the lower tails.
+- sky T1 MISS at **0.62x** (13.0 deg) and **0.55x** (10.3 deg) against band [0.85,1.15]. Wave Q's
+  0.47x/0.42x **overstated the miss ~1.3x**. T3 HIT: valley satPx 0.137 -> **0.225** (band
+  0.19-0.27), closing 68% of the veil penalty at a cost of -10.5 R, with `s` held to 0.0/255.
+- boost T3 is the real win and an honest scored miss: blob retention 63% -> **79%**, diff-image p99
+  46% -> 65%, pctGE40 32% -> **72%**, areaMed 14 -> 9. Eye-verified: sparks go from dim smudges to
+  discrete bright slivers. Still short of the >=90% target. New `boost.js:328
+  kg = smoothstep(3.0, 12.5, lenPix)` (knees are the spark sliver's own 1.426 px width and 12.52 px
+  length) plus `:519-529` `col = mix(sharp, blurred, kg)`.
+- audio: all three onsets HIT — 0-20 ms +5.8 -> **+6.8** (ref +6.6, band 6.0-7.2), 0-50 ms +6.2 ->
+  **+7.1** (ref +7.5, band 6.9-8.1), over20 +7.8 -> **+8.5 dB @ +39 ms** (ref +8.7 @ +39) — with the
+  busy peak **0.9279 unchanged to four dp**. 9 targets hit, 0 missed, 2 had been failing. Honest
+  cost, not hidden: `100-300 re 300-800` +2.5 -> +2.9, away from ref-01's -6.6. Also shipped
+  `tools/audio-isolate.mjs --only=<clip>`: 4 minutes instead of 13.
+- audio's next gap ships with its kill-control **already run**: ignition LF/mid skew +2.9 vs ref
+  -6.6. `THUMP_PK 0.48 -> 0.001` moves ignition-attributable skew +2.6 -> -0.4 (ref -3.4), so the
+  thump at `:962-963` **is** the right object and carries 3.0 dB — **but the other 3.0 dB is
+  300-800 Hz under-fill by the crack and BODY layers, so the sweep alone can close at most half.**
+  A gap whose ceiling is known before work starts is the cheapest kind to brief.
+
+**RESOLVER OUTCOME AND TWO HONEST LOSSES.** `verdicts/wave-r/resolver.md` now exists as a 323-line
+**RECONSTRUCTION**, labelled as such on line 1, transcribed from the surviving amendment in
+`tools/STANDING-CONSTRAINTS.md` rather than re-measured; where the two disagree **the amendment
+wins**. All four dangling citations (`STANDING-CONSTRAINTS.md:37/93`, `:283`, `:377`,
+`reference/INDEX.md:30`) were both reconstructed *and* made self-contained.
+- **§4 item 8 is RESTORED TO OPEN** (five files with no wave-P hash): the resolver claimed it
+  resolved but no ruling or hash table survives, and no substitute hashes were invented.
+- **§4 item 11 is UNSUPPORTED-EVIDENCE-LOST** and recorded as such rather than dressed up.
+- §4 item 9 is actually **CLOSED**; §0 ANCHOR 1's "still uncorrected in the tree" was stale, fixed.
+- **New hypothesis on the unexplained `game/crash.js` 08:36 mtime: it is the resolver's
+  comment-only item-9 edit, NOT a boost debris bypass.** This is a hypothesis, NOT a clearance —
+  the forensic agent still owns it and must confirm against the literal constants in
+  `verdicts/wave-p/crash-cam.md` and `wave-q/crash-cam.md`.
+
+**EXACT NEXT ACTION for the next session, in order:**
+1. **Check `verdicts/wave-r/` first** (`ls verdicts/wave-r/` + `git log --oneline`). If
+   `car-paint.md`, `environment.md`, `hud.md` and `crash-forensic.md` exist, batch 2 landed — index
+   them here and go to step 2. Session 15 launched all four at the end of round 16.
+2. **WAVE R BATCH 3: damage, crash.** Read `verdicts/wave-r/crash-forensic.md` BEFORE briefing
+   crash — a contamination finding there changes the brief. crash is a **CHIP SIZE** problem, not a
+   smear problem: with boost BYPASSED our density is 7.42 and areaMed 32-38 against
+   `crash-cam-01`'s majMed 4.3 px / areaMed 6, so our chips are **6x the reference area before
+   boost touches them.** Do NOT re-issue the old "density 10.1 / areaMed <=15 under boost" targets —
+   they were mis-attributed to boost. Also ship crash's derived `r` fix: it sits at 1.10, **half
+   the derived floor**; usable band [1.9, 2.6]; 2.2 is where two independent statistics land on the
+   reference. car before damage is already satisfied by batch 2.
+3. Then the **WAVE S CRITIC SWEEP** using `tools/WAVE-Q-CRITIC-BRIEF.md`. Builder waves and critic
+   sweeps STRICTLY ALTERNATE. Alternate forever.
+4. Carry into wave S as re-issue work: sky's self-anchored T2 gate, boost's retired T2, the four
+   re-registered dusk row anchors, and boost's lane-paint/grain debt routed to road.
+
+### SESSION 14 — TWO INFRASTRUCTURE FIXES. THE FIRST ONE WAS RIGHT AND DID NOT TAKE EFFECT. See session 15 above.
 
 **THIRTEENTH BROKEN TOOL, AND IT WAS THE HARNESS ITSELF. `CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS`
 DEFAULTS TO 600s AND WAS SILENTLY KILLING EVERY BUILDER BATCH.**
@@ -712,7 +877,9 @@ pre-edit file byte-exactly (md5-verified) and interleave A,B,A,B to get a usable
 
 **From Wave P on: run builders in two batches of 4-5, and put coupled pieces in DIFFERENT
 batches.** Known couplings: crash x boost (smear kernel), car x damage (`syncFromPaint` env
-probe is `partUnder`'s only light), sky x everything (exposure/grade). Builders must still
+probe is `partUnder`'s only light), sky x everything (exposure/grade), and **NEW IN WAVE R:
+boost x road** — boost's T1 denominator is the `road.js`-owned nofx frame, and a peer road edit
+moved it 0.99 -> 1.08 (T1 0.394 -> 0.361) while boost's own fx frame stayed bit-stable. Builders must still
 reconstruct-and-interleave; that technique worked and should be in the brief, not rediscovered.
 
 ### THE FOUR RULES THAT WERE PAID FOR IN ROUNDS. DO NOT REDISCOVER THEM.
