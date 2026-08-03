@@ -206,19 +206,21 @@ export const TUNE = {
   // the single-track model is unconditionally stable, and mu is raised to keep the yaw rate in the
   // measured band. The reserve is also what the handbrake and the brake tap SPEND to break the
   // rear loose, so it is not dead weight.
-  // WAVE-S ROUND 2: 0.85 -> 1.00, because 0.85 was ALSO the reason the car had no edge. Commanding
-  // 85% of the achievable lateral acceleration puts ordinary cornering inside the tyres' linear
-  // range BY CONSTRUCTION, and the critic measured exactly that: six seconds of held lock at
-  // 250 km/h gave a dead-flat 28-29 deg/s with the slip angle never exceeding 4.9 deg. Nothing the
-  // player did could find the limit because the limit was 15% away at all times.
-  // The stability argument the 0.85 was bought with does not survive its own kill-control: the
-  // critic ran `gripUse: 1.00` and the car does NOT depart at 40 / 60 / 78 m/s over 6 s of full
-  // lock (their section 4.4), because the yaw-rate servo added later is what actually stabilises
-  // the car. At 1.00 the tyres work at their peak, held lock walks the slip angle up toward
-  // saturation instead of sitting at a third of it, and the yaw rate at 40 m/s reads 39 deg/s -
-  // which is where maximum-available yaw BELONGS relative to the research's 28-38 deg/s
-  // PLAYER-USED band (the doc says twice that available yaw must sit above the used band).
-  gripUse: 0.95,
+  // ROUND-2 REPAIR: 0.95 -> 0.85, i.e. BACK to the round-1 value, and this is a retraction of my own
+  // previous round's change. Round 2 moved it 0.85 -> 0.95 on the theory that a 15% grip reserve was
+  // what left the car with no power-on edge. THE ROUND-2 CRITIC SWEPT IT AND THE THEORY IS DEAD: at
+  // 0.85 / 0.95 / 1.00 six seconds of held lock at 250 km/h gives 28.1-28.7 / 31.4-32.5 /
+  // 31.8-32.9 deg/s with peak slip 5.0 / 5.5 / 5.8 deg and **0% of samples in the drift state at
+  // every value**. I re-ran that sweep myself against the shipped file and reproduce it to the
+  // decimal (`tools/_hr2fix.mjs` section 7d). So the term buys no edge at any value, and what it does
+  // buy is a FLATTER yaw curve: the falloff from the low-speed peak to vMax moves 0.55 -> 0.66 -> 0.72
+  // as it rises, against a `CONSENSUS`-marked "cars go progressively straighter toward top speed".
+  // 0.85 is therefore the value that costs nothing and keeps the most curve shape.
+  // The original reason for a reserve stands and is unchanged: a car commanded to exactly 100% of its
+  // lateral capability has both axles pinned at their friction circles with nothing left to correct a
+  // perturbation with, and the reserve is also what the handbrake and the brake tap SPEND to break
+  // the rear loose. The power-on edge is a separate, still-open item; see the honest-miss list.
+  gripUse: 0.85,
   // DownForce is a real Paradise attribute (PUBLISHED, unit not recovered). It is what makes the
   // yaw-rate curve fall with speed more slowly than 1/v while still falling.
   downforce: 0.95,      // extra fraction of static load at vMax
@@ -325,9 +327,12 @@ export const TUNE = {
   // slide self-sustaining, and it is why the slide now survives centred steering: with the wheels
   // straight there is nothing asking the car to stop rotating, exactly as in the reference.
   //
-  // driftStabilityAssist: 0.80 -> 2.40. It is now the gain of a servo on rHold rather than a
+  // driftStabilityAssist: 0.80 -> 6.00. It is now the gain of a servo on rHold rather than a
   // weakened pull toward zero, so it has to be strong enough to actually track it; below ~1.6 the
   // tyres' own restoring moment wins and the slide still decays in under a second.
+  // RULE-5 CORRECTION, round-2 repair: this comment said "0.80 -> 2.40" while the constant read 6.00.
+  // The critic caught it. 6.00 is the shipped and measured value; 2.40 was an intermediate that never
+  // shipped, and the "below ~1.6" figure is the floor it was chosen against, not the value.
   driftStabilityAssist: 6.00,
   driftYawAuthority: 0.90,
   // driftAngularDamping: 0.40 -> 0.24, AND IT NOW HAS A UNIT AND A MEANING. It used to damp the
@@ -340,7 +345,12 @@ export const TUNE = {
   // in ln(2)/0.24 = 2.89 s in theory and 2.35 s measured (the shortfall is the speed the slide costs
   // itself, which is real), and lowering the number lengthens the drift, which is the published
   // Paradise semantics ("lower value = drifts more sharply"). It is checkable by anyone, and it was
-  // checked: 0.24 / 0.30 / 0.60 measure 2.35 / 1.97 / 1.57 s of hold, i.e. the hold tracks 1/k.
+  // checked, TWICE. RULE-5 CORRECTION, round-2 repair: this line used to read "0.24 / 0.30 / 0.60
+  // measure 2.35 / 1.97 / 1.57 s", and 1.57 s is not a number this code produces at any of those
+  // values. The critic's sweep, which I reproduce, measures the hold at
+  // k = 0.12 / 0.24 / 0.30 / 0.48 / 0.60 as 3.92 / 2.35 / 1.97 / 1.34 / 1.13 s against ln(2)/k =
+  // 5.78 / 2.89 / 2.31 / 1.44 / 1.16 s, i.e. the hold does track 1/k (0.68x of theory at k=0.12
+  // rising to 0.97x at k=0.60) but 0.60 gives 1.13 s, not 1.57.
   driftAngularDamping: 0.24,
   // THE TAPPED COUNTERSTEER, which is the second of the three orderings. Paradise's double drift is
   // "let the car go back into the drift on its own" after a flick of opposite lock, so a TAP has to
@@ -351,9 +361,11 @@ export const TUNE = {
   //     hold each pay it exactly once) and it is a fraction of the ground speed, so it deepens the
   //     slide by roughly atan(0.10) = 5.7 deg of extra angle at any speed.
   //   * driftCounterGather is how many seconds of CONTINUOUS opposite lock hand the yaw target back
-  //     from rSustain to the rate the driver is actually asking for. At 0.45 s a 0.15 s tap only
-  //     reaches ~0.2 of the way (measured: 0.20) and the flick dominates, while a held countersteer
-  //     is at full authority in half a second and the slide collapses.
+  //     from rSustain to the rate the driver is actually asking for. At the shipped 0.60 s a 0.15 s
+  //     tap only reaches a quarter of the way and the flick dominates, while a held countersteer is
+  //     at full authority in 0.6 s and the slide collapses (measured: held 0.82 s against centred
+  //     2.35 s). RULE-5 CORRECTION, round-2 repair: this said "At 0.45 s" while the constant below
+  //     read 0.60. The critic caught it; 0.60 is the shipped value and 0.45 never shipped.
   // The brake tap's commanded slip angle, and the brake input that commands all of it. 0.55 is
   // just under main.js's FROZEN 0.6 authority cap, so a player pressing S reaches full authority.
   driftTapSlip: 0.30,
@@ -407,17 +419,72 @@ export const TUNE = {
   // ENTRY ALSO NEEDS INTENT (brake, e-brake or reverse-throttle) - see the gate in substep().
   // As ratios they also scale correctly with the handbrake, which lowers rear mu and therefore
   // lowers the angle at which a slide counts as one.
-  // WAVE-S ROUND 2: 1.4 -> 1.0. 1.4 x the rear tyre's 7.4 deg saturation angle is 10.3 deg of rear
-  // slip, and the critic measured a 200 ms brake tap at 130-150 km/h reaching 6.4-7.0 deg, so the
-  // published primary drift entry could not arm AT ALL through the real keybinds (main.js caps
-  // brake authority at 0.6, which is frozen, so the tap cannot be made harder from here). Entry at
-  // exactly the saturation angle is the honest threshold anyway: that IS the point where the rear
-  // tyre stops making more force for more angle. The safety property is unchanged and it was never
-  // the ratio: entry also requires INTENT (brake, e-brake or reverse throttle), so a cornering
-  // overshoot still cannot arm a drift.
-  driftEnterRatio: 1.0,   // x saturation slip to enter
+  // ROUND-2 REPAIR: 1.0 -> 1.4, i.e. BACK to the round-1 value, and this is the second retraction of
+  // my own previous round's change. Round 2 lowered it to 1.0 on the theory that 1.4 x the rear
+  // tyre's 7.4 deg saturation angle was too high for a 200 ms brake tap to reach. THE CRITIC'S
+  // KILL-CONTROL 10 REFUTES IT AND I REPRODUCE THE REFUTATION: at 1.4 the tap arms at every speed
+  // tested, reaches a DEEPER angle and holds 41-47% LONGER - 100/130/150 km/h give
+  // peak 11.3 / 11.0 / 10.9 deg held 1.66 / 1.59 / 1.56 s at 1.4, against 10.0 / 9.6 / 9.7 deg held
+  // 1.18 / 1.13 / 1.10 s at 1.0. Lowering the ratio armed the state EARLIER, at a shallower angle,
+  // and the tap's own angle command then froze the slide there. 1.0 was a regression on the exact
+  // metric it was changed for.
+  // What actually stopped round 1's tap arming was never this ratio; see `driftBreakRatio` below,
+  // which is the entry the published chain technique needs and which this file did not have.
+  driftEnterRatio: 1.4,   // x saturation slip to enter
   driftExitRatio: 0.7,    // x saturation slip to leave
   driftMinHold: 0.50,   // s
+  // ============================================================================================
+  // THE SECOND ENTRY, AND IT IS THE ONE THE PUBLISHED CHAIN DRIFT NEEDS. ROUND-2 REPAIR, new term.
+  // ============================================================================================
+  // THE DEFECT. Two rounds of critics measured the same thing: "tap brake, left, tap brake, right"
+  // - the technique docs/BURNOUT-HANDLING.md says world records are set with - gives six beats of
+  // 6.0 deg and 0% of samples in the drift state. Round 2 reported it fixed on a manoeuvre that gave
+  // each beat half a second of steady load in its own direction first; per beat, that run reads
+  // 9.7deg/93% | 15.6deg/50% | 6.6/0% | 6.0/0% | 6.1/0% | 6.1/0%, so beats 3-6 were round 1's number
+  // unchanged and the headline was beat 1 plus a re-tap inside beat 1's own live drift.
+  //
+  // WHY THE SLIP-ANGLE THRESHOLD ABOVE CANNOT DO IT, and this is the part that matters. Rear slip
+  // angle is KINEMATIC: alphaR = (vLat - b*yawRate)/v. To reach 7.4 deg at 36 m/s the car needs
+  // ~4.6 m/s of lateral velocity, and lateral velocity is the SLOW state - it is built by the
+  // integral of the lateral acceleration. A 200 ms tap cannot build it, and while the car is not yet
+  // in the drift state `stabilityAssist` is holding the yaw rate at rTarget, so the yaw-rate route to
+  // the same angle is closed too. So the threshold is reachable only by holding a steady near-limit
+  // corner first, and an ALTERNATING chain never gives one, because the 800 ms before each tap was
+  // spent loaded the other way. That is a structural dead end, not a tuning value.
+  //
+  // THE FIX IS A DIFFERENT QUESTION, ASKED OF THE SAME MODEL: not "has the rear tyre's slip angle
+  // got large" but "CAN THE REAR TYRE STILL MAKE THE FORCE THIS CORNER NEEDS". That is what oversteer
+  // IS, it is answered instantly rather than after an integral, and both sides of it are already
+  // computed in substep():
+  //   * demand  = m * |ayDemand| * a / L, the rear axle's share of a zero-net-yaw-moment corner at
+  //               the lateral acceleration the DRIVER is asking for (rTarget * v).
+  //   * capacity = fyRearCap, the friction-circle-limited lateral force the rear can actually make
+  //               right now, after the longitudinal force it is being asked to carry is taken out.
+  // Under the keyboard's brake the second collapses: at 130 km/h a brake tap puts the ABS clamp at
+  // 98.5% of the rear circle, which leaves sqrt(1 - 0.985^2) = 17% of it for cornering, so fyRearCap
+  // falls to ~1.9 kN against a ~12 kN demand. The rear tyre IS sliding at that instant, by the tyre
+  // model's own numbers, and the old test simply could not see it because the car had not yet had
+  // time to MOVE sideways.
+  // WHY IT CANNOT ARM A DRIFT BY ACCIDENT, which is the property that makes it shippable: the demand
+  // is proportional to the steering input, so a straight-line brake has demand ~0 and never trips it
+  // (measured: it needs roughly a fifth of full lock at 130 km/h before the deficit exists at all),
+  // and the INTENT gate is unchanged, so no amount of throttle-on cornering can arm it. Both
+  // conditions are still required. 1.0 is the honest threshold - "the rear cannot make what the
+  // corner needs" - and section 7b of tools/_hr2fix.mjs sweeps it.
+  driftBreakRatio: 1.0,
+  // HOW LONG THE BRAKE TAP'S ANGLE COMMAND OUTLIVES THE BRAKE, in seconds. ROUND-2 REPAIR, new term.
+  // A tap is 200 ms and the commanded angle is approached at `handbrakeAssist` through a rate bounded
+  // by `handbrakeRate`, so 200 ms closes only about a quarter of the error and the command then
+  // vanishes mid-flick. The physical reading is the honest one: the forward load transfer a brake tap
+  // makes does not disappear the instant the pedal comes up, it decays as the car pitches back, and
+  // that is the window the technique uses. MEASURED, and this is the kill-control that justifies the
+  // extra state (tools/_hr2fix.mjs 7e2): with the linger removed (`tap = tapNow`) a 200 ms tap at
+  // 100/130/150 km/h holds the drift state for 1.57 / 1.17 / 0.92 s, so at 150 km/h it is SHORTER than
+  // the 1.0 s beat the round-2 brief's own target names; at 0.35 it holds 1.88 / 1.50 / 1.31 s, which
+  // clears the beat at every speed. It buys nothing in the chain itself (per-beat 16.2 / 16.1 / 16.1
+  // deg with it removed against 16.2 across the board with it) - the chain is `driftBreakRatio` plus
+  // the still-entering hold below - so this term is scored on the single-tap target alone.
+  driftTapLinger: 0.35,
   slipRef: 0.45,        // rad of body slip angle that reads as |slip| = 1
   leanRef: 22,          // m/s^2 of lateral acceleration that reads as |lean| = 1
 
@@ -529,6 +596,7 @@ export function createPhysics({ blocks = [], bounds = 1400 } = {}) {
   // contact, a 3.2 deg graze now retains 79% of the speed it arrived with and a square hit 25%.
   let wallCool = 0;
   let driftHold = 0;
+  let tapCmd = 0;           // 0..1 brake-tap drift command, latched and decayed over driftTapLinger
   let counterHold = 0;      // s of CONTINUOUS opposite lock inside the current drift
   let counterPrev = 0;      // last substep's countersteer amount, for the flick's rate term
   let wreck = null;         // a wreck-grade contact, published through drainWreck() once
@@ -767,19 +835,49 @@ export function createPhysics({ blocks = [], bounds = 1400 } = {}) {
     // sideslip — tripped it, the assist stepped back to its drift value, and the car went to a
     // 138 deg/s flat spin. Measured, on the way to and including 78 m/s.
     const intent = handbrake || brake > 0.15 || throttle < 0;
+    // THE SECOND ENTRY: "the rear tyre cannot make the force this corner needs". Read the block at
+    // `driftBreakRatio` for why the slip-angle test above cannot arm an alternating chain and this
+    // can. `fyRearCap` is the friction-circle capacity computed above, already net of the
+    // longitudinal force the rear is carrying; the demand is the rear axle's share of a
+    // zero-net-yaw-moment corner at the acceleration the DRIVER is asking for, which is why a
+    // straight-line brake (ayDemand ~ 0) can never trip it.
+    // The brake tap's drift command, latched on the way up and decayed linearly over
+    // `driftTapLinger` on the way down. Rising instantly and falling slowly is deliberate: the
+    // command must be at full authority on the substep the player's tap lands, and must then outlive
+    // the pedal the way the load transfer does. Read the block at `driftTapLinger`.
+    const tapNow = clamp(brake / TUNE.driftTapBrake, 0, 1);
+    tapCmd = tapNow > tapCmd ? tapNow : Math.max(0, tapCmd - h / TUNE.driftTapLinger);
+    const fyRearDemand = m * Math.abs(ayDemand) * a / L;
+    const rearBroke = fyRearCap < fyRearDemand * TUNE.driftBreakRatio;
     if (!state.drifting) {
-      if (rearSlip > satSlip * TUNE.driftEnterRatio && intent) {
+      if ((rearSlip > satSlip * TUNE.driftEnterRatio || rearBroke) && intent) {
         state.drifting = true;
         driftHold = TUNE.driftMinHold;
       }
     } else {
+      // THE ENTRY IS STILL HAPPENING WHILE THE INPUT IS STILL BEING MADE. ROUND-2 REPAIR, and this is
+      // the second half of the chain-drift fix. Without it the min-hold starts running down from the
+      // substep the drift arms, so a 200 ms tap gets 0.5 s of drift state and the exit fires while the
+      // angle command is still swinging the car through - measured, the alternating chain sat at
+      // 50-54% of samples drifting, which IS driftMinHold / the 1 s beat, and the peak angle was
+      // whatever had been reached when the state machine let go. Re-arming the hold for as long as the
+      // rear is still broken AND the player is still asking (both conditions, unchanged) took the
+      // chain to 68-69% of samples drifting (kill-control 7e3). It cannot pin the state on: release the brake and `intent`
+      // goes false, so the hold decays and the ordinary exit test below runs.
+      if (rearBroke && intent) driftHold = TUNE.driftMinHold;
       driftHold = Math.max(0, driftHold - h);
       // EXIT ON "IS THE CAR STILL SIDEWAYS", not on the rear tyre alone. Measured: an 11 deg body
       // slide sustained by the assist below carries only ~5 deg of REAR slip, because the yaw rate
-      // that holds the angle is also what keeps the rear axle's own lateral velocity small. So a
-      // rear-slip-only exit dropped the drift state 0.40 s after a brake tap while the car was
-      // visibly still sideways, the full stability assist came back, and the slide was deleted -
-      // which is why the published chain-drift entry could never hold long enough for the next beat.
+      // that holds the angle is also what keeps the rear axle's own lateral velocity small.
+      // ATTRIBUTION CORRECTED, round-2 repair. Round 2's comment here claimed this `sideways` term is
+      // "why the published chain-drift entry could never hold long enough for the next beat". THE
+      // CRITIC'S KILL-CONTROL 12 REFUTES THAT AND I ACCEPT IT: reverting `sideways` to `rearSlip`
+      // alone leaves the hold after a 200 ms tap at 130 km/h at 1.13 s, identical to two decimals at
+      // either exit ratio. The 0.51 -> 1.13 s that round 2 earned is entirely
+      // `driftExitRatio: 1.0 -> 0.7` below. This term is kept because it is the right QUESTION to ask
+      // (a car with 11 deg of body slip is sideways whatever its rear tyre is doing) and because it is
+      // what stops the exit tightening again if `driftExitRatio` is ever raised - but it is NOT
+      // load-bearing today, and the next reader should go to the ratio, not to this line.
       const sideways = Math.max(rearSlip, Math.abs(state.slipAngle));
       if (sideways < satSlip * TUNE.driftExitRatio && driftHold <= 0 && av > 1) state.drifting = false;
       if (av <= 1) state.drifting = false;
@@ -871,7 +969,27 @@ export function createPhysics({ blocks = [], bounds = 1400 } = {}) {
     // driftFlick -> 0 moving a number it should not have been able to touch.
     const cPos = Math.max(0, counter);
     const dCounter = Math.max(0, cPos - counterPrev);
-    if (state.drifting) state.vLat -= dSign * TUNE.driftFlick * dCounter * gv;
+    // AND IT NEEDS THE CAR TO ACTUALLY BE SIDEWAYS FIRST. ROUND-2 REPAIR, and it is the same bug
+    // shape as the release bug above, found by exactly the same kind of kill-control. `dSign` is
+    // `Math.sign(slipNow || ...)`, so at a slip angle of a tenth of a degree it is NOISE, and the sign
+    // of a flick paid off it is a coin toss. That never mattered while the drift state could only arm
+    // after the car had been sideways for a while; the new capacity-based entry arms on the substep
+    // the e-brake bites, at ~0 deg of slip, and the flick then fired the WRONG WAY into the entry it
+    // was supposed to help. MEASURED: the 0.8 s e-brake entry the three orderings are built on peaked
+    // at 16.05 deg with this floor absent and 22.84 deg with it present, which is the whole of the
+    // entry depth the new entry criterion appeared to cost - i.e. the criterion cost nothing and this
+    // did. In the LIVE page the same defect read as ordering 1 failing outright: 1.25 s of hands-off
+    // hold against the 2.0 s bar, reproduced twice, because the entry it is measured against never got
+    // deeper than 11 deg. Half the rear tyre's own saturation angle (3.7 deg) is the floor: below that
+    // the car is not in a slide worth flicking, and above it `slipNow` has a sign that means something.
+    // WHAT IT COSTS, stated because it is a real trade and not a free win (kill-control 7e5): the first
+    // beat of an alternating chain from dead straight falls from 10.1 deg to 3.3 deg, because that
+    // 10.1 deg WAS the misfiring flick. Beats 2-6 are untouched at 16.2 deg. Paying 6.8 deg on one
+    // wind-up beat to buy 6.8 deg of e-brake entry and a live ordering-1 pass is the right side of the
+    // trade, but it is a trade.
+    if (state.drifting && Math.abs(slipNow) > satRear * 0.5) {
+      state.vLat -= dSign * TUNE.driftFlick * dCounter * gv;
+    }
     counterPrev = cPos;
 
     if (handbrake) {
@@ -905,10 +1023,30 @@ export function createPhysics({ blocks = [], bounds = 1400 } = {}) {
       // COMMANDS AN ANGLE, exactly as the e-brake does, just a shallower one - which is also the
       // only route left after main.js's frozen 0.6 brake-authority cap closed the physical one.
       // Released, the command goes away and the slide reverts to holding whatever it reached.
-      const tap = clamp(brake / TUNE.driftTapBrake, 0, 1);
-      const rSustain = tap > 0.01
-        ? rHold + clamp((TUNE.driftTapSlip * tap * Math.sign(state.steer || dSign) - slipNow)
-          * TUNE.handbrakeAssist, -TUNE.handbrakeRate, TUNE.handbrakeRate)
+      const tap = tapCmd;   // latched above, so it outlives the pedal by driftTapLinger
+      // THE COMMANDED ANGLE SCALES WITH HOW MUCH LOCK IS IN, exactly as the e-brake's `want` does a
+      // few lines up, and for the same reason - it is what keeps the new capacity-based entry above
+      // from turning every mid-corner dab of the brake into a full 17 deg slide. ROUND-2 REPAIR:
+      // without this factor the tap commanded its full angle off any steering at all, so the two
+      // changes together would have been a car that snaps sideways when you brush the brake in a
+      // gentle bend. Kill-control 7c in tools/_hr2fix.mjs measures the difference.
+      const steerFrac = clamp(Math.abs(state.steer), 0, 1);
+      const tapWant = TUNE.driftTapSlip * tap * steerFrac
+        * Math.sign(state.steer || dSign);
+      // THE TAP COMMAND IS A FLOOR ON THE ANGLE, NOT A TARGET. ROUND-2 REPAIR, and it is the same
+      // class of bug as the one round 2 fixed one level up: a two-sided servo on the commanded angle
+      // STRAIGHTENS a slide that got deeper than the command, so the tap's own bounded approach rate
+      // (handbrakeRate, 43 deg/s) became a CEILING on how fast the tail could come out, and it is
+      // slower than the tyres' own answer. Measured (7e4): the drift-state hold after a 200 ms tap at
+      // 100/130/150 km/h moved 1.68 / 1.34 / 1.17 s two-sided to 1.88 / 1.50 / 1.31 s one-sided, with
+      // the chain identical to a decimal. Only the outward half of the correction is kept, so the command can
+      // deepen a slide and can never shorten one; the `rHold` term still holds whatever angle is
+      // reached, and releasing the brake hands the slide back to driftAngularDamping as before.
+      const tapErr = tapWant - slipNow;
+      const tapOut = Math.sign(tapWant) * tapErr > 0
+        ? clamp(tapErr * TUNE.handbrakeAssist, -TUNE.handbrakeRate, TUNE.handbrakeRate) : 0;
+      const rSustain = tap > 0.01 && steerFrac > 0.05 && tapOut !== 0
+        ? rHold + tapOut
         : rHold - TUNE.driftAngularDamping * slipNow;
       const ref = lerp(rSustain, rTarget, gather);
       // FEED-FORWARD, not gain. A servo alone cannot hold rSustain: the tyres' restoring yaw moment
@@ -921,7 +1059,31 @@ export function createPhysics({ blocks = [], bounds = 1400 } = {}) {
       // the driver's hands and the differential are credited with countering inside a slide; it is
       // handed back as the countersteer gathers the car, so a held countersteer gets the full,
       // uncancelled tyre moment working for it.
-      yawAccel -= TUNE.driftYawAuthority * tyreMoment * (1 - gather);
+      // AND IT IS NOT CANCELLED WHILE THE REAR IS ACTUALLY BROKEN. ROUND-2 REPAIR, third and last
+      // half of the chain fix. `tyreMoment` is a RESTORING moment only while the rear tyre still has
+      // grip: with the rear's friction circle spent by the brake, fyRear collapses and the net moment
+      // (a*fyFront - b*fyRear)/izz becomes PRO-rotation - it IS the tail coming out. Cancelling it
+      // there credits the driver's hands with deleting the entry they just made, and that was the
+      // whole reason the chain's beats were shallow even once they armed. Measured (7e6), alternating
+      // chain at 130 km/h, per beat: 3.3 / 14.5 / 14.5 / 14.5 / 14.4 / 14.4 deg with it cancelled,
+      // 3.3 / 16.2 / 16.2 / 16.2 / 16.2 / 16.2 deg with it left alone while entering, and the
+      // single-tap hold went the same way (1.18 -> 1.50 s at 130 km/h). `rearBroke` is the honest gate
+      // rather than the brake input, because it is the condition that makes the moment pro-rotation in
+      // the first place; the moment the rear regrips, the feed-forward comes back and holds the slide.
+      // AND ONLY WHILE THE ENTRY IS STILL OPENING THE ANGLE, which is what `tapOut != 0` means: once
+      // the slide has reached the angle the tap asked for, the pro-rotation moment stops being an
+      // entry and starts being a spin. `rearBroke` stays true for as long as the player holds the
+      // brake, so gating on it alone left the moment uncancelled indefinitely.
+      // WHAT THIS IS AND IS NOT, measured, because the honest version matters here. A 2 s HELD brake
+      // plus lock at 130 km/h is a deep slide in this model and it was one BEFORE this round too:
+      // at 30 / 60 / 100% of lock the pre-repair file reaches 55.0 / 57.3 / 57.7 deg of slip at
+      // 138 deg/s of yaw, and this file reaches 35.5 / 52.7 / 66.7 deg at 55 / 119 / 138 deg/s. So a
+      // held brake is better at small lock, worse at full lock, and unchanged in kind; both recover
+      // to 0.0 deg of slip within 3 s of release at ~90 km/h. It is NOT a new defect and it is NOT
+      // fixed here - it is the pre-existing "hold the brake through a bend and the car goes round"
+      // behaviour, now recorded with numbers so the next round can decide whether it wants it.
+      const entering = rearBroke && tapOut !== 0;
+      yawAccel -= TUNE.driftYawAuthority * tyreMoment * (1 - gather) * (entering ? 0 : 1);
       yawAccel += (ref - state.yawRate) * lerp(TUNE.driftStabilityAssist, TUNE.stabilityAssist, gather);
     } else {
       yawAccel += (yawRef - state.yawRate) * TUNE.stabilityAssist;
@@ -984,7 +1146,7 @@ export function createPhysics({ blocks = [], bounds = 1400 } = {}) {
       state.vLat = 0; state.yawRate = 0; state.slipAngle = 0; state.drifting = false;
       state.chain = 0; state.impact = 0; state.accelG = 0; state.eventEarn = 0;
       state.ground = Math.abs(speed); prevGround = speed;
-      boostLatch = false; driftHold = 0; aLongPrev = 0; wallCool = 0;
+      boostLatch = false; driftHold = 0; tapCmd = 0; aLongPrev = 0; wallCool = 0;
       counterHold = 0; counterPrev = 0; wreck = null;
     },
 

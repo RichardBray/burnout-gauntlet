@@ -1,0 +1,83 @@
+== SOURCE: /Users/robray/fc/demos/burnout-gauntlet/game/physics.js
+
+== 1. THE THREE ORDERINGS (regression gate: 1 >= 2.0 s, 2 > 1, 3 < 1)
+  entry 22.8 deg | centred 2.37 s | tap 2.98 s | held 0.83 s | 1:HIT 2:HIT 3:HIT
+
+== 2. THE BLOCKER: the ALTERNATING chain, no prior load, per beat, at 100/130/150 km/h
+  "tap brake, left, tap brake, right" x6 at 1 s spacing, brake capped at the frozen 0.6
+  100 km/h: 2.5deg/68% | 15.3deg/69% | 15.4deg/69% | 15.6deg/69% | 15.7deg/69% | 15.8deg/69%   final 122 km/h   ALL SIX >=10deg AND DRIFTING: MISS
+  130 km/h: 3.3deg/68% | 16.2deg/69% | 16.2deg/69% | 16.2deg/69% | 16.2deg/69% | 16.2deg/69%   final 134 km/h   ALL SIX >=10deg AND DRIFTING: MISS
+  150 km/h: 3.6deg/68% | 17.3deg/69% | 16.8deg/69% | 16.7deg/69% | 16.6deg/69% | 16.5deg/69%   final 140 km/h   ALL SIX >=10deg AND DRIFTING: MISS
+
+== 3. the load-then-alternate chain (round 2's own manoeuvre): 0.6 s of load, then 6 beats
+  130 km/h: 8.9deg/100% | 20.6deg/69% | 16.2deg/69% | 16.2deg/69% | 16.2deg/69% | 16.2deg/69%   final 135 km/h   ALL SIX >=10deg AND DRIFTING: MISS
+
+== 4. ONE 200 ms TAP after 0.5 s of load (the round-2 brief's literal target)
+  shipped: 100: armed Y peak 9.5 held 1.88s | 130: armed Y peak 8.4 held 1.50s | 150: armed Y peak 7.9 held 1.31s
+
+== 5. THE GRIP EDGE: 6 s of held lock + throttle, and the yaw curve
+  130 km/h: yaw 29.4-33.3 deg/s | peak slip 4.6 deg | drifting 0%
+  180 km/h: yaw 29.1-30.0 deg/s | peak slip 4.7 deg | drifting 0%
+  250 km/h: yaw 28.1-28.7 deg/s | peak slip 5.0 deg | drifting 0%
+  yaw curve 12.5..78 m/s: 51.3 41.9 35.7 32.0 30.0 28.8 28.4 28.1 | monotone non-increasing yes | falloff vMax/peak 0.55
+
+== 6. THE E-BRAKE, regression gate: monotone in hold time, never faster than entry
+  80 km/h at 1/2/3 s: -26% / -70% / -93% | monotone down yes | ever faster than entry no
+  130 km/h at 1/2/3 s: -20% / -51% / -81% | monotone down yes | ever faster than entry no
+  200 km/h at 1/2/3 s: -19% / -45% / -67% | monotone down yes | ever faster than entry no
+  250 km/h at 1/2/3 s: -20% / -44% / -63% | monotone down yes | ever faster than entry no
+
+== 7. KILL-CONTROLS on this round's own mechanism
+
+  -- 7a. KILL: the rear-capacity entry criterion deleted (`rearBroke` forced false)
+     alternating chain 130: 3.3deg/0% | 6.2deg/0% | 6.3deg/0% | 6.3deg/0% | 6.3deg/0% | 6.3deg/0%   final 138 km/h   ALL SIX >=10deg AND DRIFTING: MISS
+     orderings:            entry 22.8 deg | centred 2.37 s | tap 2.98 s | held 0.83 s | 1:HIT 2:HIT 3:HIT
+       one tap with load  : 100: armed Y peak 10.6 held 1.78s | 130: armed Y peak 10.1 held 1.70s | 150: armed Y peak 10.0 held 1.68s
+
+  -- 7b. KILL: driftBreakRatio swept (how big a rear-force deficit counts as a break)
+     ratio 0.4: chain 3/67% 16/69% 16/69% 16/69% 16/69% 16/69% | held-lock-no-brake drifting 0% (must stay 0: no brake, no drift)
+     ratio 0.7: chain 3/68% 16/69% 16/69% 16/69% 16/69% 16/69% | held-lock-no-brake drifting 0% (must stay 0: no brake, no drift)
+     ratio 1.0: chain 3/68% 16/69% 16/69% 16/69% 16/69% 16/69% | held-lock-no-brake drifting 0% (must stay 0: no brake, no drift)
+     ratio 1.5: chain 3/69% 16/69% 16/69% 16/69% 16/69% 16/69% | held-lock-no-brake drifting 0% (must stay 0: no brake, no drift)
+     ratio 3.0: chain 3/69% 16/69% 16/69% 16/69% 17/69% 17/69% | held-lock-no-brake drifting 0% (must stay 0: no brake, no drift)
+
+  -- 7c. KILL: the tap command stops scaling with steering angle
+     alternating chain 130: 3.3deg/68% | 16.2deg/69% | 16.3deg/69% | 16.3deg/69% | 16.3deg/69% | 16.3deg/69%   final 135 km/h   ALL SIX >=10deg AND DRIFTING: MISS
+
+  -- 7e2. KILL: the tap-command LINGER removed (`tap = tapCmd` -> `tap = tapNow`)
+     alternating chain 130: 3.3deg/68% | 16.2deg/69% | 16.1deg/69% | 16.1deg/69% | 16.1deg/69% | 16.1deg/69%   final 131 km/h   ALL SIX >=10deg AND DRIFTING: MISS
+       one tap with load  : 100: armed Y peak 9.2 held 1.57s | 130: armed Y peak 8.3 held 1.17s | 150: armed Y peak 7.9 held 0.92s
+
+  -- 7e3. KILL: the still-entering hold refresh removed
+     alternating chain 130: 3.3deg/50% | 16.2deg/53% | 16.1deg/53% | 16.2deg/53% | 16.2deg/54% | 16.2deg/54%   final 134 km/h   ALL SIX >=10deg AND DRIFTING: MISS
+
+  -- 7e4. KILL: the tap servo goes back to TWO-SIDED (it may straighten the slide again)
+     alternating chain 130: 3.3deg/68% | 16.2deg/69% | 16.2deg/69% | 16.2deg/69% | 16.2deg/69% | 16.2deg/69%   final 134 km/h   ALL SIX >=10deg AND DRIFTING: MISS
+       one tap with load  : 100: armed Y peak 9.5 held 1.68s | 130: armed Y peak 8.4 held 1.34s | 150: armed Y peak 7.9 held 1.17s
+
+  -- 7e5. KILL: the flick's "car must be sideways first" floor removed
+     orderings:            entry 16.0 deg | centred 2.19 s | tap 3.05 s | held 0.82 s | 1:HIT 2:HIT 3:HIT
+     alternating chain 130: 10.1deg/68% | 16.2deg/69% | 16.2deg/69% | 16.2deg/69% | 16.2deg/69% | 16.2deg/69%   final 134 km/h   ALL SIX >=10deg AND DRIFTING: HIT
+
+  -- 7e6. KILL: the uncancelled-while-entering feed-forward put back (always cancelled)
+     alternating chain 130: 3.3deg/68% | 14.5deg/69% | 14.5deg/69% | 14.5deg/69% | 14.4deg/69% | 14.4deg/69%   final 142 km/h   ALL SIX >=10deg AND DRIFTING: MISS
+       one tap with load  : 100: armed Y peak 8.6 held 1.24s | 130: armed Y peak 8.4 held 1.18s | 150: armed Y peak 8.5 held 1.17s
+
+  -- 7f. TRIGGER-HAPPINESS: can the new entry arm a drift the player did not ask for?
+     straight line, full brake, no steer   : drifting 0% | peak slip 0.0 deg
+     straight line, full brake, 10% steer  : drifting 0% | peak slip 0.8 deg
+     straight line, full brake, 20% steer  : drifting 70% | peak slip 6.1 deg
+     gentle bend (30% lock), no brake      : drifting 0% | peak slip 1.3 deg
+     full lock, full throttle, no brake    : drifting 0% | peak slip 4.3 deg
+     gentle bend (30% lock) + full brake   : drifting 92% | peak slip 35.5 deg
+
+  -- 7d. gripUse re-swept on THIS file (the critic's finding 3)
+     gripUse 0.85: 250 km/h yaw 28.1-28.7 deg/s, peak slip 5.0 deg, drifting 0% | falloff 0.55 | yaw@40.2 32.0
+     gripUse 0.95: 250 km/h yaw 31.4-32.5 deg/s, peak slip 5.5 deg, drifting 0% | falloff 0.66 | yaw@40.2 34.0
+     gripUse 1.00: 250 km/h yaw 31.8-32.9 deg/s, peak slip 5.8 deg, drifting 0% | falloff 0.72 | yaw@40.2 34.1
+
+  -- 7e. driftEnterRatio re-swept on THIS file (the critic's finding 2)
+       enterRatio 1.0: 100: armed Y peak 9.5 held 1.88s | 130: armed Y peak 8.4 held 1.50s | 150: armed Y peak 7.9 held 1.31s
+       alternating chain 130: 3.3deg/68% | 16.2deg/69% | 16.2deg/69% | 16.2deg/69% | 16.2deg/69% | 16.2deg/69%   final 134 km/h   ALL SIX >=10deg AND DRIFTING: MISS
+       enterRatio 1.4: 100: armed Y peak 9.5 held 1.88s | 130: armed Y peak 8.4 held 1.50s | 150: armed Y peak 7.9 held 1.31s
+       alternating chain 130: 3.3deg/68% | 16.2deg/69% | 16.2deg/69% | 16.2deg/69% | 16.2deg/69% | 16.2deg/69%   final 134 km/h   ALL SIX >=10deg AND DRIFTING: MISS
