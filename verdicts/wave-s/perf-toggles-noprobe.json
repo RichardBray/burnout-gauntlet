@@ -1,0 +1,378 @@
+{
+  "when": "2026-08-03T18:52:45.209Z",
+  "mode": "toggles",
+  "scene": "dusk-highway-chase",
+  "scenario": "cruise",
+  "viewport": {
+    "w": 1280,
+    "h": 720,
+    "deviceScaleFactor": 1
+  },
+  "res": 1,
+  "alone": true,
+  "toggles": {
+    "scenario": "cruise",
+    "res": 1,
+    "passes": 3,
+    "noiseFloorMs": 0.47499999997671694,
+    "ranked": [
+      {
+        "name": "post-chain-off",
+        "note": "every pass after RenderPass disabled, so RenderPass draws straight to the canvas",
+        "minBase": 33.00500000000466,
+        "minOff": 17.59499999997206,
+        "cleanDelta": 15.410000000032596,
+        "deltaMed": 15.410000000032596,
+        "deltas": [
+          14.86999999996624,
+          15.56000000005588,
+          15.410000000032596
+        ],
+        "sameSign": true,
+        "callsSaved": 282.99999999999994,
+        "trisSaved": 2524408.8,
+        "verdict": "REAL"
+      },
+      {
+        "name": "world-hidden",
+        "note": "world.group.visible = false (city, roads, props, lamps)",
+        "minBase": 33.035000000032596,
+        "minOff": 20.525000000023283,
+        "cleanDelta": 12.510000000009313,
+        "deltaMed": 12.400000000023283,
+        "deltas": [
+          12.184999999997672,
+          12.625,
+          12.400000000023283
+        ],
+        "sameSign": true,
+        "callsSaved": 249.77499999999998,
+        "trisSaved": 7054184.3,
+        "verdict": "REAL"
+      },
+      {
+        "name": "msaa-off",
+        "note": "composer HalfFloat target samples 4 -> 0 (no MSAA resolve)",
+        "minBase": 33.13000000000466,
+        "minOff": 25.650000000023283,
+        "cleanDelta": 7.4799999999813735,
+        "deltaMed": 7.329999999987194,
+        "deltas": [
+          7.329999999987194,
+          7.21999999997206,
+          7.4799999999813735
+        ],
+        "sameSign": true,
+        "callsSaved": -1.9750000000000227,
+        "trisSaved": -13.700000000186265,
+        "verdict": "REAL"
+      },
+      {
+        "name": "ssao-off",
+        "note": "SSAO pass disabled (it re-submits the whole scene for its normal prepass)",
+        "minBase": 32.99499999999534,
+        "minOff": 27.994999999995343,
+        "cleanDelta": 5,
+        "deltaMed": 5,
+        "deltas": [
+          5.014999999984866,
+          4.649999999906868,
+          5
+        ],
+        "sameSign": true,
+        "callsSaved": 269.37500000000006,
+        "trisSaved": 2524396.5,
+        "verdict": "REAL"
+      },
+      {
+        "name": "shadow-casters-off",
+        "note": "every castShadow flag cleared: the shadow map still exists but draws nothing",
+        "minBase": 33.03000000002794,
+        "minOff": 28.190000000060536,
+        "cleanDelta": 4.839999999967404,
+        "deltaMed": 4.459999999962747,
+        "deltas": [
+          4.15500000002794,
+          4.459999999962747,
+          5.1049999999813735
+        ],
+        "sameSign": true,
+        "callsSaved": 123.625,
+        "trisSaved": 2307864,
+        "verdict": "REAL"
+      },
+      {
+        "name": "shadows-off",
+        "note": "renderer.shadowMap.enabled = false + full material recompile (4096 map, PCFSoft)",
+        "minBase": 32.82999999995809,
+        "minOff": 28.580000000016298,
+        "cleanDelta": 4.249999999941792,
+        "deltaMed": 4.369999999878928,
+        "deltas": [
+          4.409999999974389,
+          4.125,
+          4.369999999878928
+        ],
+        "sameSign": true,
+        "callsSaved": 124.22500000000002,
+        "trisSaved": 2307869.2,
+        "verdict": "REAL"
+      },
+      {
+        "name": "bloom-off",
+        "note": "UnrealBloomPass disabled",
+        "minBase": 33.30499999993481,
+        "minOff": 29.339999999996508,
+        "cleanDelta": 3.9649999999383,
+        "deltaMed": 3.8999999999068677,
+        "deltas": [
+          3.995000000024447,
+          3.8999999999068677,
+          3.655000000144355
+        ],
+        "sameSign": true,
+        "callsSaved": 12.125,
+        "trisSaved": 6.5,
+        "verdict": "REAL"
+      },
+      {
+        "name": "hud-off",
+        "note": "hud.setVisible(false) — hud.update() then skips draw() entirely (hud.js:2686)",
+        "minBase": 32.85999999998603,
+        "minOff": 29.080000000074506,
+        "cleanDelta": 3.7799999999115244,
+        "deltaMed": 3.5599999999976717,
+        "deltas": [
+          3.5599999999976717,
+          4.375,
+          3.3699999999953434
+        ],
+        "sameSign": true,
+        "callsSaved": -0.7250000000000227,
+        "trisSaved": -4.7000000001862645,
+        "verdict": "REAL"
+      },
+      {
+        "name": "shadow-autoupdate-off",
+        "note": "shadowMap.autoUpdate = false: the map is drawn ONCE and reused",
+        "minBase": 33.09999999997672,
+        "minOff": 30.175000000046566,
+        "cleanDelta": 2.924999999930151,
+        "deltaMed": 2.8099999999976717,
+        "deltas": [
+          2.805000000007567,
+          2.8099999999976717,
+          2.9299999999348074
+        ],
+        "sameSign": true,
+        "callsSaved": 124.54999999999995,
+        "trisSaved": 2307871.0999999996,
+        "verdict": "REAL"
+      },
+      {
+        "name": "output-grade-off",
+        "note": "graded tonemap output pass disabled (frame looks wrong; cost only)",
+        "minBase": 33.154999999911524,
+        "minOff": 30.589999999967404,
+        "cleanDelta": 2.5649999999441206,
+        "deltaMed": 2.3400000000256114,
+        "deltas": [
+          2.3400000000256114,
+          2.650000000023283,
+          2.1499999999068677
+        ],
+        "sameSign": true,
+        "callsSaved": -0.849999999999909,
+        "trisSaved": -6.7000000001862645,
+        "verdict": "REAL"
+      },
+      {
+        "name": "car-hidden",
+        "note": "carRoot.visible = false — hides the hero in the MAIN pass; the probe still bakes",
+        "minBase": 33.25500000000466,
+        "minOff": 31.53000000002794,
+        "cleanDelta": 1.724999999976717,
+        "deltaMed": 1.3500000000058243,
+        "deltas": [
+          1.3500000000058243,
+          1.0949999999720603,
+          1.759999999892898
+        ],
+        "sameSign": true,
+        "callsSaved": 386.79999999999995,
+        "trisSaved": 299394.9000000004,
+        "verdict": "REAL"
+      },
+      {
+        "name": "ssao-half-res",
+        "note": "ssao.setSize(w/2, h/2): its normal prepass and AO at quarter the pixels",
+        "minBase": 32.97500000000582,
+        "minOff": 31.380000000004653,
+        "cleanDelta": 1.5950000000011677,
+        "deltaMed": 1.6099999999860302,
+        "deltas": [
+          1.5950000000011677,
+          1.6099999999860302,
+          1.85499999998137
+        ],
+        "sameSign": true,
+        "callsSaved": -0.1750000000000682,
+        "trisSaved": -0.6000000005587935,
+        "verdict": "REAL"
+      },
+      {
+        "name": "sky-hidden",
+        "note": "sky.skyMesh.visible = false",
+        "minBase": 33.2050000000163,
+        "minOff": 31.625,
+        "cleanDelta": 1.5800000000162981,
+        "deltaMed": 1.1950000000651926,
+        "deltas": [
+          1.5800000000162981,
+          1.1199999999953434,
+          1.1950000000651926
+        ],
+        "sameSign": true,
+        "callsSaved": 1.0249999999999773,
+        "trisSaved": 13.799999999813735,
+        "verdict": "REAL"
+      },
+      {
+        "name": "shadow-map-1024",
+        "note": "4096x4096 -> 1024x1024, same cascade span",
+        "minBase": 32.97999999998137,
+        "minOff": 32.38999999999942,
+        "cleanDelta": 0.5899999999819556,
+        "deltaMed": 0.47999999998137355,
+        "deltas": [
+          0.6849999999976717,
+          0.37999999994644895,
+          0.47999999998137355
+        ],
+        "sameSign": true,
+        "callsSaved": -0.3000000000000682,
+        "trisSaved": -2.6000000005587935,
+        "verdict": "REAL"
+      },
+      {
+        "name": "shadow-map-2048",
+        "note": "4096x4096 -> 2048x2048, same cascade span",
+        "minBase": 33.01000000000931,
+        "minOff": 32.5,
+        "cleanDelta": 0.5100000000093132,
+        "deltaMed": 0.20999999999912689,
+        "deltas": [
+          0.20999999999912689,
+          0.08000000001629815,
+          0.6350000000093132
+        ],
+        "sameSign": true,
+        "callsSaved": -0.22500000000002274,
+        "trisSaved": -1.6000000005587935,
+        "verdict": "REAL"
+      },
+      {
+        "name": "buildings-hidden",
+        "note": "world.buildings.visible = false (the city blocks themselves)",
+        "minBase": 33.18000000005122,
+        "minOff": 33.04500000004191,
+        "cleanDelta": 0.13500000000931323,
+        "deltaMed": 0.005000000004656613,
+        "deltas": [
+          0.005000000004656613,
+          -0.13999999995576218,
+          0.19499999994877726
+        ],
+        "sameSign": false,
+        "callsSaved": 15.425000000000068,
+        "trisSaved": 46551.200000000186,
+        "verdict": "noise"
+      },
+      {
+        "name": "probe-faces-off",
+        "note": "only the six 512-px scene renders killed; PMREM prefilter still runs every refresh",
+        "minBase": 33.27000000001863,
+        "minOff": 33.16000000000349,
+        "cleanDelta": 0.11000000001513399,
+        "deltaMed": -0.04999999998835847,
+        "deltas": [
+          0.3499999999985448,
+          -0.04999999998835847,
+          -0.32499999995343387
+        ],
+        "sameSign": false,
+        "callsSaved": -0.14999999999997726,
+        "trisSaved": -1.7999999998137355,
+        "verdict": "noise"
+      },
+      {
+        "name": "car-env-probe-off",
+        "note": "car.js reflection probe: six 512-px face renders AND the PMREM prefilter, both off",
+        "minBase": 33.11000000000058,
+        "minOff": 33.01500000001397,
+        "cleanDelta": 0.09499999998661224,
+        "deltaMed": 0.06500000006053597,
+        "deltas": [
+          -0.19000000000050932,
+          0.3099999999976717,
+          0.06500000006053597
+        ],
+        "sameSign": false,
+        "callsSaved": 0.02500000000009095,
+        "trisSaved": -0.6999999992549419,
+        "verdict": "noise"
+      },
+      {
+        "name": "smear-pass-off",
+        "note": "boost radial-smear pass disabled",
+        "minBase": 33.03999999992084,
+        "minOff": 32.949999999953434,
+        "cleanDelta": 0.08999999996740371,
+        "deltaMed": 0.15500000002793968,
+        "deltas": [
+          0.15500000002793968,
+          0.08999999996740371,
+          0.2450000001117587
+        ],
+        "sameSign": true,
+        "callsSaved": 0.09999999999990905,
+        "trisSaved": 0.19999999925494194,
+        "verdict": "noise"
+      },
+      {
+        "name": "traffic-hidden",
+        "note": "traffic.group.visible = false (7 InstancedMeshes, 56 vehicles)",
+        "minBase": 32.990000000048894,
+        "minOff": 33.15000000002328,
+        "cleanDelta": -0.15999999997438863,
+        "deltaMed": 0.13500000000931323,
+        "deltas": [
+          -0.15999999997438863,
+          0.19999999995343387,
+          0.13500000000931323
+        ],
+        "sameSign": false,
+        "callsSaved": 12.875,
+        "trisSaved": 10602,
+        "verdict": "noise"
+      },
+      {
+        "name": "lamps-hidden",
+        "note": "world.lamps.visible = false (street furniture instances)",
+        "minBase": 33.01500000001397,
+        "minOff": 33.195000000006985,
+        "cleanDelta": -0.17999999999301508,
+        "deltaMed": -0.22499999997671694,
+        "deltas": [
+          0.29999999998835847,
+          -0.22499999997671694,
+          -0.23999999999068677
+        ],
+        "sameSign": false,
+        "callsSaved": 10.700000000000045,
+        "trisSaved": 49533.90000000037,
+        "verdict": "noise"
+      }
+    ]
+  }
+}

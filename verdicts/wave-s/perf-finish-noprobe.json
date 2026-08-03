@@ -1,0 +1,54 @@
+{
+  "when": "2026-08-03T18:51:01.081Z",
+  "mode": "finish",
+  "scene": "dusk-highway-chase",
+  "scenario": "cruise",
+  "viewport": {
+    "w": 1280,
+    "h": 720,
+    "deviceScaleFactor": 1
+  },
+  "res": 1,
+  "alone": true,
+  "finish": [
+    {
+      "baseP50": 32.904999999999745,
+      "instrumentedP50": 33.590000000000146,
+      "submitP50": 31.850000023841858,
+      "finishP50": 0.004999995231628418,
+      "submitMean": 32.62571428353045,
+      "finishMean": 0.0058823548445180686,
+      "n": 119,
+      "renderW": 1280,
+      "renderH": 720,
+      "pixelRatio": 1,
+      "devicePixelRatio": 1
+    },
+    {
+      "baseP50": 33.31500000000051,
+      "instrumentedP50": 32.86000000000058,
+      "submitP50": 31.334999978542328,
+      "finishP50": 0.004999995231628418,
+      "submitMean": 31.341839999675752,
+      "finishMean": 0.006079999446868897,
+      "n": 125,
+      "renderW": 1280,
+      "renderH": 720,
+      "pixelRatio": 1,
+      "devicePixelRatio": 1
+    },
+    {
+      "baseP50": 33.19499999999971,
+      "instrumentedP50": 32.93500000000131,
+      "submitP50": 31.224999964237213,
+      "finishP50": 0.004999995231628418,
+      "submitMean": 31.312399999141693,
+      "finishMean": 0.005920004844665527,
+      "n": 125,
+      "renderW": 1280,
+      "renderH": 720,
+      "pixelRatio": 1,
+      "devicePixelRatio": 1
+    }
+  ]
+}

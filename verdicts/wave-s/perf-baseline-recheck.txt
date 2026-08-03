@@ -1,0 +1,14 @@
+# tools/fps.mjs  scene=dusk-highway-chase  viewport 1280x720 dsf 1  warmup 2.5s  measure 8.0s  repeat 3
+# frame time is rAF-to-rAF from window.__frameStats. Invalid under concurrent load.
+
+    scenario   res  run     n     mean      p50      p90       p99       max  fpsP50  >16.7%  renderW  renderH  ratio  dpr resScale  calls      tris  progs   geos   texs    km/h  |slip|
+      cruise  1.00    1   177    45.13    23.15   110.27    118.45    121.13   43.21   68.93     1280      720      1    1        1    983  12461630    132    392     92  271.87    0.00
+      cruise  1.00    2   175    45.79    23.49   112.28    117.07    117.52   42.58   69.71     1280      720      1    1        1   1004  12824905    132    392     92  271.72    0.00
+      cruise  1.00    3   176    45.53    23.04   111.36    115.05    120.57   43.40   72.73     1280      720      1    1        1    961  12098359    132    392     92  271.79    0.00
+   SPREAD cruise       res 1.00  p50 across 3 runs: min 23.04  med 23.15  max 23.49  range 1.93%   [23.15, 23.49, 23.04]
+        city  1.00    1   154    51.91    29.56   119.05    154.51    168.62   33.83   76.62     1280      720      1    1        1   1060  12462166    132    392     92  253.22    0.00
+        city  1.00    2   151    53.26    27.79   138.49    174.87    177.26   35.98   73.51     1280      720      1    1        1   1061  12462171    132    392     92  258.00    0.00
+        city  1.00    3   155    52.07    24.52   121.83    144.31    162.69   40.79   74.19     1280      720      1    1        1   1060  12462164    132    392     92  253.65    0.00
+   SPREAD city         res 1.00  p50 across 3 runs: min 24.52  med 27.79  max 29.56  range 20.58%   [29.56, 27.79, 24.52]
+
+json /Users/robray/fc/demos/burnout-gauntlet/verdicts/wave-s/perf-baseline-recheck.json

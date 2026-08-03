@@ -1,0 +1,16 @@
+
+# MAP COST CENSUS, scenario city, car at -325,0,116
+# world.group: 69 InstancedMeshes + 567 plain meshes, 203540 instances, 2395584 triangles of unique+instanced geometry
+# grid extent 560 m, camera far 6000 m, fog undefined..undefined
+
+  withinM  instances  cumInst%        tris  cumTris%
+       50       1393      0.68       16586      0.69
+      100       5105      3.19       60150      3.20
+      150       9202      7.71      105472      7.61
+      200      10464     12.85      124122     12.79
+      300      25307     25.29      298592     25.25
+      400      29957     40.01      352240     39.96
+      600      61177     70.06      722616     70.12
+      all      60935    100.00      715806    100.00
+
+json /Users/robray/fc/demos/burnout-gauntlet/verdicts/wave-s/perf-map-city.json

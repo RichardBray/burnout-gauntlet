@@ -1,0 +1,216 @@
+{
+  "when": "2026-08-03T18:12:17.038Z",
+  "mode": "submits",
+  "scene": "dusk-highway-chase",
+  "scenario": "cruise",
+  "viewport": {
+    "w": 1280,
+    "h": 720,
+    "deviceScaleFactor": 1
+  },
+  "res": 1,
+  "alone": true,
+  "submits": {
+    "rows": [
+      {
+        "what": "renderer.render -> 512x512",
+        "perFrameCalls": 828,
+        "perFrameTris": 15447880,
+        "perFrameMs": 112.67000007629395,
+        "invocations": 6
+      },
+      {
+        "what": "renderer.render -> 1280x720 msaa4",
+        "perFrameCalls": 430,
+        "perFrameTris": 5147758,
+        "perFrameMs": 3.1549999713897705,
+        "invocations": 3
+      },
+      {
+        "what": "renderer.render -> 1280x720",
+        "perFrameCalls": 300,
+        "perFrameTris": 2676086,
+        "perFrameMs": 1.1700000166893005,
+        "invocations": 3
+      },
+      {
+        "what": "shadowMap.render -> 1280x720 msaa4",
+        "perFrameCalls": 124,
+        "perFrameTris": 2451206,
+        "perFrameMs": 0.47499996423721313,
+        "invocations": 3
+      },
+      {
+        "what": "renderer.render -> 1536x2048",
+        "perFrameCalls": 23,
+        "perFrameTris": 276,
+        "perFrameMs": 0.18999993801116943,
+        "invocations": 23
+      },
+      {
+        "what": "renderer.render -> 640x360",
+        "perFrameCalls": 4,
+        "perFrameTris": 4,
+        "perFrameMs": 0.025000035762786865,
+        "invocations": 4
+      },
+      {
+        "what": "renderer.render -> 320x180",
+        "perFrameCalls": 2,
+        "perFrameTris": 2,
+        "perFrameMs": 0.009999990463256836,
+        "invocations": 2
+      },
+      {
+        "what": "renderer.render -> 160x90",
+        "perFrameCalls": 2,
+        "perFrameTris": 2,
+        "perFrameMs": 0.009999990463256836,
+        "invocations": 2
+      },
+      {
+        "what": "renderer.render -> 80x45",
+        "perFrameCalls": 2,
+        "perFrameTris": 2,
+        "perFrameMs": 0.005000054836273193,
+        "invocations": 2
+      },
+      {
+        "what": "renderer.render -> 40x23",
+        "perFrameCalls": 2,
+        "perFrameTris": 2,
+        "perFrameMs": 0.009999990463256836,
+        "invocations": 2
+      },
+      {
+        "what": "renderer.render -> canvas",
+        "perFrameCalls": 1,
+        "perFrameTris": 1,
+        "perFrameMs": 0.009999990463256836,
+        "invocations": 1
+      },
+      {
+        "what": "shadowMap.render -> 1280x720",
+        "perFrameCalls": 0,
+        "perFrameTris": 0,
+        "perFrameMs": 0,
+        "invocations": 3
+      },
+      {
+        "what": "shadowMap.render -> 640x360",
+        "perFrameCalls": 0,
+        "perFrameTris": 0,
+        "perFrameMs": 0,
+        "invocations": 4
+      },
+      {
+        "what": "shadowMap.render -> 320x180",
+        "perFrameCalls": 0,
+        "perFrameTris": 0,
+        "perFrameMs": 0,
+        "invocations": 2
+      },
+      {
+        "what": "shadowMap.render -> 160x90",
+        "perFrameCalls": 0,
+        "perFrameTris": 0,
+        "perFrameMs": 0,
+        "invocations": 2
+      },
+      {
+        "what": "shadowMap.render -> 80x45",
+        "perFrameCalls": 0,
+        "perFrameTris": 0,
+        "perFrameMs": 0,
+        "invocations": 2
+      },
+      {
+        "what": "shadowMap.render -> 40x23",
+        "perFrameCalls": 0,
+        "perFrameTris": 0,
+        "perFrameMs": 0,
+        "invocations": 2
+      },
+      {
+        "what": "shadowMap.render -> canvas",
+        "perFrameCalls": 0,
+        "perFrameTris": 0,
+        "perFrameMs": 0,
+        "invocations": 1
+      },
+      {
+        "what": "shadowMap.render -> 512x512",
+        "perFrameCalls": 0,
+        "perFrameTris": 0,
+        "perFrameMs": 0.009999990463256836,
+        "invocations": 6
+      },
+      {
+        "what": "shadowMap.render -> 1536x2048",
+        "perFrameCalls": 0,
+        "perFrameTris": 0,
+        "perFrameMs": 0.009999990463256836,
+        "invocations": 23
+      }
+    ],
+    "frames": 12,
+    "renderSize": {
+      "w": 1280,
+      "h": 720,
+      "cssW": 1280,
+      "cssH": 720,
+      "pixelRatio": 1,
+      "devicePixelRatio": 1
+    },
+    "frameTotals": [
+      {
+        "calls": 747,
+        "tris": 7823865
+      },
+      {
+        "calls": 745,
+        "tris": 7823861
+      },
+      {
+        "calls": 1594,
+        "tris": 23272013
+      },
+      {
+        "calls": 743,
+        "tris": 7823857
+      },
+      {
+        "calls": 743,
+        "tris": 7823857
+      },
+      {
+        "calls": 1592,
+        "tris": 23271989
+      },
+      {
+        "calls": 743,
+        "tris": 7823857
+      },
+      {
+        "calls": 743,
+        "tris": 7823857
+      },
+      {
+        "calls": 743,
+        "tris": 7823857
+      },
+      {
+        "calls": 1594,
+        "tris": 23272013
+      },
+      {
+        "calls": 743,
+        "tris": 7823857
+      },
+      {
+        "calls": 1584,
+        "tris": 23271893
+      }
+    ]
+  }
+}

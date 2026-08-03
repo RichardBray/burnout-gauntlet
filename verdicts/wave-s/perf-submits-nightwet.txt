@@ -1,0 +1,29 @@
+
+# SCENE SUBMISSIONS PER FRAME (median over 12 frames), scenario night-wet, renderW 1280 renderH 720 pixelRatio 1
+# shadowMap.render is NESTED inside renderer.render, so its calls/tris are also
+# counted in the renderer.render row that encloses it.
+submission                                      invocs    calls        tris    cpuMs
+renderer.render -> 512x512                           6     1976    29076792   219.73
+renderer.render -> 256x256                           6      686    14537784     8.71
+renderer.render -> 1280x720 msaa4                    3      903     7398408    43.13
+renderer.render -> 640x360                           6      586     5070974     3.44
+renderer.render -> 1280x720                          3      758     5052226     2.30
+shadowMap.render -> 1280x720 msaa4                   3      133     2307970     0.62
+renderer.render -> 1536x2048                        23       23         276     0.25
+renderer.render -> 320x180                           2        2           2     0.01
+renderer.render -> 160x90                            2        2           2     0.01
+renderer.render -> 80x45                             2        2           2     0.00
+renderer.render -> 40x23                             2        2           2     0.01
+renderer.render -> canvas                            1        1           1     0.02
+shadowMap.render -> 640x360                          6        0           0     0.00
+shadowMap.render -> 1280x720                         3        0           0     0.00
+shadowMap.render -> 320x180                          2        0           0     0.00
+shadowMap.render -> 160x90                           2        0           0     0.00
+shadowMap.render -> 80x45                            2        0           0     0.00
+shadowMap.render -> 40x23                            2        0           0     0.00
+shadowMap.render -> canvas                           1        0           0     0.00
+shadowMap.render -> 512x512                          6        0           0     0.00
+shadowMap.render -> 256x256                          6        0           0     0.00
+shadowMap.render -> 1536x2048                       23        0           0     0.00
+
+json /Users/robray/fc/demos/burnout-gauntlet/verdicts/wave-s/perf-submits-nightwet.json

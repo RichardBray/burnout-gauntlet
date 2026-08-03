@@ -1,0 +1,72 @@
+{
+  "when": "2026-08-03T19:15:56.251Z",
+  "mode": "toggles",
+  "scene": "dusk-highway-chase",
+  "scenario": "cruise",
+  "viewport": {
+    "w": 1280,
+    "h": 720,
+    "deviceScaleFactor": 1
+  },
+  "res": 1,
+  "alone": true,
+  "toggles": {
+    "scenario": "cruise",
+    "res": 1,
+    "passes": 3,
+    "noiseFloorMs": 0.13999999999941792,
+    "ranked": [
+      {
+        "name": "instances-10pct",
+        "note": "every world InstancedMesh count cut to 10%: the cost a per-instance distance cull could recover",
+        "minBase": 33.05000000000291,
+        "minOff": 27.20999999999185,
+        "cleanDelta": 5.8400000000110595,
+        "deltaMed": 5.485000000000582,
+        "deltas": [
+          4.8799999999992,
+          6.050000000010186,
+          5.485000000000582
+        ],
+        "sameSign": true,
+        "callsSaved": -1.1750000000000682,
+        "trisSaved": 6347141.199999999,
+        "verdict": "REAL"
+      },
+      {
+        "name": "shadow-casters-off",
+        "note": "every castShadow flag cleared: the shadow map still exists but draws nothing",
+        "minBase": 32.9600000000064,
+        "minOff": 28.169999999998254,
+        "cleanDelta": 4.790000000008149,
+        "deltaMed": 4.994999999998981,
+        "deltas": [
+          4.994999999998981,
+          5.259999999994761,
+          4.1450000000040745
+        ],
+        "sameSign": true,
+        "callsSaved": 124.20000000000005,
+        "trisSaved": 2307867.9000000004,
+        "verdict": "REAL"
+      },
+      {
+        "name": "hud-off",
+        "note": "hud.setVisible(false) — hud.update() then skips draw() entirely (hud.js:2686)",
+        "minBase": 32.91000000000349,
+        "minOff": 29.090000000003783,
+        "cleanDelta": 3.819999999999709,
+        "deltaMed": 3.75,
+        "deltas": [
+          3.819999999999709,
+          3.610000000015134,
+          3.75
+        ],
+        "sameSign": true,
+        "callsSaved": -0.9750000000000227,
+        "trisSaved": -6.7000000001862645,
+        "verdict": "REAL"
+      }
+    ]
+  }
+}

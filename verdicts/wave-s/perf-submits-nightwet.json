@@ -1,0 +1,230 @@
+{
+  "when": "2026-08-03T19:13:46.127Z",
+  "mode": "submits",
+  "scene": "dusk-highway-chase",
+  "scenario": "night-wet",
+  "viewport": {
+    "w": 1280,
+    "h": 720,
+    "deviceScaleFactor": 1
+  },
+  "res": 1,
+  "alone": true,
+  "submits": {
+    "rows": [
+      {
+        "what": "renderer.render -> 512x512",
+        "perFrameCalls": 1976,
+        "perFrameTris": 29076792,
+        "perFrameMs": 219.72500002384186,
+        "invocations": 6
+      },
+      {
+        "what": "renderer.render -> 256x256",
+        "perFrameCalls": 686,
+        "perFrameTris": 14537784,
+        "perFrameMs": 8.714999914169312,
+        "invocations": 6
+      },
+      {
+        "what": "renderer.render -> 1280x720 msaa4",
+        "perFrameCalls": 903,
+        "perFrameTris": 7398408,
+        "perFrameMs": 43.13499999046326,
+        "invocations": 3
+      },
+      {
+        "what": "renderer.render -> 640x360",
+        "perFrameCalls": 586,
+        "perFrameTris": 5070974,
+        "perFrameMs": 3.4399999380111694,
+        "invocations": 6
+      },
+      {
+        "what": "renderer.render -> 1280x720",
+        "perFrameCalls": 758,
+        "perFrameTris": 5052226,
+        "perFrameMs": 2.300000011920929,
+        "invocations": 3
+      },
+      {
+        "what": "shadowMap.render -> 1280x720 msaa4",
+        "perFrameCalls": 133,
+        "perFrameTris": 2307970,
+        "perFrameMs": 0.6150000095367432,
+        "invocations": 3
+      },
+      {
+        "what": "renderer.render -> 1536x2048",
+        "perFrameCalls": 23,
+        "perFrameTris": 276,
+        "perFrameMs": 0.25,
+        "invocations": 23
+      },
+      {
+        "what": "renderer.render -> 320x180",
+        "perFrameCalls": 2,
+        "perFrameTris": 2,
+        "perFrameMs": 0.009999990463256836,
+        "invocations": 2
+      },
+      {
+        "what": "renderer.render -> 160x90",
+        "perFrameCalls": 2,
+        "perFrameTris": 2,
+        "perFrameMs": 0.009999990463256836,
+        "invocations": 2
+      },
+      {
+        "what": "renderer.render -> 80x45",
+        "perFrameCalls": 2,
+        "perFrameTris": 2,
+        "perFrameMs": 0.004999995231628418,
+        "invocations": 2
+      },
+      {
+        "what": "renderer.render -> 40x23",
+        "perFrameCalls": 2,
+        "perFrameTris": 2,
+        "perFrameMs": 0.009999990463256836,
+        "invocations": 2
+      },
+      {
+        "what": "renderer.render -> canvas",
+        "perFrameCalls": 1,
+        "perFrameTris": 1,
+        "perFrameMs": 0.01500004529953003,
+        "invocations": 1
+      },
+      {
+        "what": "shadowMap.render -> 640x360",
+        "perFrameCalls": 0,
+        "perFrameTris": 0,
+        "perFrameMs": 0.004999995231628418,
+        "invocations": 6
+      },
+      {
+        "what": "shadowMap.render -> 1280x720",
+        "perFrameCalls": 0,
+        "perFrameTris": 0,
+        "perFrameMs": 0.004999995231628418,
+        "invocations": 3
+      },
+      {
+        "what": "shadowMap.render -> 320x180",
+        "perFrameCalls": 0,
+        "perFrameTris": 0,
+        "perFrameMs": 0,
+        "invocations": 2
+      },
+      {
+        "what": "shadowMap.render -> 160x90",
+        "perFrameCalls": 0,
+        "perFrameTris": 0,
+        "perFrameMs": 0,
+        "invocations": 2
+      },
+      {
+        "what": "shadowMap.render -> 80x45",
+        "perFrameCalls": 0,
+        "perFrameTris": 0,
+        "perFrameMs": 0,
+        "invocations": 2
+      },
+      {
+        "what": "shadowMap.render -> 40x23",
+        "perFrameCalls": 0,
+        "perFrameTris": 0,
+        "perFrameMs": 0,
+        "invocations": 2
+      },
+      {
+        "what": "shadowMap.render -> canvas",
+        "perFrameCalls": 0,
+        "perFrameTris": 0,
+        "perFrameMs": 0,
+        "invocations": 1
+      },
+      {
+        "what": "shadowMap.render -> 512x512",
+        "perFrameCalls": 0,
+        "perFrameTris": 0,
+        "perFrameMs": 0,
+        "invocations": 6
+      },
+      {
+        "what": "shadowMap.render -> 256x256",
+        "perFrameCalls": 0,
+        "perFrameTris": 0,
+        "perFrameMs": 0.004999995231628418,
+        "invocations": 6
+      },
+      {
+        "what": "shadowMap.render -> 1536x2048",
+        "perFrameCalls": 0,
+        "perFrameTris": 0,
+        "perFrameMs": 0.004999995231628418,
+        "invocations": 23
+      }
+    ],
+    "frames": 12,
+    "renderSize": {
+      "w": 1280,
+      "h": 720,
+      "cssW": 1280,
+      "cssH": 720,
+      "pixelRatio": 1,
+      "devicePixelRatio": 1
+    },
+    "frameTotals": [
+      {
+        "calls": 1684,
+        "tris": 12450747
+      },
+      {
+        "calls": 1684,
+        "tris": 12450747
+      },
+      {
+        "calls": 1684,
+        "tris": 12450747
+      },
+      {
+        "calls": 3677,
+        "tris": 41527723
+      },
+      {
+        "calls": 1676,
+        "tris": 12450651
+      },
+      {
+        "calls": 1674,
+        "tris": 12450647
+      },
+      {
+        "calls": 1674,
+        "tris": 12450647
+      },
+      {
+        "calls": 3673,
+        "tris": 41527715
+      },
+      {
+        "calls": 1674,
+        "tris": 12450647
+      },
+      {
+        "calls": 1674,
+        "tris": 12450647
+      },
+      {
+        "calls": 1674,
+        "tris": 12450647
+      },
+      {
+        "calls": 3667,
+        "tris": 41527703
+      }
+    ]
+  }
+}

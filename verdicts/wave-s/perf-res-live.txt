@@ -1,0 +1,20 @@
+
+# RESOLUTION SWEEP  scenario=cruise kill=none repeat=3
+res     run     n      p50     mean       p99  renderW  renderH  ratio  dpr    Mpx  probe/100f    km/h
+1.00      1   131    23.04    45.93    118.27     1280      720      1    1   0.92       33.59  264.09
+1.00      2   132    23.19    45.45    134.72     1280      720      1    1   0.92       34.09  264.23
+1.00      3   132    22.97    45.72    116.69     1280      720      1    1   0.92       34.09  264.36
+0.70      1   169    28.09    35.24     88.48      896      503    0.7    1   0.45       29.59  269.81
+0.70      2   171    29.27    35.41     88.86      896      503    0.7    1   0.45       29.82  269.59
+0.70      3   172    30.22    35.19     88.19      896      503    0.7    1   0.45       29.65  270.06
+0.40      1   204    23.27    29.38     66.66      512      288    0.4    1   0.15       28.92  270.96
+0.40      2   204    21.60    29.26     66.85      512      288    0.4    1   0.15       28.92  270.93
+0.40      3   205    21.28    29.30     66.64      512      288    0.4    1   0.15       28.78  270.92
+
+# best p50 per res (contention is one-sided, so the floor is the robust estimator),
+# with the ms-per-megapixel implied slope. A fragment-bound frame keeps that slope flat.
+  res 1.00  1280x720 (0.92 Mpx)  best p50 22.97 ms  med 23.04  x1.00 of res 1.00  pixels x1.00  ms/Mpx 24.92
+  res 0.70  896x503 (0.45 Mpx)  best p50 28.09 ms  med 29.27  x1.22 of res 1.00  pixels x0.49  ms/Mpx 62.33
+  res 0.40  512x288 (0.15 Mpx)  best p50 21.28 ms  med 21.60  x0.93 of res 1.00  pixels x0.16  ms/Mpx 144.31
+
+json /Users/robray/fc/demos/burnout-gauntlet/verdicts/wave-s/perf-res-live.json

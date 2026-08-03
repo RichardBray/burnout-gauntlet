@@ -1,0 +1,112 @@
+
+# EXTRA KILL-CONTROLS  scenario=cruise res=1.00 passes=3 warmup 2.0s measure 5.0s
+  pass 1 car-env-probe-off      base p50 33.11  off p50 33.30  delta -0.19  calls 682->682  probe/100f 46.36->0.00
+  pass 1 probe-faces-off        base p50 33.51  off p50 33.16  delta 0.35  calls 682->682  probe/100f 50.00->0.00
+  pass 1 shadow-map-2048        base p50 33.31  off p50 33.10  delta 0.21  calls 682->682  probe/100f 46.00->46.00
+  pass 1 shadow-map-1024        base p50 33.07  off p50 32.39  delta 0.68  calls 682->682  probe/100f 46.36->44.52
+  pass 1 shadow-autoupdate-off  base p50 33.36  off p50 30.55  delta 2.81  calls 682->557  probe/100f 46.00->42.94
+  pass 1 ssao-half-res          base p50 32.98  off p50 31.38  delta 1.60  calls 681->682  probe/100f 46.05->42.86
+  pass 1 msaa-off               base p50 33.26  off p50 25.93  delta 7.33  calls 682->684  probe/100f 49.66->41.24
+  pass 1 buildings-hidden       base p50 33.31  off p50 33.30  delta 0.01  calls 682->666  probe/100f 46.36->48.00
+  pass 1 lamps-hidden           base p50 33.49  off p50 33.20  delta 0.30  calls 681->671  probe/100f 49.32->46.36
+  pass 1 shadow-casters-off     base p50 33.31  off p50 29.15  delta 4.16  calls 682->558  probe/100f 47.33->42.05
+  pass 1 car-hidden             base p50 33.33  off p50 31.98  delta 1.35  calls 682->295  probe/100f 46.67->43.04
+  pass 1 post-chain-off         base p50 33.32  off p50 18.46  delta 14.87  calls 682->399  probe/100f 47.33->26.77
+  pass 1 ssao-off               base p50 33.08  off p50 28.07  delta 5.01  calls 682->412  probe/100f 47.02->43.43
+  pass 1 bloom-off              base p50 33.34  off p50 29.34  delta 4.00  calls 682->670  probe/100f 48.99->41.62
+  pass 1 smear-pass-off         base p50 33.35  off p50 33.19  delta 0.16  calls 682->682  probe/100f 46.98->47.33
+  pass 1 output-grade-off       base p50 33.17  off p50 30.83  delta 2.34  calls 681->682  probe/100f 49.33->42.68
+  pass 1 world-hidden           base p50 33.13  off p50 20.94  delta 12.18  calls 682->432  probe/100f 45.70->31.49
+  pass 1 traffic-hidden         base p50 32.99  off p50 33.15  delta -0.16  calls 682->669  probe/100f 47.02->48.00
+  pass 1 sky-hidden             base p50 33.21  off p50 31.63  delta 1.58  calls 682->681  probe/100f 47.33->45.28
+  pass 1 hud-off                base p50 33.19  off p50 29.63  delta 3.56  calls 682->682  probe/100f 45.03->41.86
+  pass 1 shadows-off            base p50 32.99  off p50 28.58  delta 4.41  calls 682->558  probe/100f 48.00->41.57
+  pass 2 car-env-probe-off      base p50 33.33  off p50 33.02  delta 0.31  calls 682->682  probe/100f 47.33->0.00
+  pass 2 probe-faces-off        base p50 33.28  off p50 33.33  delta -0.05  calls 681->682  probe/100f 47.02->0.00
+  pass 2 shadow-map-2048        base p50 33.01  off p50 32.93  delta 0.08  calls 682->682  probe/100f 47.02->45.39
+  pass 2 shadow-map-1024        base p50 33.10  off p50 32.73  delta 0.38  calls 682->682  probe/100f 46.36->45.45
+  pass 2 shadow-autoupdate-off  base p50 33.10  off p50 30.29  delta 2.81  calls 682->557  probe/100f 47.68->42.86
+  pass 2 ssao-half-res          base p50 33.09  off p50 31.48  delta 1.61  calls 682->682  probe/100f 45.70->42.86
+  pass 2 msaa-off               base p50 33.32  off p50 26.10  delta 7.22  calls 682->684  probe/100f 48.99->40.51
+  pass 2 buildings-hidden       base p50 33.18  off p50 33.32  delta -0.14  calls 682->667  probe/100f 48.00->47.68
+  pass 2 lamps-hidden           base p50 33.02  off p50 33.24  delta -0.22  calls 681->671  probe/100f 47.68->46.36
+  pass 2 shadow-casters-off     base p50 33.03  off p50 28.57  delta 4.46  calls 681->558  probe/100f 47.68->41.81
+  pass 2 car-hidden             base p50 33.26  off p50 32.16  delta 1.09  calls 681->295  probe/100f 46.36->43.04
+  pass 2 post-chain-off         base p50 33.26  off p50 17.69  delta 15.56  calls 682->399  probe/100f 46.67->26.16
+  pass 2 ssao-off               base p50 33.13  off p50 28.48  delta 4.65  calls 682->412  probe/100f 48.99->41.81
+  pass 2 bloom-off              base p50 33.30  off p50 29.41  delta 3.90  calls 682->670  probe/100f 48.32->42.11
+  pass 2 smear-pass-off         base p50 33.04  off p50 32.95  delta 0.09  calls 681->682  probe/100f 45.70->45.70
+  pass 2 output-grade-off       base p50 33.24  off p50 30.59  delta 2.65  calls 681->682  probe/100f 45.70->42.42
+  pass 2 world-hidden           base p50 33.15  off p50 20.53  delta 12.63  calls 682->432  probe/100f 46.36->30.00
+  pass 2 traffic-hidden         base p50 33.47  off p50 33.27  delta 0.20  calls 682->669  probe/100f 47.65->47.02
+  pass 2 sky-hidden             base p50 33.31  off p50 32.19  delta 1.12  calls 682->681  probe/100f 48.00->42.68
+  pass 2 hud-off                base p50 33.46  off p50 29.08  delta 4.38  calls 682->682  probe/100f 48.30->41.95
+  pass 2 shadows-off            base p50 32.83  off p50 28.70  delta 4.13  calls 682->558  probe/100f 47.68->41.81
+  pass 3 car-env-probe-off      base p50 33.14  off p50 33.07  delta 0.07  calls 682->682  probe/100f 47.68->0.00
+  pass 3 probe-faces-off        base p50 33.27  off p50 33.59  delta -0.32  calls 682->681  probe/100f 49.01->0.00
+  pass 3 shadow-map-2048        base p50 33.14  off p50 32.50  delta 0.64  calls 682->682  probe/100f 46.36->45.45
+  pass 3 shadow-map-1024        base p50 32.98  off p50 32.50  delta 0.48  calls 682->682  probe/100f 47.68->44.52
+  pass 3 shadow-autoupdate-off  base p50 33.10  off p50 30.18  delta 2.93  calls 682->558  probe/100f 46.05->41.67
+  pass 3 ssao-half-res          base p50 33.27  off p50 31.41  delta 1.85  calls 682->682  probe/100f 48.99->42.24
+  pass 3 msaa-off               base p50 33.13  off p50 25.65  delta 7.48  calls 682->683  probe/100f 47.02->40.51
+  pass 3 buildings-hidden       base p50 33.24  off p50 33.05  delta 0.19  calls 682->667  probe/100f 46.36->45.70
+  pass 3 lamps-hidden           base p50 33.07  off p50 33.31  delta -0.24  calls 682->671  probe/100f 45.70->47.30
+  pass 3 shadow-casters-off     base p50 33.30  off p50 28.19  delta 5.10  calls 681->558  probe/100f 47.68->41.34
+  pass 3 car-hidden             base p50 33.29  off p50 31.53  delta 1.76  calls 682->295  probe/100f 47.33->43.13
+  pass 3 post-chain-off         base p50 33.01  off p50 17.59  delta 15.41  calls 682->399  probe/100f 46.71->26.16
+  pass 3 ssao-off               base p50 32.99  off p50 27.99  delta 5.00  calls 682->413  probe/100f 46.31->41.76
+  pass 3 bloom-off              base p50 33.31  off p50 29.65  delta 3.66  calls 682->670  probe/100f 46.00->41.76
+  pass 3 smear-pass-off         base p50 33.44  off p50 33.19  delta 0.25  calls 682->682  probe/100f 47.33->46.36
+  pass 3 output-grade-off       base p50 33.15  off p50 31.01  delta 2.15  calls 681->682  probe/100f 45.70->45.00
+  pass 3 world-hidden           base p50 33.04  off p50 20.64  delta 12.40  calls 682->432  probe/100f 47.02->30.13
+  pass 3 traffic-hidden         base p50 33.29  off p50 33.15  delta 0.14  calls 682->669  probe/100f 47.65->48.00
+  pass 3 sky-hidden             base p50 33.27  off p50 32.07  delta 1.20  calls 682->681  probe/100f 46.00->43.95
+  pass 3 hud-off                base p50 32.86  off p50 29.49  delta 3.37  calls 681->683  probe/100f 46.00->41.86
+  pass 3 shadows-off            base p50 33.22  off p50 28.85  delta 4.37  calls 682->558  probe/100f 46.98->41.71
+
+# per-toggle baseline MINIMA 32.83 .. 33.30 ms -> min-envelope noise floor 0.47 ms
+kill-control              minBase   minOff    delta  medDelta   calls-      tris-   sign  verdict
+post-chain-off              33.01    17.59    15.41     15.41      283    2524409    3/3     REAL
+world-hidden                33.04    20.53    12.51     12.40      250    7054184    3/3     REAL
+msaa-off                    33.13    25.65     7.48      7.33       -2        -14    3/3     REAL
+ssao-off                    32.99    27.99     5.00      5.00      269    2524397    3/3     REAL
+shadow-casters-off          33.03    28.19     4.84      4.46      124    2307864    3/3     REAL
+shadows-off                 32.83    28.58     4.25      4.37      124    2307869    3/3     REAL
+bloom-off                   33.30    29.34     3.96      3.90       12          7    3/3     REAL
+hud-off                     32.86    29.08     3.78      3.56       -1         -5    3/3     REAL
+shadow-autoupdate-off       33.10    30.18     2.92      2.81      125    2307871    3/3     REAL
+output-grade-off            33.15    30.59     2.56      2.34       -1         -7    3/3     REAL
+car-hidden                  33.26    31.53     1.72      1.35      387     299395    3/3     REAL
+ssao-half-res               32.98    31.38     1.60      1.61        0         -1    3/3     REAL
+sky-hidden                  33.21    31.63     1.58      1.20        1         14    3/3     REAL
+shadow-map-1024             32.98    32.39     0.59      0.48        0         -3    3/3     REAL
+shadow-map-2048             33.01    32.50     0.51      0.21        0         -2    3/3     REAL
+buildings-hidden            33.18    33.05     0.14      0.01       15      46551    2/3    noise
+probe-faces-off             33.27    33.16     0.11     -0.05        0         -2    1/3    noise
+car-env-probe-off           33.11    33.02     0.09      0.07        0         -1    2/3    noise
+smear-pass-off              33.04    32.95     0.09      0.16        0          0    3/3    noise
+traffic-hidden              32.99    33.15    -0.16      0.14       13      10602    2/3    noise
+lamps-hidden                33.02    33.20    -0.18     -0.22       11      49534    1/3    noise
+  post-chain-off           every pass after RenderPass disabled, so RenderPass draws straight to the canvas
+  world-hidden             world.group.visible = false (city, roads, props, lamps)
+  msaa-off                 composer HalfFloat target samples 4 -> 0 (no MSAA resolve)
+  ssao-off                 SSAO pass disabled (it re-submits the whole scene for its normal prepass)
+  shadow-casters-off       every castShadow flag cleared: the shadow map still exists but draws nothing
+  shadows-off              renderer.shadowMap.enabled = false + full material recompile (4096 map, PCFSoft)
+  bloom-off                UnrealBloomPass disabled
+  hud-off                  hud.setVisible(false) — hud.update() then skips draw() entirely (hud.js:2686)
+  shadow-autoupdate-off    shadowMap.autoUpdate = false: the map is drawn ONCE and reused
+  output-grade-off         graded tonemap output pass disabled (frame looks wrong; cost only)
+  car-hidden               carRoot.visible = false — hides the hero in the MAIN pass; the probe still bakes
+  ssao-half-res            ssao.setSize(w/2, h/2): its normal prepass and AO at quarter the pixels
+  sky-hidden               sky.skyMesh.visible = false
+  shadow-map-1024          4096x4096 -> 1024x1024, same cascade span
+  shadow-map-2048          4096x4096 -> 2048x2048, same cascade span
+  buildings-hidden         world.buildings.visible = false (the city blocks themselves)
+  probe-faces-off          only the six 512-px scene renders killed; PMREM prefilter still runs every refresh
+  car-env-probe-off        car.js reflection probe: six 512-px face renders AND the PMREM prefilter, both off
+  smear-pass-off           boost radial-smear pass disabled
+  traffic-hidden           traffic.group.visible = false (7 InstancedMeshes, 56 vehicles)
+  lamps-hidden             world.lamps.visible = false (street furniture instances)
+
+json /Users/robray/fc/demos/burnout-gauntlet/verdicts/wave-s/perf-toggles-noprobe.json

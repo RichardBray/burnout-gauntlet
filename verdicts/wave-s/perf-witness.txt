@@ -1,0 +1,17 @@
+MACHINE QUIET 19:42:46
+=== before stall-live 19:42:46 load:{ 6.72 6.54 5.77 }
+=== before stall-noprobe 19:45:50 load:{ 38.48 13.40 8.23 }
+=== before res-noprobe 19:46:45 load:{ 31.29 16.11 9.59 }
+=== before res-live 19:49:25 load:{ 7.40 12.21 9.14 }
+=== before finish 19:51:00 load:{ 3.94 9.84 8.55 }
+=== before phase-noprobe 19:51:39 load:{ 4.93 9.30 8.41 }
+=== before phase-live 19:52:12 load:{ 4.80 8.78 8.25 }
+=== before toggles-noprobe 19:52:44 load:{ 3.72 8.14 8.04 }
+=== before baseline-recheck 20:10:38 load:{ 7.64 5.17 5.78 }
+=== END 20:12:09 load:{ 4.63 4.85 5.60 }
+=== before finish-res040 20:12:16 load:{ 4.26 4.77 5.57 }
+=== before finish-live 20:12:55 load:{ 3.95 4.63 5.48 }
+=== before map-census 20:13:34 load:{ 4.45 4.69 5.46 }
+=== before submits-city-night 20:13:45 load:{ 4.45 4.68 5.45 }
+=== before phase-res040 20:13:53 load:{ 4.46 4.68 5.44 }
+=== END3 20:14:15 load:{ 4.30 4.62 5.40 }

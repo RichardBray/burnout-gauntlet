@@ -1,0 +1,16 @@
+
+# MAP COST CENSUS, scenario cruise, car at -284,0,-694
+# world.group: 69 InstancedMeshes + 567 plain meshes, 203540 instances, 2395584 triangles of unique+instanced geometry
+# grid extent 560 m, camera far 6000 m, fog undefined..undefined
+
+  withinM  instances  cumInst%        tris  cumTris%
+       50         53      0.03         610      0.03
+      100         60      0.06         782      0.06
+      150        156      0.13        1776      0.13
+      200         94      0.18        1312      0.19
+      300       5718      2.99       66116      2.95
+      400      10250      8.02      118338      7.89
+      600      34270     24.86      407916     24.91
+      all     152939    100.00     1798734    100.00
+
+json /Users/robray/fc/demos/burnout-gauntlet/verdicts/wave-s/perf-map-cruise.json

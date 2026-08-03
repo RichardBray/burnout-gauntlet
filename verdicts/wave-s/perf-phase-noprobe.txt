@@ -1,0 +1,53 @@
+
+# PHASE CPU run 1: frame p50 33.31 ms mean 33.72 p99 52.78 over 179 frames, renderW 1280 renderH 720 pixelRatio 1 devicePixelRatio 1 resScale 1
+phase                calls   meanMs      p50      p99     maxMs   %frame
+composer.render        182    31.76    31.54    42.03     72.34    94.21
+hud.update             182     0.92     0.87     1.67      2.04     2.73
+traffic.update         182     0.08     0.07     0.17      0.18     0.23
+audio.update           182     0.06     0.06     0.11      0.40     0.18
+physics.step           182     0.04     0.04     0.10      0.15     0.13
+camRig.update          182     0.03     0.03     0.06      0.08     0.09
+car.update             182     0.02     0.01     0.05      0.06     0.05
+world.update           182     0.01     0.01     0.03      0.03     0.03
+boost.update           182     0.01     0.00     0.01      0.02     0.02
+sky.update             182     0.00     0.00     0.01      0.01     0.01
+crash.update             0     0.00      -        -        0.00     0.00
+-- accounted                  32.93                                97.67
+-- tick() only                 1.17
+-- unaccounted                 0.79                                 2.33
+
+# PHASE CPU run 2: frame p50 33.22 ms mean 33.44 p99 55.39 over 181 frames, renderW 1280 renderH 720 pixelRatio 1 devicePixelRatio 1 resScale 1
+phase                calls   meanMs      p50      p99     maxMs   %frame
+composer.render        184    31.45    31.49    37.18     66.55    94.03
+hud.update             184     0.92     0.88     1.43      1.49     2.74
+traffic.update         184     0.08     0.08     0.21      0.25     0.25
+audio.update           184     0.06     0.06     0.11      0.41     0.18
+physics.step           184     0.04     0.04     0.09      0.11     0.13
+camRig.update          184     0.03     0.03     0.10      0.12     0.10
+car.update             184     0.02     0.01     0.05      0.07     0.05
+world.update           184     0.01     0.01     0.03      0.09     0.04
+boost.update           184     0.01     0.00     0.01      0.03     0.02
+sky.update             184     0.00     0.00     0.01      0.01     0.01
+crash.update             0     0.00      -        -        0.00     0.00
+-- accounted                  32.62                                97.54
+-- tick() only                 1.17
+-- unaccounted                 0.82                                 2.46
+
+# PHASE CPU run 3: frame p50 34.03 ms mean 34.95 p99 53.44 over 173 frames, renderW 1280 renderH 720 pixelRatio 1 devicePixelRatio 1 resScale 1
+phase                calls   meanMs      p50      p99     maxMs   %frame
+composer.render        176    32.80    32.06    41.74     73.24    93.87
+hud.update             176     0.97     0.91     1.79      2.20     2.78
+traffic.update         176     0.09     0.08     0.23      0.26     0.25
+audio.update           176     0.07     0.06     0.17      0.32     0.19
+physics.step           176     0.05     0.04     0.10      0.12     0.13
+camRig.update          176     0.04     0.03     0.08      0.14     0.10
+car.update             176     0.02     0.01     0.06      0.12     0.05
+world.update           176     0.02     0.01     0.05      0.62     0.05
+boost.update           176     0.01     0.00     0.02      0.03     0.02
+sky.update             176     0.00     0.00     0.01      0.08     0.01
+crash.update             0     0.00      -        -        0.00     0.00
+-- accounted                  34.05                                97.45
+-- tick() only                 1.25
+-- unaccounted                 0.89                                 2.55
+
+json /Users/robray/fc/demos/burnout-gauntlet/verdicts/wave-s/perf-phase-noprobe.json

@@ -1,0 +1,10 @@
+
+# GPU-BOUND KILL-CONTROL. submit = CPU wall time of composer.render(); finish = the
+# gl.finish() straight after it, i.e. the GPU draining that frame. res 1.00
+run    frameP50  instrP50  submitP50  finishP50  submitMean  finishMean   gpu%
+1         32.90     33.59      31.85       0.00       32.63        0.01   0.02
+2         33.32     32.86      31.33       0.00       31.34        0.01   0.02
+3         33.19     32.94      31.22       0.00       31.31        0.01   0.02
+# buffer: renderW 1280 renderH 720 pixelRatio 1 devicePixelRatio 1
+
+json /Users/robray/fc/demos/burnout-gauntlet/verdicts/wave-s/perf-finish-noprobe.json

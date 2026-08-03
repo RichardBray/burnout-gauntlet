@@ -1,0 +1,28 @@
+
+# RESOLUTION SWEEP  scenario=cruise kill=probe repeat=3
+res     run     n      p50     mean       p99  renderW  renderH  ratio  dpr    Mpx  probe/100f    km/h
+1.00      1   176    33.79    34.21     52.18     1280      720      1    1   0.92       38.07  271.19
+1.00      2   174    34.18    34.45     52.71     1280      720      1    1   0.92       39.08  271.30
+1.00      3   178    33.06    34.19     54.55     1280      720      1    1   0.92       38.76  271.31
+0.85      1   206    29.06    29.30     52.15     1088      612   0.85    1   0.67       34.95  271.71
+0.85      2   210    29.01    28.85     46.03     1088      612   0.85    1   0.67       34.29  271.94
+0.85      3   210    28.78    28.79     47.57     1088      612   0.85    1   0.67       33.81  271.72
+0.70      1   245    24.37    24.49     31.14      896      503    0.7    1   0.45       32.65  272.12
+0.70      2   244    24.55    24.51     31.42      896      503    0.7    1   0.45       31.56  272.00
+0.70      3   248    24.18    24.17     30.45      896      503    0.7    1   0.45       33.06  272.09
+0.55      1   284    20.66    21.15     34.18      704      396   0.55    1   0.28       25.70  272.27
+0.55      2   286    20.57    20.92     33.77      704      396   0.55    1   0.28       25.52  272.25
+0.55      3   289    20.28    20.77     34.44      704      396   0.55    1   0.28       25.61  272.21
+0.40      1   330    18.26    18.32     35.03      512      288    0.4    1   0.15       23.03  272.28
+0.40      2   319    18.70    18.79     35.33      512      288    0.4    1   0.15       24.14  272.29
+0.40      3   333    18.03    18.21     35.21      512      288    0.4    1   0.15       23.42  272.44
+
+# best p50 per res (contention is one-sided, so the floor is the robust estimator),
+# with the ms-per-megapixel implied slope. A fragment-bound frame keeps that slope flat.
+  res 1.00  1280x720 (0.92 Mpx)  best p50 33.06 ms  med 33.79  x1.00 of res 1.00  pixels x1.00  ms/Mpx 35.87
+  res 0.85  1088x612 (0.67 Mpx)  best p50 28.78 ms  med 29.01  x0.87 of res 1.00  pixels x0.72  ms/Mpx 43.22
+  res 0.70  896x503 (0.45 Mpx)  best p50 24.18 ms  med 24.37  x0.73 of res 1.00  pixels x0.49  ms/Mpx 53.66
+  res 0.55  704x396 (0.28 Mpx)  best p50 20.28 ms  med 20.57  x0.61 of res 1.00  pixels x0.30  ms/Mpx 72.76
+  res 0.40  512x288 (0.15 Mpx)  best p50 18.03 ms  med 18.26  x0.55 of res 1.00  pixels x0.16  ms/Mpx 122.24
+
+json /Users/robray/fc/demos/burnout-gauntlet/verdicts/wave-s/perf-res-noprobe.json
