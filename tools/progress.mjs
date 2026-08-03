@@ -39,6 +39,46 @@ const RETIRED = {
   'chase-camera': 'critic could not tell — retired at wave m',
 };
 
+// ---- PLAYABILITY PIECES (wave S onward) -------------------------------------
+// The visual bar is met and `reference/` is now a REGRESSION GATE, not a target, so
+// the board's old shape — one piece per reference plate, judged by a blind call — no
+// longer describes the work. These pieces are judged by PLAYING and by measuring frame
+// time and handling numbers, so they have no plate and no blind call, and their verdict
+// vocabulary is PASS / PARTIAL / FAIL rather than "real wins".
+const PLAY = {
+  'perf': 'holds 60 fps at 1280x720 real pixels',
+  'handling': 'feels like Burnout Paradise, matched to researched numbers',
+  'traffic': 'traffic that drives instead of a car park',
+  'menu': 'start + Esc pause menu, scene knobs, discoverable controls',
+  'fps-harness': 'the frame-time instrument itself',
+  'research': 'the researched Burnout handling numbers',
+};
+
+/**
+ * Numbers a piece wants on the board, carried INSIDE its own verdict file so they
+ * cannot drift away from the evidence that produced them. A verdict may contain:
+ *
+ *     ```progress-metrics
+ *     p50: 16.2 ms
+ *     p99: 24.8 ms
+ *     render: 1280x720 @ ratio 1.0
+ *     ```
+ *
+ * Free-form `key: value` lines, rendered in order. This is deliberately not a fixed
+ * schema: an fps piece and a handling piece have nothing in common to schematise, and
+ * a schema would just get filled with nulls.
+ */
+function metricsOf(body) {
+  const m = body.match(/```progress-metrics\r?\n([\s\S]*?)```/);
+  if (!m) return null;
+  const out = [];
+  for (const line of m[1].split('\n')) {
+    const kv = line.match(/^\s*([^:]{1,48}):\s*(.+?)\s*$/);
+    if (kv) out.push({ k: kv[1].trim(), v: kv[2].trim() });
+  }
+  return out.length ? out : null;
+}
+
 const waves = readdirSync(join(root, 'verdicts'))
   .filter(d => /^wave-[a-z]$/.test(d))
   .sort(); // wave-k < wave-l < ... lexicographic is chronological here
@@ -58,7 +98,10 @@ for (const wave of waves) {
     const verdict = body.match(/^VERDICT:\s*(.+)$/m)?.[1].replace(/[*_`]/g, '').trim() ?? null;
     const blind = body.match(/^BLIND CALL:\s*([\s\S]+?)(?:\n\n|\nVERDICT:)/m)?.[1]
       .replace(/\s+/g, ' ').trim() ?? null;
-    (pieces[piece] ??= []).push({ wave: letter, kind: verdict ? 'critic' : 'builder', verdict, blind });
+    (pieces[piece] ??= []).push({
+      wave: letter, kind: verdict ? 'critic' : 'builder', verdict, blind,
+      metrics: metricsOf(body),
+    });
   }
 }
 
@@ -91,12 +134,38 @@ const board = Object.keys(SCENE).map(piece => {
   };
 });
 
+// A playability piece's builder rounds land in `<piece>.md` and its critic rounds in
+// `<piece>-critic.md`, so its history is the union of the two, ordered by wave. Metrics
+// come from the newest round that carries any, critic before builder within a wave —
+// the critic re-derives every number independently, so where both quote one, the
+// critic's is the one that has been checked.
+const playBoard = Object.entries(PLAY).map(([piece, goal]) => {
+  const built = (pieces[piece] ?? []).map(h => ({ ...h, kind: 'builder' }));
+  const judged = (pieces[`${piece}-critic`] ?? []).map(h => ({ ...h, kind: 'critic' }));
+  const hist = [...built, ...judged].sort((a, b) =>
+    a.wave === b.wave ? (a.kind === 'builder' ? -1 : 1) : (a.wave < b.wave ? -1 : 1));
+  const last = judged.at(-1);
+  const withMetrics = [...hist].reverse().find(h => h.metrics);
+  return {
+    piece, goal,
+    rounds: judged.length,
+    verdict: last?.verdict ?? (built.length ? 'built, not yet judged' : 'not started'),
+    waves: hist.map(h => h.wave + (h.kind === 'critic' ? '' : '*')).join(' '),
+    building: hist.at(-1)?.kind === 'builder',
+    metrics: withMetrics?.metrics ?? null,
+    metricsFrom: withMetrics ? `wave ${withMetrics.wave} ${withMetrics.kind}` : null,
+  };
+});
+
 const out = {
   generated: new Date().toISOString(),
   waves,
   currentWave: waves.at(-1),
+  play: playBoard,
   pieces: board,
 };
 writeFileSync(join(root, 'progress.json'), JSON.stringify(out, null, 2) + '\n');
-console.log(`progress.json: ${board.length} pieces, waves ${waves.join(',')}, ` +
+console.log(`progress.json: ${playBoard.length} playability pieces ` +
+  `(${playBoard.filter(p => /^PASS/i.test(p.verdict)).length} passing), ` +
+  `${board.length} visual pieces, waves ${waves.join(',')}, ` +
   `${board.filter(p => p.retired).length} retired, ${board.filter(p => p.building).length} building`);

@@ -1,5 +1,5 @@
 {
-  "generated": "2026-08-03T07:29:11.921Z",
+  "generated": "2026-08-03T15:49:24.206Z",
   "waves": [
     "wave-k",
     "wave-l",
@@ -8,9 +8,72 @@
     "wave-o",
     "wave-p",
     "wave-q",
-    "wave-r"
+    "wave-r",
+    "wave-s"
   ],
-  "currentWave": "wave-r",
+  "currentWave": "wave-s",
+  "play": [
+    {
+      "piece": "perf",
+      "goal": "holds 60 fps at 1280x720 real pixels",
+      "rounds": 0,
+      "verdict": "not started",
+      "waves": "",
+      "building": false,
+      "metrics": null,
+      "metricsFrom": null
+    },
+    {
+      "piece": "handling",
+      "goal": "feels like Burnout Paradise, matched to researched numbers",
+      "rounds": 0,
+      "verdict": "not started",
+      "waves": "",
+      "building": false,
+      "metrics": null,
+      "metricsFrom": null
+    },
+    {
+      "piece": "traffic",
+      "goal": "traffic that drives instead of a car park",
+      "rounds": 0,
+      "verdict": "built, not yet judged",
+      "waves": "s*",
+      "building": true,
+      "metrics": null,
+      "metricsFrom": null
+    },
+    {
+      "piece": "menu",
+      "goal": "start + Esc pause menu, scene knobs, discoverable controls",
+      "rounds": 0,
+      "verdict": "built, not yet judged",
+      "waves": "s*",
+      "building": true,
+      "metrics": null,
+      "metricsFrom": null
+    },
+    {
+      "piece": "fps-harness",
+      "goal": "the frame-time instrument itself",
+      "rounds": 0,
+      "verdict": "not started",
+      "waves": "",
+      "building": false,
+      "metrics": null,
+      "metricsFrom": null
+    },
+    {
+      "piece": "research",
+      "goal": "the researched Burnout handling numbers",
+      "rounds": 0,
+      "verdict": "built, not yet judged",
+      "waves": "s*",
+      "building": true,
+      "metrics": null,
+      "metricsFrom": null
+    }
+  ],
   "pieces": [
     {
       "piece": "sky-lighting",
@@ -20,7 +83,7 @@
       "verdict": "real wins",
       "retired": false,
       "blind": "**ref**. Its dome is a clean cloudless teal->lemon ramp saturated at BOTH ends; ours lays a grey-cream cirrus/alto veil across the upper middle and the crossover reads chalky, not sodium.",
-      "waves": "k m n* o p* q*",
+      "waves": "k m n* o p* q* r*",
       "building": true,
       "ours": {
         "path": "shots/sky-lighting-latest.png",
@@ -36,7 +99,7 @@
       "verdict": "real wins",
       "retired": false,
       "blind": "Real wins, instantly. Ref tarmac is broad soft lateral value zones with grain appearing ONLY in the bottom ~8% of frame, and that grain is anisotropic sparkle stretched down-road. Ours is a uniform isotropic salt-and-pepper crust over the whole deck that reads as a tiled noise decal. Crops: `_cropimg shots/road-o1.png 1150 1920 700 1080 1.6` vs `_cropimg <ref@1920> 1380 1920 800 1129 1.6`.",
-      "waves": "k m n* o p* q*",
+      "waves": "k m n* o p* q* r*",
       "building": true,
       "ours": {
         "path": "shots/road-surface-latest.png",
@@ -68,8 +131,8 @@
       "verdict": "real wins",
       "retired": false,
       "blind": null,
-      "waves": "k m n* o p* q",
-      "building": false,
+      "waves": "k m n* o p* q r*",
+      "building": true,
       "ours": {
         "path": "shots/environment-latest.png",
         "mtime": 1785741297860.0054
@@ -100,8 +163,8 @@
       "verdict": "real wins",
       "retired": false,
       "blind": null,
-      "waves": "k m n* o p* q",
-      "building": false,
+      "waves": "k m n* o p* q r*",
+      "building": true,
       "ours": {
         "path": "shots/boost-fx-latest.png",
         "mtime": 1785741297905.85
@@ -148,7 +211,7 @@
       "verdict": "real wins",
       "retired": false,
       "blind": "real, instantly. Two cues: (a) our minimap road network is a constant-width near-white orthogonal grid over hard-edged rectangular parcels; both refs are irregular curved networks over mottled organic ground. (b) our boost bar's BOTTOM rail is a hard cliff while ref01's rails both dissolve into feathery green tendrils.",
-      "waves": "k m n* o p* q*",
+      "waves": "k m n* o p* q* r*",
       "building": true,
       "ours": {
         "path": "shots/hud-latest.png",
@@ -164,7 +227,7 @@
       "verdict": "real wins",
       "retired": false,
       "blind": "I picked OURS as the fake. Level-matched (loudnorm I=-20) 0.8 s clips from each onset, rendered as log/log spectrograms: ref-01 is a single continuous body centred at 340-600 Hz that tilts DOWN with frequency and dies above ~11 kHz. Ours is bimodal - a bright sub-200 Hz thump streak, a SCOOPED 250-600 Hz hole, then a hiss shelf that keeps climbing to 18 kHz. It reads as \"noise burst plus sine kick\", not \"fuel roar\". The new envelope is right; the spectrum is not.",
-      "waves": "k m n* o p* q*",
+      "waves": "k m n* o p* q* r*",
       "building": true,
       "ours": null,
       "ref": null

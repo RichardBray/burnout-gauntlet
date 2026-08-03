@@ -134,6 +134,26 @@ Compare with `node tools/_px.mjs` / `tools/_facademeas.mjs` if you want numbers,
 test is simpler: **open both PNGs, look at them, and state whether anything got worse.** If your
 change cannot move a pixel (a new tool, a doc), say that and skip this.
 
+## PUT YOUR HEADLINE NUMBERS ON THE BOARD
+
+`progress.html` now has a playability section that shows fps and handling numbers beside each
+piece. It reads them out of your own verdict file so they cannot drift away from the evidence.
+Include ONE fenced block, anywhere in `verdicts/wave-s/<piece>.md`, with your 3-8 most important
+numbers as free-form `key: value` lines:
+
+````
+```progress-metrics
+p50: 16.2 ms
+p99: 24.8 ms
+render: 1280x720 @ ratio 1.0
+0-100 km/h: 3.4 s (Burnout 3.2-3.6)
+```
+````
+
+Always fold the measurement conditions into the value itself, as above. A `p50: 16.2 ms` with no
+render size next to it is the exact lie this wave exists to prevent. Then run
+`node tools/progress.mjs` as your last step so the board picks it up.
+
 ## HOW YOU WILL BE JUDGED
 
 A separate critic with fresh context will judge your piece by **PLAYING it** and by measuring frame
