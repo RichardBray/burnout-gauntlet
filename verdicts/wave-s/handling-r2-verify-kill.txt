@@ -1,0 +1,47 @@
+== 0. THE TWO MODULES UNDER TEST
+  PRE-REPAIR  = git show 68d7547:game/physics.js  (gripUse 0.95, driftEnterRatio 1.0, driftBreakRatio ABSENT)
+  SHIPPED     = game/physics.js at HEAD          (gripUse 0.85, driftEnterRatio 1.4, driftBreakRatio 1.0)
+
+== 1. THE CRITIC'S BLOCKER: the alternating chain, per beat, BEFORE vs AFTER
+  PRE-REPAIR : 9.7deg/93% | 15.6deg/50% | 6.6deg/0% | 6.0deg/0% | 6.1deg/0% | 6.1deg/0%   final 139 km/h
+  SHIPPED    : 8.9deg/100% | 20.6deg/69% | 16.2deg/69% | 16.2deg/69% | 16.2deg/69% | 16.2deg/69%   final 135 km/h
+
+== 2. MECHANISM, SINGLE-POINT: force `rearBroke` false and change nothing else
+  rearBroke=false: 10.3deg/85% | 18.6deg/50% | 6.2deg/0% | 6.3deg/0% | 6.3deg/0% | 6.3deg/0%   final 140 km/h
+  (if this equals the PRE-REPAIR row above, the whole repair is one predicate)
+
+== 3. THE THREE SUPPORTING CHANGES, each deleted alone, on the chain and on one tap
+  re-arm deleted   : 8.9deg/100% | 20.6deg/59% | 16.2deg/54% | 16.2deg/54% | 16.2deg/54% | 16.2deg/54%   final 135 km/h
+                     130: armed Y peak 8.4 held 1.70s   orderings: entry 22.8 deg | centred 2.37 s | tap 2.98 s | held 0.83 s | 1:HIT 2:HIT 3:HIT
+  floor -> two-sided: 8.9deg/100% | 20.9deg/69% | 16.3deg/69% | 16.5deg/69% | 16.5deg/69% | 16.5deg/69%   final 134 km/h
+                      130: armed Y peak 8.4 held 1.54s   orderings: entry 22.8 deg | centred 2.38 s | tap 3.01 s | held 0.81 s | 1:HIT 2:HIT 3:HIT
+  moment cancelled  : 8.6deg/100% | 15.8deg/69% | 14.4deg/69% | 14.4deg/69% | 14.4deg/69% | 14.3deg/69%   final 145 km/h
+                      130: armed Y peak 8.4 held 1.38s   orderings: entry 22.8 deg | centred 2.37 s | tap 2.98 s | held 0.83 s | 1:HIT 2:HIT 3:HIT
+  flick floor removed: 8.9deg/100% | 20.6deg/69% | 16.2deg/69% | 16.2deg/69% | 16.2deg/69% | 16.2deg/69%   final 135 km/h
+                       130: armed Y peak 8.4 held 1.70s   orderings: entry 16.0 deg | centred 2.19 s | tap 3.05 s | held 0.82 s | 1:HIT 2:HIT 3:HIT
+
+== 4. THE TWO REVERTED CONSTANTS. Is driftEnterRatio really INERT now, and does gripUse buy an edge?
+  driftEnterRatio 1.4 (shipped): 100: armed Y peak 9.5 held 2.08s | 130: armed Y peak 8.4 held 1.70s | 150: armed Y peak 7.9 held 1.51s
+  driftEnterRatio 1.0 (round 2): 100: armed Y peak 9.5 held 2.08s | 130: armed Y peak 8.4 held 1.70s | 150: armed Y peak 7.9 held 1.51s
+  chain at 1.0: 8.9deg/100% | 20.6deg/69% | 16.2deg/69% | 16.2deg/69% | 16.2deg/69% | 16.2deg/69%   final 135 km/h
+  gripUse 0.85: yaw 28 28 28 28 28 28 29 29 29 29 deg/s | peak slip 5.0 deg | drifting 0% | final 223 km/h
+  gripUse 0.95: yaw 31 31 32 32 32 32 32 32 32 32 deg/s | peak slip 5.5 deg | drifting 0% | final 212 km/h
+  gripUse 1.00: yaw 33 32 32 32 32 32 32 32 32 32 deg/s | peak slip 5.8 deg | drifting 0% | final 210 km/h
+
+== 5. DOES THE REPAIR TOUCH THE CRITIC'S CONFIRMED MECHANISM FOR ORDERING 1? (rHold -> rTarget)
+  shipped        : entry 22.8 deg | centred 2.37 s | tap 2.98 s | held 0.83 s | 1:HIT 2:HIT 3:HIT
+  PRE-REPAIR     : entry 23.0 deg | centred 2.35 s | tap 2.98 s | held 0.82 s | 1:HIT 2:HIT 3:HIT
+  rSustain=rTarget: entry 22.8 deg | centred 0.57 s | tap 0.59 s | held 0.54 s | 1:MISS 2:HIT 3:HIT
+
+== 6. THE HELD-BRAKE DEPTH the builder discloses as a scored regression (2 s of brake + lock)
+  PRE-REPAIR: lock 0.3: 56.2 deg at 138 deg/s, +3 s -> 0.0 deg | lock 0.6: 58.9 deg at 138 deg/s, +3 s -> 0.0 deg | lock 1: 58.5 deg at 138 deg/s, +3 s -> 0.0 deg
+  SHIPPED   : lock 0.3: 36.1 deg at 58 deg/s, +3 s -> 0.0 deg | lock 0.6: 49.4 deg at 111 deg/s, +3 s -> 0.0 deg | lock 1: 59.9 deg at 138 deg/s, +3 s -> 0.0 deg
+
+== 7. HOW MUCH OF THE CHAIN'S HEADLINE ANGLE IS THE TYRE MODEL, AND HOW MUCH IS driftFlick?
+   In an ALTERNATING chain every beat's steering is opposite lock to the live slide, so
+   `driftFlick` - the one-substep lateral-velocity injection the round-2 critic called free
+   energy - is paid on every beat. The drift STATE is what the blocker was about; the ANGLE is
+   the number that was reported. These are not the same claim.
+  shipped       : 8.9deg/100% | 20.6deg/69% | 16.2deg/69% | 16.2deg/69% | 16.2deg/69% | 16.2deg/69% | peak |vLat| 11.55 m/s | final 135 km/h
+  driftFlick 0  : 8.9deg/100% | 13.5deg/69% | 8.5deg/69% | 8.6deg/69% | 8.7deg/69% | 8.7deg/69% | peak |vLat| 7.40 m/s | final 136 km/h
+  driftTapSlip 0: 6.8deg/69% | 14.9deg/69% | 14.7deg/69% | 14.8deg/69% | 14.8deg/69% | 14.8deg/69% | peak |vLat| 8.94 m/s | final 142 km/h

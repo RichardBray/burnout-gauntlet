@@ -1,0 +1,81 @@
+== A. STRAIGHT-LINE BRAKING. Should never arm a drift: ayDemand ~ 0.
+  80 km/h, 1.5 s of S, steer 0 : SHIPPED armed n 0% | peak 0.0 deg at 0 deg/s | end 0.0 deg 23 km/h
+                            PRE     armed n 0% | peak 0.0 deg at 0 deg/s | end 0.0 deg 23 km/h
+  130 km/h, 1.5 s of S, steer 0 : SHIPPED armed n 0% | peak 0.0 deg at 0 deg/s | end 0.0 deg 0 km/h
+                             PRE     armed n 0% | peak 0.0 deg at 0 deg/s | end 0.0 deg 0 km/h
+  200 km/h, 1.5 s of S, steer 0 : SHIPPED armed n 0% | peak 0.0 deg at 0 deg/s | end 0.0 deg 35 km/h
+                             PRE     armed n 0% | peak 0.0 deg at 0 deg/s | end 0.0 deg 35 km/h
+  250 km/h, 1.5 s of S, steer 0 : SHIPPED armed n 0% | peak 0.0 deg at 0 deg/s | end 0.0 deg 73 km/h
+                             PRE     armed n 0% | peak 0.0 deg at 0 deg/s | end 0.0 deg 73 km/h
+
+== B. BRAKING INTO A BEND, a 0.4 s dab of S at increasing lock. The realistic player action.
+  80 km/h lock 0.1, 0.4 s of S : SHIPPED armed n 0% | peak 0.2 deg at 7 deg/s | end 0.0 deg 32 km/h
+                               PRE     armed n 0% | peak 0.2 deg at 7 deg/s | end 0.0 deg 32 km/h
+  80 km/h lock 0.2, 0.4 s of S : SHIPPED armed Y 43% | peak 0.7 deg at 16 deg/s | end 0.0 deg 32 km/h
+                               PRE     armed n 0% | peak 1.1 deg at 14 deg/s | end 0.0 deg 32 km/h
+  80 km/h lock 0.4, 0.4 s of S : SHIPPED armed Y 46% | peak 2.1 deg at 37 deg/s | end 0.0 deg 32 km/h
+                               PRE     armed Y 26% | peak 4.2 deg at 39 deg/s | end 0.0 deg 31 km/h
+  80 km/h lock 0.7, 0.4 s of S : SHIPPED armed Y 49% | peak 4.8 deg at 53 deg/s | end 0.0 deg 30 km/h
+                               PRE     armed Y 39% | peak 7.2 deg at 51 deg/s | end 0.0 deg 29 km/h
+  80 km/h lock 1.0, 0.4 s of S : SHIPPED armed Y 54% | peak 7.8 deg at 56 deg/s | end 0.0 deg 29 km/h
+                               PRE     armed Y 27% | peak 7.0 deg at 49 deg/s | end 0.0 deg 30 km/h
+  130 km/h lock 0.1, 0.4 s of S : SHIPPED armed n 0% | peak 0.5 deg at 4 deg/s | end 0.0 deg 78 km/h
+                                PRE     armed n 0% | peak 0.5 deg at 5 deg/s | end 0.0 deg 78 km/h
+  130 km/h lock 0.2, 0.4 s of S : SHIPPED armed Y 43% | peak 0.5 deg at 5 deg/s | end 0.0 deg 78 km/h
+                                PRE     armed n 0% | peak 1.1 deg at 10 deg/s | end 0.0 deg 78 km/h
+  130 km/h lock 0.4, 0.4 s of S : SHIPPED armed Y 46% | peak 0.8 deg at 9 deg/s | end 0.0 deg 78 km/h
+                                PRE     armed n 0% | peak 3.0 deg at 22 deg/s | end 0.0 deg 77 km/h
+  130 km/h lock 0.7, 0.4 s of S : SHIPPED armed Y 46% | peak 1.3 deg at 16 deg/s | end 0.0 deg 78 km/h
+                                PRE     armed Y 35% | peak 6.1 deg at 39 deg/s | end 0.0 deg 73 km/h
+  130 km/h lock 1.0, 0.4 s of S : SHIPPED armed Y 46% | peak 1.9 deg at 22 deg/s | end 0.0 deg 77 km/h
+                                PRE     armed Y 56% | peak 8.6 deg at 44 deg/s | end 0.0 deg 69 km/h
+  200 km/h lock 0.1, 0.4 s of S : SHIPPED armed n 0% | peak 0.4 deg at 3 deg/s | end 0.0 deg 139 km/h
+                                PRE     armed n 0% | peak 0.4 deg at 3 deg/s | end 0.0 deg 139 km/h
+  200 km/h lock 0.2, 0.4 s of S : SHIPPED armed Y 43% | peak 0.6 deg at 6 deg/s | end 0.0 deg 139 km/h
+                                PRE     armed n 0% | peak 0.9 deg at 6 deg/s | end 0.0 deg 139 km/h
+  200 km/h lock 0.4, 0.4 s of S : SHIPPED armed Y 46% | peak 1.7 deg at 14 deg/s | end 0.0 deg 139 km/h
+                                PRE     armed n 0% | peak 1.9 deg at 12 deg/s | end 0.0 deg 139 km/h
+  200 km/h lock 0.7, 0.4 s of S : SHIPPED armed Y 46% | peak 3.9 deg at 32 deg/s | end 0.0 deg 138 km/h
+                                PRE     armed n 0% | peak 3.8 deg at 22 deg/s | end 0.0 deg 138 km/h
+  200 km/h lock 1.0, 0.4 s of S : SHIPPED armed Y 46% | peak 6.4 deg at 52 deg/s | end 0.0 deg 137 km/h
+                                PRE     armed n 0% | peak 6.0 deg at 32 deg/s | end 0.0 deg 136 km/h
+
+== C. LIFT-OFF ONLY (throttle 0, no brake, no handbrake): `intent` is false, must never arm.
+  130 km/h, 2 s full lock, no brake : SHIPPED armed n 0% | peak 4.5 deg at 46 deg/s | end 0.0 deg 83 km/h
+                                   PRE     armed n 0% | peak 5.0 deg at 54 deg/s | end 0.0 deg 79 km/h
+  250 km/h, 2 s full lock, no brake : SHIPPED armed n 0% | peak 5.6 deg at 30 deg/s | end 0.0 deg 168 km/h
+                                   PRE     armed n 0% | peak 6.3 deg at 34 deg/s | end 0.0 deg 162 km/h
+
+== D. LOW SPEED. A car park manoeuvre: does the entry fire where the model is least valid?
+  15 km/h lock 1.0, 1 s of S : SHIPPED armed Y 38% | peak 10.1 deg at 47 deg/s | end 0.0 deg 28 km/h
+                              PRE     armed n 0% | peak 11.6 deg at 47 deg/s | end 0.0 deg 30 km/h
+  30 km/h lock 1.0, 1 s of S : SHIPPED armed Y 36% | peak 9.4 deg at 45 deg/s | end 0.0 deg 20 km/h
+                              PRE     armed n 0% | peak 9.3 deg at 40 deg/s | end 0.0 deg 23 km/h
+  50 km/h lock 1.0, 1 s of S : SHIPPED armed Y 45% | peak 20.1 deg at 56 deg/s | end 0.0 deg 11 km/h
+                              PRE     armed n 0% | peak 7.9 deg at 29 deg/s | end 0.0 deg 13 km/h
+
+== E. ATTRIBUTION for the B table: is a shallower braked turn-in the new predicate or gripUse?
+  130 km/h lock 0.2, 0.4 s of S
+      SHIPPED             armed Y 43% | peak 0.5 deg at 5 deg/s | end 0.0 deg 78 km/h
+      rearBroke killed    armed n 0% | peak 1.0 deg at 9 deg/s | end 0.0 deg 78 km/h
+      gripUse 0.95 only   armed Y 44% | peak 0.4 deg at 5 deg/s | end 0.0 deg 78 km/h
+      PRE-REPAIR          armed n 0% | peak 1.1 deg at 10 deg/s | end 0.0 deg 78 km/h
+  130 km/h lock 1.0, 0.4 s of S
+      SHIPPED             armed Y 46% | peak 1.9 deg at 22 deg/s | end 0.0 deg 77 km/h
+      rearBroke killed    armed Y 69% | peak 8.6 deg at 51 deg/s | end 0.5 deg 65 km/h
+      gripUse 0.95 only   armed Y 46% | peak 1.8 deg at 23 deg/s | end 0.0 deg 77 km/h
+      PRE-REPAIR          armed Y 56% | peak 8.6 deg at 44 deg/s | end 0.0 deg 69 km/h
+  200 km/h lock 0.2, 0.4 s of S
+      SHIPPED             armed Y 43% | peak 0.6 deg at 6 deg/s | end 0.0 deg 139 km/h
+      rearBroke killed    armed n 0% | peak 0.8 deg at 5 deg/s | end 0.0 deg 139 km/h
+      gripUse 0.95 only   armed Y 44% | peak 0.8 deg at 7 deg/s | end 0.0 deg 139 km/h
+      PRE-REPAIR          armed n 0% | peak 0.9 deg at 6 deg/s | end 0.0 deg 139 km/h
+  200 km/h lock 1.0, 0.4 s of S
+      SHIPPED             armed Y 46% | peak 6.4 deg at 52 deg/s | end 0.0 deg 137 km/h
+      rearBroke killed    armed n 0% | peak 5.2 deg at 28 deg/s | end 0.0 deg 137 km/h
+      gripUse 0.95 only   armed Y 46% | peak 8.4 deg at 63 deg/s | end 0.0 deg 135 km/h
+      PRE-REPAIR          armed n 0% | peak 6.0 deg at 32 deg/s | end 0.0 deg 136 km/h
+
+== F. WHAT `state.drifting` NOW MEANS. Longest run of drift-state samples under 2 deg of slip.
+  SHIPPED   : lock 0.2: 98 drift samples, 98 of them under 2 deg | lock 0.5: 105 drift samples, 105 of them under 2 deg | lock 1: 106 drift samples, 106 of them under 2 deg
+  PRE-REPAIR: lock 0.2: 0 drift samples, 0 of them under 2 deg | lock 0.5: 0 drift samples, 0 of them under 2 deg | lock 1: 132 drift samples, 0 of them under 2 deg
