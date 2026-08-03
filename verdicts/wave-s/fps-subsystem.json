@@ -1,0 +1,251 @@
+{
+  "when": "2026-08-03T16:01:34.690Z",
+  "scene": "dusk-highway-chase",
+  "viewport": {
+    "w": 1280,
+    "h": 720,
+    "deviceScaleFactor": 1
+  },
+  "warmupMs": 2000,
+  "measureMs": 5000,
+  "repeat": 3,
+  "concurrencyWarning": "frame time is invalid under concurrent load; label these smoke tests unless you own the machine",
+  "runs": [],
+  "spreads": [],
+  "subsystem": {
+    "scenario": "cruise",
+    "res": 1,
+    "passes": 2,
+    "baselineP50s": [
+      34.31999999999971,
+      60.234999999996944,
+      64.68000000000029,
+      49.18500000000495,
+      60.86000000000058,
+      45.779999999998836,
+      68.78500000000349,
+      73.36999999999534,
+      92.66000000000349,
+      23.570000000006985,
+      21.84499999997206,
+      23.419999999983702,
+      48.62999999997555,
+      40.53000000002794,
+      60.71999999997206,
+      38.47999999998137,
+      59.40000000002328,
+      26.79500000004191,
+      30.31500000000233,
+      23.125,
+      74.76000000000931,
+      59.76500000001397
+    ],
+    "baselineSpread": {
+      "min": 21.84499999997206,
+      "med": 48.62999999997555,
+      "max": 92.66000000000349,
+      "rangePct": 324.17029068492565
+    },
+    "noiseFloorMs": 70.81500000003143,
+    "ranked": [
+      {
+        "name": "bloom-off",
+        "note": "bloom pass disabled",
+        "deltas": [
+          18.31999999999971,
+          18.475000000034925
+        ],
+        "deltaMed": 18.31999999999971,
+        "deltaMin": 18.31999999999971,
+        "deltaMax": 18.475000000034925,
+        "baselineMed": 40.53000000002794,
+        "offMed": 22.054999999993015,
+        "deltaPct": 45.20108561556151,
+        "sameSign": true,
+        "callsSaved": 13.300000000000068,
+        "trisSaved": 9.900000000372529,
+        "verdict": "noise"
+      },
+      {
+        "name": "world-hidden",
+        "note": "world.group.visible = false (city, roads, props, lamps)",
+        "deltas": [
+          40.23499999998603,
+          12.025000000023283
+        ],
+        "deltaMed": 12.025000000023283,
+        "deltaMin": 12.025000000023283,
+        "deltaMax": 40.23499999998603,
+        "baselineMed": 26.79500000004191,
+        "offMed": 14.770000000018626,
+        "deltaPct": 44.877775704439166,
+        "sameSign": true,
+        "callsSaved": 435.95,
+        "trisSaved": 10559277.299999999,
+        "verdict": "noise"
+      },
+      {
+        "name": "ssao-off",
+        "note": "SSAO pass disabled",
+        "deltas": [
+          12.479999999999563,
+          7.599999999976717
+        ],
+        "deltaMed": 7.599999999976717,
+        "deltaMin": 7.599999999976717,
+        "deltaMax": 12.479999999999563,
+        "baselineMed": 48.62999999997555,
+        "offMed": 41.029999999998836,
+        "deltaPct": 15.628213037179801,
+        "sameSign": true,
+        "callsSaved": 309.54999999999995,
+        "trisSaved": 3062214.8499999996,
+        "verdict": "noise"
+      },
+      {
+        "name": "car-hidden",
+        "note": "carRoot.visible = false (hero shell, glass, lights)",
+        "deltas": [
+          75.58999999999651,
+          6.005000000004657
+        ],
+        "deltaMed": 6.005000000004657,
+        "deltaMin": 6.005000000004657,
+        "deltaMax": 75.58999999999651,
+        "baselineMed": 23.125,
+        "offMed": 17.070000000006985,
+        "deltaPct": 25.967567567587704,
+        "sameSign": true,
+        "callsSaved": 404.40000000000003,
+        "trisSaved": 685591.6999999993,
+        "verdict": "noise"
+      },
+      {
+        "name": "hud-off",
+        "note": "hud.setVisible(false) — the HUD is a separate 2-D canvas at full window res",
+        "deltas": [
+          3.790000000008149,
+          35.98499999998603
+        ],
+        "deltaMed": 3.790000000008149,
+        "deltaMin": 3.790000000008149,
+        "deltaMax": 35.98499999998603,
+        "baselineMed": 23.570000000006985,
+        "offMed": 19.779999999998836,
+        "deltaPct": 16.079762409872828,
+        "sameSign": true,
+        "callsSaved": 6.3250000000000455,
+        "trisSaved": 28.550000000745058,
+        "verdict": "noise"
+      },
+      {
+        "name": "shadows-off",
+        "note": "renderer.shadowMap.enabled = false (4096 map, PCFSoft)",
+        "deltas": [
+          3.2899999999790452,
+          12.419999999983702
+        ],
+        "deltaMed": 3.2899999999790452,
+        "deltaMin": 3.2899999999790452,
+        "deltaMax": 12.419999999983702,
+        "baselineMed": 21.84499999997206,
+        "offMed": 18.554999999993015,
+        "deltaPct": 15.060654611962706,
+        "sameSign": true,
+        "callsSaved": 167.92499999999995,
+        "trisSaved": 3223626.8999999994,
+        "verdict": "noise"
+      },
+      {
+        "name": "post-chain-off",
+        "note": "RenderPass straight to the canvas; SSAO+bloom+smear+grade all bypassed",
+        "deltas": [
+          14.299999999999272,
+          2.7250000000058208
+        ],
+        "deltaMed": 2.7250000000058208,
+        "deltaMin": 2.7250000000058208,
+        "deltaMax": 14.299999999999272,
+        "baselineMed": 23.419999999983702,
+        "offMed": 20.020000000000437,
+        "deltaPct": 11.63535439798342,
+        "sameSign": true,
+        "callsSaved": 298.67500000000007,
+        "trisSaved": 2676017.700000001,
+        "verdict": "noise"
+      },
+      {
+        "name": "traffic-hidden",
+        "note": "traffic.group.visible = false",
+        "deltas": [
+          2.279999999998836,
+          -2.2449999999953434
+        ],
+        "deltaMed": -2.2449999999953434,
+        "deltaMin": -2.2449999999953434,
+        "deltaMax": 2.279999999998836,
+        "baselineMed": 45.779999999998836,
+        "offMed": 43.5,
+        "deltaPct": -4.903888160758847,
+        "sameSign": false,
+        "callsSaved": 1.5499999999999545,
+        "trisSaved": -338513.44999999925,
+        "verdict": "noise"
+      },
+      {
+        "name": "output-grade-off",
+        "note": "graded tonemap output pass disabled (frame will look wrong; cost only)",
+        "deltas": [
+          16.929999999993015,
+          -10.665000000037253
+        ],
+        "deltaMed": -10.665000000037253,
+        "deltaMin": -10.665000000037253,
+        "deltaMax": 16.929999999993015,
+        "baselineMed": 38.47999999998137,
+        "offMed": 43.93000000000757,
+        "deltaPct": -27.715696465806694,
+        "sameSign": false,
+        "callsSaved": -45.575000000000045,
+        "trisSaved": -772423.0499999989,
+        "verdict": "noise"
+      },
+      {
+        "name": "sky-hidden",
+        "note": "sky.skyMesh.visible = false",
+        "deltas": [
+          4.679999999993015,
+          -35.195000000006985
+        ],
+        "deltaMed": -35.195000000006985,
+        "deltaMin": -35.195000000006985,
+        "deltaMax": 4.679999999993015,
+        "baselineMed": 30.31500000000233,
+        "offMed": 65.51000000000931,
+        "deltaPct": -116.09764143164863,
+        "sameSign": false,
+        "callsSaved": -67.875,
+        "trisSaved": -1158607.25,
+        "verdict": "noise"
+      },
+      {
+        "name": "smear-pass-off",
+        "note": "boost radial-smear pass disabled",
+        "deltas": [
+          6.370000000002619,
+          -36.2050000000163
+        ],
+        "deltaMed": -36.2050000000163,
+        "deltaMin": -36.2050000000163,
+        "deltaMax": 6.370000000002619,
+        "baselineMed": 49.18500000000495,
+        "offMed": 42.81500000000233,
+        "deltaPct": -73.60984039852121,
+        "sameSign": false,
+        "callsSaved": -35.44999999999993,
+        "trisSaved": -386271.5,
+        "verdict": "noise"
+      }
+    ]
+  }
+}
