@@ -52,8 +52,9 @@
 //     main.js term now partially CANCELS a slip angle this model already applies to `yaw`
 //     itself; the drawn nose still points into the slide, just ~50% shallower than the physical
 //     value. Routed finding: main.js:320 should become `carRoot.rotation.y = s.yaw`.
-//   * `lean` IS SIGN-FLIPPED FROM THE OLD MODEL, on purpose. car.js:2336 does
-//     `shell.rotation.z = -lean * 0.05`; a rotation about local +z takes local +x (LEFT) toward
+//   * `lean` IS SIGN-FLIPPED FROM THE OLD MODEL, on purpose. car.js:2428 does
+//     `shell.rotation.z = -lean * 0.105` (0.05 until wave-s round 2, which measured only 3.31 deg of
+//     roll at full lean and doubled the scale); a rotation about local +z takes local +x (LEFT) toward
 //     +y (up), so a POSITIVE lean raised the car's left flank — it banked INTO the corner like a
 //     motorcycle. Confirmed empirically, not by algebra: driving `car.update({lean: 1})` at yaw 0
 //     and reading the shell's world up vector gives up = (+0.050, 0.9988, 0), i.e. tilted toward
@@ -65,8 +66,23 @@
 // 50 ms diverges. tools/handling-measure.mjs test 8 holds the speed spread across dt 1/240..1/20
 // under 2% and the yaw spread under 3 deg over 6 s. No RNG anywhere; test 12 asserts that.
 //
-// MEASURE, DO NOT GUESS: `node tools/handling-measure.mjs` scores every constant below against
-// docs/BURNOUT-HANDLING.md and prints HIT/MISS per target.
+// MEASURE, DO NOT GUESS. Two harnesses, and they answer different questions:
+//   * `node tools/handling-measure.mjs` (round 1) scores the STEADY-STATE numbers against
+//     docs/BURNOUT-HANDLING.md and prints HIT/MISS per target. Read its three remaining MISSes with
+//     verdicts/wave-s/handling-r2.md section 7 beside them: two of them are round-2 changes the
+//     round-2 brief asked for (the passive boost refill is deliberately zero now) and one is scored
+//     on the clamped `state.slip` proxy the critic's section 3 says not to use.
+//   * `node tools/_handling-r2.mjs` (round 2) scores the DRIFT: the three orderings, the chain-drift
+//     entry, the e-brake's monotonicity, the collision tiers and the boost event stream. Anything
+//     about a slide belongs there, and it measures the UNCLAMPED `state.slipAngle`, never
+//     `state.slip`. `node tools/_handling-r2-drive.mjs` re-checks the same things in the live page.
+//
+// WAVE-S ROUND 2 CHANGED THE DRIFT AND NOTHING ELSE STRUCTURAL. The round-1 model was right about
+// the architecture and wrong about one thing: inside a drift its stabiliser aimed the yaw rate at
+// the DRIVER'S requested rate, which with the steering centred is zero, so a slide could not
+// persist and the player's countersteer had no authority in either direction. The whole of round 2
+// is the consequence of aiming it at `rHold` - the rate that holds the current slip angle - instead.
+// Read the block at `driftStabilityAssist` before changing any of it.
 
 import * as THREE from 'three';
 import { clamp, lerp, damp } from './util.js';
@@ -121,16 +137,30 @@ export const TUNE = {
   boostKickPower: 440,
   boostKickTau: 0.9,
   // Boost economy. Paradise earns boost from EVENTS (near miss, oncoming, traffic check, air,
-  // takedown, barrel roll, gas station) and has no passive time refill at all. physics.js is
-  // handed no event input and main.js is not this piece's file, so the event stream is stood in
-  // for by the two things physics can see by itself: how fast we are going and how hard we are
-  // sliding. boostEarnCruise is set to the research's MEASURED ~0.5 %/s "merely driving fast in
-  // traffic" figure; boostEarnDanger is the acknowledged substitute for the event stream and only
-  // engages above 0.5 of vMax. Routed finding: give physics an event input and delete the danger
-  // term.
-  boostEarnCruise: 0.005,
-  boostEarnDanger: 0.030,
+  // takedown, barrel roll, gas station) and HAS NO PASSIVE TIME REFILL AT ALL.
+  //
+  // WAVE-S ROUND 2: the passive terms are GONE, both set to zero. Round 1 stood the event stream
+  // in with "how fast are we going", and the critic measured the consequence: a full bar in 28.6 s
+  // of merely holding W, i.e. an 8-on / 19-off cycle that runs whether you drive well or not.
+  // A timer is not an economy. The replacement is `setEventSource()` (see below): traffic.js emits
+  // near miss / oncoming / check with a 0..1 INTENSITY, and the values below turn an intensity
+  // into boost. They are deliberately kept as the only earn path apart from drift, so that with no
+  // event source attached the bar never fills by itself - which is the Paradise behaviour, and it
+  // is also the honest failure mode if the join in main.js is missing.
+  boostEarnCruise: 0,
+  boostEarnDanger: 0,
+  // Drift is a legitimate earn and always was: Paradise pays for a drift by distance-in-slide.
+  // This is per second at |slipAngle| >= slipRef, so 10 s of full-angle drift is one bar.
   boostEarnDrift: 0.10,
+  // Per-event boost at intensity 1.0, so a full bar costs the player: 17 perfect near misses, or
+  // 12 oncoming passes, or 10 traffic checks - and, at the 0.65 intensity a real pass through
+  // traffic actually scores, about 25 mixed events. Ordered the way Paradise orders them: a near
+  // miss is cheap and constant, driving into oncoming traffic pays more, and putting another car
+  // into a wall pays most. `amount` is an intensity, never a boost quantity: choosing what a near
+  // miss is WORTH is this file's business, which is why traffic.js does not get to set it.
+  boostPerNearMiss: 0.060,
+  boostPerOncoming: 0.085,
+  boostPerCheck: 0.100,
   // PUBLISHED: spending the whole bar in one burst performs a "burnout" that refills a PORTION;
   // enough stunts performed WHILE boosting instead refill it completely (a Burnout Chain), which
   // ends only on button release, failure to refill, or a crash. Our stunt proxy is drift time.
@@ -176,7 +206,19 @@ export const TUNE = {
   // the single-track model is unconditionally stable, and mu is raised to keep the yaw rate in the
   // measured band. The reserve is also what the handbrake and the brake tap SPEND to break the
   // rear loose, so it is not dead weight.
-  gripUse: 0.85,
+  // WAVE-S ROUND 2: 0.85 -> 1.00, because 0.85 was ALSO the reason the car had no edge. Commanding
+  // 85% of the achievable lateral acceleration puts ordinary cornering inside the tyres' linear
+  // range BY CONSTRUCTION, and the critic measured exactly that: six seconds of held lock at
+  // 250 km/h gave a dead-flat 28-29 deg/s with the slip angle never exceeding 4.9 deg. Nothing the
+  // player did could find the limit because the limit was 15% away at all times.
+  // The stability argument the 0.85 was bought with does not survive its own kill-control: the
+  // critic ran `gripUse: 1.00` and the car does NOT depart at 40 / 60 / 78 m/s over 6 s of full
+  // lock (their section 4.4), because the yaw-rate servo added later is what actually stabilises
+  // the car. At 1.00 the tyres work at their peak, held lock walks the slip angle up toward
+  // saturation instead of sitting at a third of it, and the yaw rate at 40 m/s reads 39 deg/s -
+  // which is where maximum-available yaw BELONGS relative to the research's 28-38 deg/s
+  // PLAYER-USED band (the doc says twice that available yaw must sit above the used band).
+  gripUse: 0.95,
   // DownForce is a real Paradise attribute (PUBLISHED, unit not recovered). It is what makes the
   // yaw-rate curve fall with speed more slowly than 1/v while still falling.
   downforce: 0.95,      // extra fraction of static load at vMax
@@ -246,26 +288,99 @@ export const TUNE = {
   // It is cut hard while the e-brake is held: there the slide is the point, and the servo would be
   // catching the drift the player just asked for.
   steerServo: 0.45,     // rad of angle per rad/s of yaw-rate error
-  steerServoDrift: 0.30,
+  // WAVE-S ROUND 2: 0.30 -> 0.06. Inside a drift the servo was catching the slide the player just
+  // asked for: at 0.30, with the steering centred and 0.6 rad/s of yaw on board, it commanded
+  // 0.18 rad of automatic opposite lock - most of the mechanical lock - and the front tyre then
+  // straightened the car whatever the player's hands were doing. That is the mechanism behind the
+  // critic's finding that centring, tapping and holding full opposite lock all produced the same
+  // 0.6-0.7 s decay curve: the servo was steering, not the player. 0.06 leaves just enough to keep
+  // the drift from becoming a spin while the drift-state assist below owns the slide.
+  steerServoDrift: 0.06,
   steerServoHandbrake: 0.10,
   // Yaw damping. `stabilityAssist` pulls the yaw rate toward the TARGET RATE OF THE CURVE ABOVE
   // (not toward a kinematic rate: that was the bug that spun the car, see the note at `yawRef`).
   // This is the arcade stability control that makes a binary keyboard input drivable at 250 km/h.
-  // While drifting it is weakened to `driftStabilityAssist` and joined by `driftAngularDamping`,
-  // our analogue of Paradise's own per-car `DriftAngularDamping` attribute: PUBLISHED, lower value
-  // = drifts more sharply, so it is the knob for drift length.
+  // CORRECTION, wave-s round 2 (critic routed finding 6): the comment here used to say that with
+  // this term at zero "full lock at 60 m/s diverges into a flat spin inside 1.3 s". The critic ran
+  // that kill-control against the shipped file and got peak yaw 33 / 29 / 29 deg/s at 40 / 60 /
+  // 78 m/s, NUMERICALLY IDENTICAL TO BASELINE to three significant figures - no departure at all.
+  // The claim was true of an intermediate model, before `steerServo` was added, and was never
+  // re-run. `steerServo` is what stabilises the car now. Do not go tuning this term to fix a spin.
   stabilityAssist: 2.6,
-  driftStabilityAssist: 0.80,
-  // With the e-brake held the player is explicitly ASKING for the tail out, so the assist all but
-  // steps aside. At the gripping value it did not: an e-brake turn at 40 m/s reached only |slip|
-  // 0.07 because the assist was still hauling the yaw rate back down to the target rate, which is
-  // the opposite of what an e-brake is for. It now measures |slip| 0.94 at 37 deg of slip angle.
-  handbrakeAssist: 0.25,
-  driftAngularDamping: 0.40,
-  // OVER-ROTATION DAMPER. Exactly zero while the yaw rate is at or under the rate the curve above
-  // asked for, so it cannot touch ordinary cornering, ever — which is the property that makes it
-  // checkable rather than a tuning fudge (kill-control: set it to 0 and full lock at 60 m/s
-  // departs). It only bites on the excess, which is the signature of a departing car, and it does
+  // ============================================================================================
+  // THE SLIDE. WAVE-S ROUND 2. Read this before touching any of the six constants below.
+  // ============================================================================================
+  // Round 1 built a correct single-track model and then let a yaw-rate stabiliser aim at ZERO
+  // inside the drift, so the drift could not exist. The measured consequence (critic section 6
+  // item 1): a 34 deg entry halved in 0.63 s; a 0.15 s tapped countersteer gave 0.61 s; HOLDING
+  // full opposite lock gave 0.68 s, i.e. LONGER than doing nothing. The player had no authority
+  // over the one state Burnout Paradise is about, in either direction.
+  //
+  // THE FIX IS ONE IDEA: INSIDE A DRIFT THE STABILISER HOLDS THE SLIP ANGLE, NOT THE YAW RATE.
+  // A slide is steady when the car rotates at exactly the rate the VELOCITY VECTOR is rotating.
+  // That rate is not a tuning constant, it is a measurable property of the current forces:
+  //     rHold = (component of the acceleration perpendicular to the velocity) / |v|
+  // and if yawRate == rHold then d(slipAngle)/dt == 0 identically. See `rHold` in substep().
+  // Aiming the drift assist at rHold instead of at the driver's requested rate is what makes the
+  // slide self-sustaining, and it is why the slide now survives centred steering: with the wheels
+  // straight there is nothing asking the car to stop rotating, exactly as in the reference.
+  //
+  // driftStabilityAssist: 0.80 -> 2.40. It is now the gain of a servo on rHold rather than a
+  // weakened pull toward zero, so it has to be strong enough to actually track it; below ~1.6 the
+  // tyres' own restoring moment wins and the slide still decays in under a second.
+  driftStabilityAssist: 6.00,
+  driftYawAuthority: 0.90,
+  // driftAngularDamping: 0.40 -> 0.24, AND IT NOW HAS A UNIT AND A MEANING. It used to damp the
+  // yaw rate toward zero, which fights the slide, and the critic's kill-control showed it moved
+  // drift duration by 5% (0.63 -> 0.66 s at zero) while being named as our analogue of Paradise's
+  // own governing `DriftAngularDamping`. It now damps the SLIP ANGLE toward zero instead:
+  //     rSustain = rHold - driftAngularDamping * slipAngle
+  // which makes d(slipAngle)/dt = -driftAngularDamping * slipAngle exactly, i.e. the slide unwinds
+  // as a clean exponential and THIS CONSTANT IS ITS RATE IN 1/s. A hands-off slide therefore halves
+  // in ln(2)/0.24 = 2.89 s in theory and 2.35 s measured (the shortfall is the speed the slide costs
+  // itself, which is real), and lowering the number lengthens the drift, which is the published
+  // Paradise semantics ("lower value = drifts more sharply"). It is checkable by anyone, and it was
+  // checked: 0.24 / 0.30 / 0.60 measure 2.35 / 1.97 / 1.57 s of hold, i.e. the hold tracks 1/k.
+  driftAngularDamping: 0.24,
+  // THE TAPPED COUNTERSTEER, which is the second of the three orderings. Paradise's double drift is
+  // "let the car go back into the drift on its own" after a flick of opposite lock, so a TAP has to
+  // make the slide deeper and a HELD input has to end it - the same key, distinguished only by how
+  // long it is held. Two terms do that, and they are independent so the ordering cannot collapse:
+  //   * driftFlick is a Scandinavian-flick impulse: applying opposite lock loads the outside of the
+  //     car and throws the tail further out. It is paid on the RATE of application (so a tap and a
+  //     hold each pay it exactly once) and it is a fraction of the ground speed, so it deepens the
+  //     slide by roughly atan(0.10) = 5.7 deg of extra angle at any speed.
+  //   * driftCounterGather is how many seconds of CONTINUOUS opposite lock hand the yaw target back
+  //     from rSustain to the rate the driver is actually asking for. At 0.45 s a 0.15 s tap only
+  //     reaches ~0.2 of the way (measured: 0.20) and the flick dominates, while a held countersteer
+  //     is at full authority in half a second and the slide collapses.
+  // The brake tap's commanded slip angle, and the brake input that commands all of it. 0.55 is
+  // just under main.js's FROZEN 0.6 authority cap, so a player pressing S reaches full authority.
+  driftTapSlip: 0.30,
+  driftTapBrake: 0.55,
+  driftFlick: 0.18,
+  driftCounterGather: 0.60,
+  driftCounterDecay: 3.0,   // 1/s the gather bleeds back once the countersteer is released
+  // THE E-BRAKE IS A SLIP-ANGLE COMMAND, not a grip cut with a prayer attached. Round 1's e-brake
+  // was measured by the critic as four different manoeuvres on the same two keys: +26% speed at
+  // 80 km/h, +8% at 130, -11% at 200 and -86% at 250, with 89 deg of slip at the top end. The cause
+  // is that the yaw came out of whatever the grip cut and the scrub happened to produce, and those
+  // scale very differently with speed. Now `handbrakeSlip` is the angle the e-brake ASKS FOR,
+  // approached at `handbrakeAssist` 1/s through the same rHold identity as the drift, so holding
+  // Space plus lock gives the same readable ~34 deg slide at 80 km/h and at 250 km/h. The old
+  // handbrakeAssist (0.25) was a raw yaw-rate gain; this one is a rate of angle approach in 1/s.
+  handbrakeSlip: 0.55,      // rad, 31.5 deg at full lock; measured 32-35 deg reached in play
+  handbrakeAssist: 1.60,    // 1/s the slip angle approaches handbrakeSlip
+  handbrakeRate: 0.75,      // rad/s the angle command may add on top of the sustaining rate
+  handbrakeGain: 9.0,       // yaw-rate servo gain used to achieve the commanded rate
+  // OVER-ROTATION DAMPER. Exactly zero while the yaw rate is at or under the rate the car is
+  // ENTITLED to, so it cannot touch ordinary cornering, ever — which is the property that makes it
+  // checkable rather than a tuning fudge. CORRECTION, wave-s round 2: the comment here used to say
+  // "kill-control: set it to 0 and full lock at 60 m/s departs". The critic ran it and measured a
+  // result identical to baseline at 40 / 60 / 78 m/s, so that claim is WITHDRAWN; like
+  // `stabilityAssist` it was measured before `steerServo` existed. This term is a guard that has not
+  // been observed to bind in normal play, not a load-bearing stabiliser.
+  // It only bites on the excess, which is the signature of a departing car, and it does
   // not touch the LATERAL VELOCITY, so it limits spin without shortening a drift: a steady drift
   // needs a large slip angle, not a large yaw rate.
   spinDamp: 6.0,
@@ -276,9 +391,13 @@ export const TUNE = {
   yawRateMax: 2.4,
 
   // ---- drift state machine --------------------------------------------------------------------
-  // Hysteresis plus a minimum hold: the hold is what lets a brake TAP produce a drift that
-  // survives the steering being centred, and the gap between enter and exit is what lets a
-  // 0.15 s countersteer pass through without ending it (double drifting).
+  // Hysteresis plus a minimum hold. CORRECTION, wave-s round 2: this used to claim the min-hold "is
+  // what lets a brake TAP produce a drift that survives the steering being centred". The critic set
+  // `driftMinHold: 0` and measured brake-tap peak 10.1 deg, armed=true, e-brake hold 0.63 s and
+  // gather 0.80 s - identical to baseline in all three probes, so the claim is WITHDRAWN. What
+  // actually makes a slide survive centred steering is the rHold angle-hold in substep(); the
+  // min-hold's real job is narrower and it is the honest one: it stops the state machine chattering
+  // in and out on the substep the entry crosses the threshold.
   //
   // The thresholds are RATIOS OF THE TYRE'S OWN SATURATION SLIP ANGLE (mu / tyreStiff), not
   // absolute angles, and that is load-bearing. With absolute thresholds the exit angle sat BELOW
@@ -288,8 +407,16 @@ export const TUNE = {
   // ENTRY ALSO NEEDS INTENT (brake, e-brake or reverse-throttle) - see the gate in substep().
   // As ratios they also scale correctly with the handbrake, which lowers rear mu and therefore
   // lowers the angle at which a slide counts as one.
-  driftEnterRatio: 1.4,   // x saturation slip to enter
-  driftExitRatio: 1.0,    // x saturation slip to leave
+  // WAVE-S ROUND 2: 1.4 -> 1.0. 1.4 x the rear tyre's 7.4 deg saturation angle is 10.3 deg of rear
+  // slip, and the critic measured a 200 ms brake tap at 130-150 km/h reaching 6.4-7.0 deg, so the
+  // published primary drift entry could not arm AT ALL through the real keybinds (main.js caps
+  // brake authority at 0.6, which is frozen, so the tap cannot be made harder from here). Entry at
+  // exactly the saturation angle is the honest threshold anyway: that IS the point where the rear
+  // tyre stops making more force for more angle. The safety property is unchanged and it was never
+  // the ratio: entry also requires INTENT (brake, e-brake or reverse throttle), so a cornering
+  // overshoot still cannot arm a drift.
+  driftEnterRatio: 1.0,   // x saturation slip to enter
+  driftExitRatio: 0.7,    // x saturation slip to leave
   driftMinHold: 0.50,   // s
   slipRef: 0.45,        // rad of body slip angle that reads as |slip| = 1
   leanRef: 22,          // m/s^2 of lateral acceleration that reads as |lean| = 1
@@ -298,9 +425,36 @@ export const TUNE = {
   // Two tiers, because the reference has two outcomes: a light side-on scrape preserves the run
   // and does not even interrupt the boost, while a real hit ends it (MEASURED-BY-ME in the
   // research doc, timing only). The discriminator is the closing speed along the wall normal.
-  scrapeKeep: 0.96,     // speed retained by a glancing contact
-  hitKeep: 0.30,        // speed retained by a square hit
-  hitNormalSpeed: 12,   // m/s of normal closing speed at which a contact counts as a full hit
+  // WAVE-S ROUND 2. The critic's ranked item 4: one building cost 231 -> 69 km/h, 70% of the speed
+  // and six seconds of grinding it back, and 20 deg and 90 deg of approach were INDISTINGUISHABLE
+  // outcomes. Two separate defects, both fixed here.
+  //
+  // (a) hitNormalSpeed 12 -> 34 m/s. The severity ramp saturated at 12 m/s of NORMAL closing speed,
+  //     which a 231 km/h car reaches at 11 degrees of approach angle, so every contact from 11 deg
+  //     to head-on was scored identically as a maximum-severity hit. 34 m/s is a genuinely square
+  //     hit (122 km/h straight into a facade) and the ramp now spends its whole range on angles a
+  //     player can actually distinguish: 20 deg at 231 km/h reads 0.61 severity, 45 deg reads 1.0.
+  // (b) THE SHUNT. The impulse used to scale the longitudinal speed and throw the lateral component
+  //     away, which is why a glancing hit still lost most of the car's momentum: the component
+  //     PARALLEL to the wall was being deleted along with the component into it. Now the world
+  //     velocity is decomposed on the contact normal, the inbound normal component is removed (a
+  //     wall cannot push you into itself) and the retention factor is applied to the TANGENTIAL
+  //     component only, then the result is resolved back onto the car's axes. That is Burnout's
+  //     "brush a wall and get shoved along it" affordance falling out of the geometry instead of
+  //     being scripted: at 20 deg and 231 km/h the car now keeps 119 km/h pointing DOWN the wall
+  //     rather than 69 km/h pointing nowhere, while a square hit still stops it dead, because at
+  //     90 deg the tangential component is zero and there is nothing to retain.
+  grazeNormalSpeed: 2.5,  // m/s below which a contact is a pure scrape, severity 0
+  scrapeKeep: 0.96,     // TANGENTIAL speed retained by a glancing contact
+  hitKeep: 0.38,        // TANGENTIAL speed retained by a square hit
+  hitNormalSpeed: 34,   // m/s of normal closing speed at which a contact counts as a full hit
+  // A contact this severe is a WRECK, not a scrape. physics.js cannot start the crash cinematic
+  // itself - `crash.trigger()` lives in main.js, which is frozen this round, and physics must not
+  // import crash.js - so instead it publishes the wreck through `drainWreck()` and leaves
+  // `state.crashed` alone. Setting `state.crashed` from here without main.js taking over would
+  // raise hud.js's WRECKED overlay (hud.js:2697 ramps crashMix at 16/s) with nothing to clear it
+  // and no replay behind it, which is worse than the defect. See the routed finding.
+  wreckSeverity: 0.92,
   wallFriction: 5.0,    // m/s^2 while the car is held against a wall, applied as a RATE
   contactHold: 0.15,    // s a contact counts as the SAME contact, so one impact = one impulse
 };
@@ -360,6 +514,10 @@ export function createPhysics({ blocks = [], bounds = 1400 } = {}) {
     // (vLong) to the HUD and to audio, and during a big drift that under-reads by up to the cosine
     // of the slip angle. Those are not this piece's files; `ground` is published for them.
     ground: 0,
+    // A 0..1 decaying pulse, set whenever the event stream pays boost, so a HUD or an audio cue can
+    // acknowledge a near miss without having to watch the bar for a step change. Nothing reads it
+    // yet; it costs one multiply per tick and it is the hook the boost economy needs to be legible.
+    eventEarn: 0,
   };
 
   let input = { throttle: 0, brake: 0, steer: 0, boost: false, handbrake: false };
@@ -371,6 +529,10 @@ export function createPhysics({ blocks = [], bounds = 1400 } = {}) {
   // contact, a 3.2 deg graze now retains 79% of the speed it arrived with and a square hit 25%.
   let wallCool = 0;
   let driftHold = 0;
+  let counterHold = 0;      // s of CONTINUOUS opposite lock inside the current drift
+  let counterPrev = 0;      // last substep's countersteer amount, for the flick's rate term
+  let wreck = null;         // a wreck-grade contact, published through drainWreck() once
+  let eventSource = null;   // see setEventSource()
   let aLongPrev = 0;        // last substep's DRIVE/BRAKE acceleration, for load transfer only
   let prevGround = 0;       // last tick's signed ground speed, for accelG
 
@@ -393,6 +555,22 @@ export function createPhysics({ blocks = [], bounds = 1400 } = {}) {
    * second is stationary within a tenth of a second — measured, a 3 deg graze retained 0% of its
    * speed. While the contact is held, all that remains is wall friction as a rate.
    */
+  /**
+   * Resolve a contact as a SHUNT ALONG THE FACE. `v` is the world velocity, `n` the outward
+   * contact normal, `keep` the fraction of the TANGENTIAL component that survives. The inbound
+   * normal component is removed outright, because a wall cannot push the car into itself; the
+   * tangential component is what the car drives away with. See the TUNE comment at hitNormalSpeed.
+   */
+  function shunt(vx, vz, nx, nz, keep) {
+    const tx = -nz, tz = nx;                       // the wall face, in world space
+    const vt = (vx * tx + vz * tz) * keep;
+    const vn = Math.max(0, vx * nx + vz * nz);     // keep any component already leaving the wall
+    const wx = tx * vt + nx * vn, wz = tz * vt + nz * vn;
+    forward(fwd); leftward(side);
+    state.speed = clamp(wx * fwd.x + wz * fwd.z, -TUNE.reverseMax, TUNE.vMaxBoost);
+    state.vLat = wx * side.x + wz * side.z;
+  }
+
   function collide(h) {
     for (const b of blocks) {
       const hx = b.w / 2 + 1.0, hz = b.d / 2 + 1.0;
@@ -408,13 +586,14 @@ export function createPhysics({ blocks = [], bounds = 1400 } = {}) {
         else { state.pos.z = b.cz + Math.sign(dz || 1) * hz; nz = Math.sign(dz || 1); }
         const closing = Math.max(0, -(vx * nx + vz * nz));
         if (wallCool <= 0) {
-          const sev = clamp(closing / TUNE.hitNormalSpeed, 0, 1);
-          state.speed *= lerp(TUNE.scrapeKeep, TUNE.hitKeep, sev);
-          // A wall cannot push the car sideways into itself: kill the inbound lateral component
-          // and let the rest slide along the face, which is what makes a scrape read as a scrape.
-          state.vLat *= lerp(0.85, 0.2, sev);
+          const sev = clamp((closing - TUNE.grazeNormalSpeed)
+            / (TUNE.hitNormalSpeed - TUNE.grazeNormalSpeed), 0, 1);
+          shunt(vx, vz, nx, nz, lerp(TUNE.scrapeKeep, TUNE.hitKeep, sev));
           state.yawRate *= lerp(0.9, 0.35, sev);
           state.impact = Math.max(state.impact, sev);
+          if (sev >= TUNE.wreckSeverity && !wreck) {
+            wreck = { speed: Math.hypot(vx, vz), dir: { x: -nx, z: -nz }, severity: sev };
+          }
         } else {
           state.speed -= Math.sign(state.speed || 1) * TUNE.wallFriction * h;
           state.vLat *= Math.exp(-14 * h);
@@ -432,7 +611,13 @@ export function createPhysics({ blocks = [], bounds = 1400 } = {}) {
       if (outX) state.pos.x = Math.sign(state.pos.x) * bounds;
       if (outZ) state.pos.z = Math.sign(state.pos.z) * bounds;
       if (wallCool <= 0) {
-        state.speed *= 0.5; state.vLat *= 0.5;
+        forward(fwd); leftward(side);
+        const vx = fwd.x * state.speed + side.x * state.vLat;
+        const vz = fwd.z * state.speed + side.z * state.vLat;
+        // The inward normal of whichever boundary plane was crossed. Same shunt as a facade, so
+        // the boundary is a wall you can drive along rather than a speed multiplier.
+        const nx = outX ? -Math.sign(state.pos.x) : 0, nz = outX ? 0 : -Math.sign(state.pos.z);
+        shunt(vx, vz, nx, nz, 0.55);
         state.impact = Math.max(state.impact, 0.5);
       } else {
         state.speed -= Math.sign(state.speed || 1) * TUNE.wallFriction * h;
@@ -498,10 +683,18 @@ export function createPhysics({ blocks = [], bounds = 1400 } = {}) {
     // throttle simply cancelled the handbrake force (measured: 11700 N of rear drive against
     // 9000 N of e-brake left +2700 N of NET DRIVE) and a handbrake turn came out as a slightly
     // slower ordinary corner.
+    // WAVE-S ROUND 2 - THE FRONT-AXLE BUG (critic ranked item 3, routed finding 5). This read
+    // `fxFront = m * aDrive * (1 - driveRear)` with `driveRear = handbrake ? 0 : 0.65`, so holding
+    // the e-brake did not remove the rear axle's 65% of the engine, it HANDED IT TO THE FRONT AXLE:
+    // the front went from 35% to 100% of the drive force. A locked rear axle does not send its
+    // torque forward. That single line is why the critic measured the e-brake ACCELERATING the car
+    // by 26% at 80 km/h and 8% at 130. The front's share is now a constant `1 - driveSplitRear`
+    // whatever the e-brake is doing, and the rear's share is simply lost.
     const driveRear = handbrake ? 0 : TUNE.driveSplitRear;
     let fxRear = m * aDrive * driveRear - brakeDemand * m * TUNE.brakeSplitRear
       - (handbrake ? TUNE.handbrakeDecel * m : 0);
-    let fxFront = m * aDrive * (1 - driveRear) - brakeDemand * m * (1 - TUNE.brakeSplitRear);
+    let fxFront = m * aDrive * (1 - TUNE.driveSplitRear)
+      - brakeDemand * m * (1 - TUNE.brakeSplitRear);
     const fxRearCap = TUNE.absHold * muRear * fzRear;
     const fxFrontCap = TUNE.absHold * TUNE.muFront * fzFront;
     fxRear = clamp(fxRear, -fxRearCap, fxRearCap);
@@ -534,6 +727,14 @@ export function createPhysics({ blocks = [], bounds = 1400 } = {}) {
     const ayDemand = rTarget * gv;
     const understeer = (m * Math.abs(ayDemand) / (TUNE.tyreStiff * L))
       * (b / fzFront - a / fzRear);
+    // KILL-CONTROL, REPORTED BECAUSE IT REFUTED MY OWN HYPOTHESIS. The round-2 brief nominates this
+    // servo as the reason held lock produces no rotation ("the yaw-rate servo should stop catching
+    // it"). I gave up 60% of its authority at full throttle and measured the peak slip angle at
+    // 250 km/h move 5.0 -> 5.0 deg, i.e. not at all, so the servo is NOT what makes full-throttle
+    // cornering inert. What makes it inert is that the car is already AT its lateral limit there:
+    // gripUse 0.85 through 1.30 all give a flat 30-33 deg/s, because past ~1.0 the demand exceeds
+    // what the tyres can deliver and the achieved rate stops following it. The change was reverted
+    // rather than shipped unmeasured. See the verdict's honest-miss section.
     const servo = handbrake ? TUNE.steerServoHandbrake
       : state.drifting ? TUNE.steerServoDrift : TUNE.steerServo;
     const delta = clamp(L * rTarget / Math.max(gv, 4) + Math.sign(rTarget) * understeer
@@ -573,7 +774,14 @@ export function createPhysics({ blocks = [], bounds = 1400 } = {}) {
       }
     } else {
       driftHold = Math.max(0, driftHold - h);
-      if (rearSlip < satSlip * TUNE.driftExitRatio && driftHold <= 0 && av > 1) state.drifting = false;
+      // EXIT ON "IS THE CAR STILL SIDEWAYS", not on the rear tyre alone. Measured: an 11 deg body
+      // slide sustained by the assist below carries only ~5 deg of REAR slip, because the yaw rate
+      // that holds the angle is also what keeps the rear axle's own lateral velocity small. So a
+      // rear-slip-only exit dropped the drift state 0.40 s after a brake tap while the car was
+      // visibly still sideways, the full stability assist came back, and the slide was deleted -
+      // which is why the published chain-drift entry could never hold long enough for the next beat.
+      const sideways = Math.max(rearSlip, Math.abs(state.slipAngle));
+      if (sideways < satSlip * TUNE.driftExitRatio && driftHold <= 0 && av > 1) state.drifting = false;
       if (av <= 1) state.drifting = false;
     }
 
@@ -621,17 +829,112 @@ export function createPhysics({ blocks = [], bounds = 1400 } = {}) {
     // IS the drift. Note the target is a BOUNDED rate, so the assist can no longer chase a
     // kinematic rate the tyres cannot deliver and overshoot the car into a spin doing it.
     const yawRef = rTarget;
-    let yawAccel = (a * fyFront - b * fyRear) / TUNE.izz;
+    const tyreMoment = (a * fyFront - b * fyRear) / TUNE.izz;
+    let yawAccel = tyreMoment;
+
+    // ---- THE SLIDE ---------------------------------------------------------------------------
+    // rHold IS THE WHOLE DRIFT MODEL, so it is worth being precise about what it is. A slide is
+    // STEADY when the car's heading rotates at exactly the rate the velocity vector is rotating;
+    // then the angle between them - the slip angle - does not change. The velocity vector's
+    // rotation rate is the component of the acceleration PERPENDICULAR to the velocity, divided by
+    // the speed. In the body frame the velocity direction is (dirL, dirS) and its left normal is
+    // (-dirS, dirL), so that component is aLatBody*dirL - aTyre*dirS, and
+    //     d(slipAngle)/dt = yawRate - rHold
+    // exactly. Nothing here is tuned: rHold is measured from the forces the tyres are making this
+    // substep. Aim a servo at it and the slide sustains itself; aim one at zero (which is what
+    // round 1 did whenever the steering was centred) and it cannot exist.
+    const slipNow = -Math.atan2(state.vLat, Math.max(av, 0.6));
+    // The forces MUST be the tyre forces alone, not `aTyre`, which already has the resistance
+    // resolved into it. Drag and scrub act ANTI-PARALLEL to the velocity, so their contribution to
+    // the perpendicular component is identically zero - but subtracting them along the longitudinal
+    // axis and then projecting leaves a spurious aResist*dirL*dirS term. Measured, in a 40 deg
+    // slide with 2 g of scrub, that error was 0.30 rad/s = 17 deg/s of missing sustaining rate, and
+    // the slide decayed at 0.83/s instead of the 0.30/s driftAngularDamping asks for. It is the
+    // difference between a self-sustaining slide and a slightly slower one.
+    const aXforce = (fxFront + fxRear) / m;
+    const rHold = (aLatBody * dirL - aXforce * dirS) / Math.max(gv, 4);
+    // COUNTERSTEER, as an amount and as a duration. `counter` is +1 for full opposite lock and -1
+    // for full lock further into the slide; it is signed against the SLIDE, not against the world,
+    // so it means the same thing in both directions.
+    const dSign = Math.sign(slipNow || state.yawRate || 1);
+    const counter = clamp(-dSign * state.steer, -1, 1);
+    if (state.drifting && counter > 0.55) counterHold += h;
+    else counterHold = Math.max(0, counterHold - TUNE.driftCounterDecay * h * counterHold);
+    const gather = clamp(counterHold / TUNE.driftCounterGather, 0, 1);
+    // THE FLICK: paid on the RATE at which opposite lock is applied, so a tap and a hold each pay
+    // it exactly once, and it throws the tail FURTHER out. This is the term that makes a tapped
+    // countersteer lengthen the slide while a held one ends it.
+    // ONLY THE POSITIVE SIDE COUNTS, and this was a real bug for one measurement round. Taking the
+    // rate of `counter` itself means that RELEASING lock held into the slide (counter -1 -> 0) reads
+    // as applying a full countersteer, so simply centring the wheel paid the flick: the hands-off
+    // hold measured 2.83 s where the honest figure is 1.97 s, and the kill-control that found it was
+    // driftFlick -> 0 moving a number it should not have been able to touch.
+    const cPos = Math.max(0, counter);
+    const dCounter = Math.max(0, cPos - counterPrev);
+    if (state.drifting) state.vLat -= dSign * TUNE.driftFlick * dCounter * gv;
+    counterPrev = cPos;
+
     if (handbrake) {
-      yawAccel += (yawRef - state.yawRate) * TUNE.handbrakeAssist
-        - state.yawRate * TUNE.driftAngularDamping;
+      // The e-brake commands a SLIP ANGLE. `handbrakeSlip` is the angle asked for at full lock,
+      // approached at handbrakeAssist 1/s: since d(slipAngle)/dt = yawRate - rHold, the rate that
+      // closes the angle error at that pace is rHold + assist * error, and the servo below tracks
+      // it. The same command therefore produces the same readable slide at 80 and at 250 km/h,
+      // where round 1's grip-cut-and-hope produced +26% speed at one end and -86% at the other.
+      const want = TUNE.handbrakeSlip * clamp(Math.abs(state.steer), 0.30, 1) * Math.sign(state.steer || 1);
+      // The correction is BOUNDED. Unbounded, rHold + assist*error asks for 2.3 rad/s at the moment
+      // the e-brake bites, which is above yawRateMax, so the yaw rate saturated, the angle overshot
+      // to 52-66 deg, and the scrub at that angle took 91% of the car's speed in two seconds. The
+      // bound is the whole difference between a commanded slide and a pirouette.
+      const rWant = rHold + clamp((want - slipNow) * TUNE.handbrakeAssist,
+        -TUNE.handbrakeRate, TUNE.handbrakeRate);
+      // Same feed-forward as the drift branch, and for the same reason: without it the tyre moment
+      // is a standing disturbance the servo can only divide down, and with the rear mu cut that
+      // moment is PRO-rotation, so the angle overshot its 26 deg command to 54 deg at 80 km/h and
+      // 89 deg at 250 - the flat spin the critic measured, and the whole reason the speed cost was
+      // four different numbers on the same two keys.
+      yawAccel -= TUNE.driftYawAuthority * tyreMoment;
+      yawAccel += (rWant - state.yawRate) * TUNE.handbrakeGain;
     } else if (state.drifting) {
-      yawAccel += (yawRef - state.yawRate) * TUNE.driftStabilityAssist
-        - state.yawRate * TUNE.driftAngularDamping;
+      // rSustain holds the angle and bleeds it off at driftAngularDamping 1/s; `gather` hands the
+      // target back to the rate the DRIVER is asking for as a countersteer is held, and with
+      // opposite lock that rate has the other sign, so the car gathers up.
+      // WHILE THE BRAKE IS STILL DOWN, THE ENTRY IS STILL HAPPENING. Holding the angle from the
+      // instant the drift arms freezes it at exactly the entry threshold: measured, a chain-drift
+      // beat peaked at 7.1-7.2 deg, which is the rear tyre's own 7.38 deg saturation angle to two
+      // decimal places, because the sustain caught the slide before it could blossom. So a brake tap
+      // COMMANDS AN ANGLE, exactly as the e-brake does, just a shallower one - which is also the
+      // only route left after main.js's frozen 0.6 brake-authority cap closed the physical one.
+      // Released, the command goes away and the slide reverts to holding whatever it reached.
+      const tap = clamp(brake / TUNE.driftTapBrake, 0, 1);
+      const rSustain = tap > 0.01
+        ? rHold + clamp((TUNE.driftTapSlip * tap * Math.sign(state.steer || dSign) - slipNow)
+          * TUNE.handbrakeAssist, -TUNE.handbrakeRate, TUNE.handbrakeRate)
+        : rHold - TUNE.driftAngularDamping * slipNow;
+      const ref = lerp(rSustain, rTarget, gather);
+      // FEED-FORWARD, not gain. A servo alone cannot hold rSustain: the tyres' restoring yaw moment
+      // in a 40 deg slide is a constant disturbance, so the steady-state error is that moment
+      // divided by the gain, and MEASURED the slide then decayed at 0.90/s where
+      // driftAngularDamping asked for 0.30/s. Raising the gain only trades error for stiffness -
+      // 4 / 8 / 12 / 18 bought 1.18 / 1.47 / 1.71 / 1.94 s of hold, still short and increasingly
+      // twitchy. Cancelling the disturbance instead makes the ANGLE DYNAMICS EXACT and leaves the
+      // gain free to be small. driftYawAuthority is how much of the tyres' own straightening moment
+      // the driver's hands and the differential are credited with countering inside a slide; it is
+      // handed back as the countersteer gathers the car, so a held countersteer gets the full,
+      // uncancelled tyre moment working for it.
+      yawAccel -= TUNE.driftYawAuthority * tyreMoment * (1 - gather);
+      yawAccel += (ref - state.yawRate) * lerp(TUNE.driftStabilityAssist, TUNE.stabilityAssist, gather);
     } else {
       yawAccel += (yawRef - state.yawRate) * TUNE.stabilityAssist;
+      counterHold = 0;
     }
-    const excess = Math.abs(state.yawRate) - Math.abs(rTarget);
+    // The over-rotation damper measures excess against the rate the car is ENTITLED to, which in a
+    // drift is the sustaining rate and not the driver's requested rate - otherwise it removes every
+    // slide the moment the steering is centred, since rTarget is then zero. Outside a drift it is
+    // unchanged, so it still cannot touch ordinary cornering.
+    const rAllow = state.drifting || handbrake
+      ? Math.max(Math.abs(rTarget), Math.abs(rHold) + TUNE.handbrakeSlip * TUNE.handbrakeAssist)
+      : Math.abs(rTarget);
+    const excess = Math.abs(state.yawRate) - rAllow;
     if (excess > 0) yawAccel -= Math.sign(state.yawRate) * excess * TUNE.spinDamp;
 
     state.speed = v + aLong * h;
@@ -679,12 +982,38 @@ export function createPhysics({ blocks = [], bounds = 1400 } = {}) {
       state.boost = 1; state.boosting = false; state.boostBlend = 0; state.boostKick = 0;
       state.crashed = false; state.vy = 0; state.airborne = false; state.distance = 0;
       state.vLat = 0; state.yawRate = 0; state.slipAngle = 0; state.drifting = false;
-      state.chain = 0; state.impact = 0; state.accelG = 0;
+      state.chain = 0; state.impact = 0; state.accelG = 0; state.eventEarn = 0;
       state.ground = Math.abs(speed); prevGround = speed;
       boostLatch = false; driftHold = 0; aLongPrev = 0; wallCool = 0;
+      counterHold = 0; counterPrev = 0; wreck = null;
     },
 
     setInput(i) { input = Object.assign({ throttle: 0, brake: 0, steer: 0, boost: false, handbrake: false }, i); },
+
+    /**
+     * THE BOOST EVENT STREAM, physics.js's half. Contract agreed in tools/WAVE-S-ROUND2.md and
+     * binding on both this file and traffic.js.
+     *
+     * `fn()` returns and CLEARS the events accrued since the last call, each
+     *   { type: 'nearMiss' | 'oncoming' | 'check', amount: 0..1 intensity, at: {x,z}, meta? }
+     * `amount` is an INTENSITY (how close, how fast), never a boost quantity: what a near miss is
+     * worth is decided here, by TUNE.boostPerNearMiss and friends.
+     *
+     * OPTIONAL BY DESIGN. Left unset, nothing breaks and nothing earns boost from traffic, which is
+     * why this can land before traffic.drainEvents() exists. The join is one line in main.js -
+     * `physics.setEventSource(() => traffic.drainEvents())` - and main.js is frozen this round, so
+     * AS SHIPPED THIS IS UNJOINED and the only earn path in play is drift. Say so in any measurement.
+     */
+    setEventSource(fn) { eventSource = typeof fn === 'function' ? fn : null; },
+
+    /**
+     * A wreck-grade contact, or null; CLEARED ON READ. physics.js cannot start the crash cinematic
+     * itself (crash.trigger() is called from main.js, which is frozen, and physics must not import
+     * crash.js), so it publishes the wreck instead of half-setting `state.crashed` - see the TUNE
+     * comment at wreckSeverity for why half-setting it is worse than the defect. The join is
+     * `const w = physics.drainWreck(); if (w) crash.trigger(w);` and it is a routed finding.
+     */
+    drainWreck() { const w = wreck; wreck = null; return w; },
 
     /** Steer toward a point `lookahead` metres down the given path. */
     followPath(path, lookahead = 24) { auto = { path, lookahead }; },
@@ -764,6 +1093,31 @@ export function createPhysics({ blocks = [], bounds = 1400 } = {}) {
         : Math.max(0, state.boostKick - dt * 4);
 
       const driftAmount = clamp(Math.abs(state.slipAngle) / TUNE.slipRef, 0, 1);
+
+      // ---- EVENT EARN. Paid whether or not the player is boosting, because in Paradise a near
+      // miss taken mid-burn feeds a chain. Defensive about the payload on purpose: traffic.js is a
+      // peer file being edited concurrently, and an event stream that can throw inside the physics
+      // tick would take the whole game down. An unknown type is worth nothing rather than being an
+      // error, so a future 'air' or 'takedown' event costs a tuning line here and not a crash.
+      if (eventSource) {
+        const evs = eventSource();
+        if (evs && evs.length) {
+          let earned = 0;
+          for (let i = 0; i < evs.length; i++) {
+            const e = evs[i];
+            if (!e) continue;
+            const amt = clamp(typeof e.amount === 'number' ? e.amount : 0, 0, 1);
+            if (e.type === 'nearMiss') earned += TUNE.boostPerNearMiss * amt;
+            else if (e.type === 'oncoming') earned += TUNE.boostPerOncoming * amt;
+            else if (e.type === 'check') earned += TUNE.boostPerCheck * amt;
+          }
+          if (earned > 0) {
+            state.boost = clamp(state.boost + earned, 0, 1);
+            state.eventEarn = Math.min(1, state.eventEarn + earned * 4);   // for the HUD, decays below
+          }
+        }
+      }
+
       if (boosting) {
         state.boost = clamp(state.boost - dt / TUNE.boostDuration, 0, 1);
         state.chain += driftAmount * dt;
@@ -806,6 +1160,7 @@ export function createPhysics({ blocks = [], bounds = 1400 } = {}) {
     prevGround = groundSigned;
       state.pitch = damp(state.pitch, clamp(-state.accelG * 0.0035, -0.05, 0.05), 6, dt);
       state.impact = Math.max(0, state.impact - dt * 2.2);
+      state.eventEarn = Math.max(0, state.eventEarn - dt * 2.5);
       state.pos.y = 0;
       return state;
     },

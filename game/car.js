@@ -2417,7 +2417,15 @@ export function createCar(rng, { paint = 0xd8420f } = {}) {
         w.spin.rotation.x = spinAngle;
         w.pivot.rotation.y = w.steers ? steer * 0.52 : 0;
       }
-      shell.rotation.z = -lean * 0.05;
+      // BODY ROLL. wave-s round 2: 0.05 -> 0.105, and this is the only line of car.js the handling
+      // piece owns. `lean` saturates at +-1.2 (physics.js clamps it there), so 0.05 rad/unit gave
+      // 3.44 deg of roll at full lateral load and the round-1 critic measured 3.31 deg on a real
+      // drive - "it reads as almost nothing on screen at 1280x720", and it is the visual channel the
+      // slide has to be read through. 0.105 gives 7.2 deg at the clamp, which is an arcade
+      // exaggeration of a real car's 3-6 deg and is the same order as the reference footage's very
+      // obvious lean. The SIGN is unchanged and must stay: negative lean in a left turn, so the
+      // minus here rolls the body AWAY from the turn centre (physics.js SIGN CONVENTIONS).
+      shell.rotation.z = -lean * 0.105;
       group.rotation.x = pitch;
     },
   };

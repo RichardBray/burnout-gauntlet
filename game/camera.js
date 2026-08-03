@@ -125,6 +125,9 @@ const FRAME = {
   // sets for a full wreck, so a 100 km/h square hit into a facade that did not trigger the crash
   // module moved the camera not at all.
   impactShake: 0.85,
+  // Rad the rig azimuth lags the car's heading, toward the direction of travel, at |slip| = 1
+  // (physics.js slipRef = 0.45 rad, so |slip| = 1 is a 25.8 deg slide). See the block at camYaw.
+  slipAim: 0.32,
 };
 
 const DEFAULTS = {
@@ -315,11 +318,28 @@ export function createCamRig(camera) {
       const chase = cfg.mode === 'chase';
 
       // ---- rig azimuth: lags the car's yaw so the car rotates inside the frame -------------
-      if (first) camYaw = s.yaw + slip * 0.22;
+      // ---- WAVE-S ROUND 2: THE SIGN OF THE DRIFT TERM WAS BACKWARDS. ------------------------
+      // This read `s.yaw + slip * 0.30`. `slip` is POSITIVE in a left-hand slide (tail out to the
+      // right) and `yaw` grows to the LEFT, so adding it aimed the rig FURTHER round the corner
+      // than the car itself: the rig out-rotated the car by construction, in both directions, and
+      // the e-brake's deep slip angles widened the gap exactly when the player was asking for
+      // rotation. The consequence on screen is that the car's nose stays pinned to the centre of
+      // frame however sideways the car is, which is why round 1's slide was unreadable even where
+      // it existed - a chase camera that does not lag cannot show you a drift.
+      //
+      // The rig now aims BETWEEN the car's heading and its DIRECTION OF TRAVEL, on the travel side.
+      // The velocity heading is `yaw - slipAngle` (slipAngle is the angle from the nose to the
+      // velocity, positive tail-out-right), so with `slip` the normalised angle the term is
+      // `- slip * slipAim`. At full slip the rig sits 18.3 deg behind the nose, so the car visibly
+      // rotates inside the frame and its far flank comes into view - which is the whole read of a
+      // Burnout slide. This is a MEASUREMENT, not a matched number: docs/BURNOUT-HANDLING.md marks
+      // every chase-camera figure `NOT FOUND` (its own attempt to measure one off footage is
+      // retracted with three named confounds), so what is asserted here is the ORDERING - the rig
+      // must lag the car's heading toward the velocity vector, never lead it - and that ordering is
+      // checked by tools/_handling-r2.mjs section 7 rather than scored against a reference.
+      if (first) camYaw = s.yaw - slip * FRAME.slipAim;
       else {
-        // The drift term aims the rig at where the nose points rather than where the car
-        // travels, which is what swings the tail out into view mid-slide.
-        const wanted = s.yaw + slip * 0.30;
+        const wanted = s.yaw - slip * FRAME.slipAim;
         const lagK = cfg.yawLag * (1 + speedN * 0.55);
         camYaw += angDelta(camYaw, wanted) * (1 - Math.exp(-lagK * dt));
       }

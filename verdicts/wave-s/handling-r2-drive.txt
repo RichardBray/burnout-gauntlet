@@ -1,0 +1,49 @@
+== RENDER SIZE, quoted verbatim from ctx.renderSize()
+  {"w":1280,"h":720,"cssW":1280,"cssH":720,"pixelRatio":1,"devicePixelRatio":1}
+
+== 1. THE SIGN INVARIANT, with the new body-roll scale. Automatic FAIL if either half breaks.
+  D (right): displacement . screen-right = 62.2 m -> went RIGHT PASS
+    lean 1.145, shell world up (0.0640, 0.9926, -0.1027) = 3.69 deg of body roll
+    up . carLeft = 0.11925 -> rolls toward its LEFT, i.e. AWAY FROM the turn centre PASS
+    peak body roll over the turn: 6.94 deg (round 1 measured 3.31)
+  A (left): displacement . screen-right = -76.7 m -> went LEFT PASS
+    lean -1.148, shell world up (0.0661, 0.9926, 0.1017) = 3.81 deg of body roll
+    up . carLeft = -0.11956 -> rolls toward its RIGHT, i.e. AWAY FROM the turn centre PASS
+    peak body roll over the turn: 6.99 deg (round 1 measured 3.31)
+
+== 2. THE THREE DRIFT ORDERINGS, through the real keys, on the UNCLAMPED slipAngle
+  entry peak 26 deg
+  centred:            half-peak 2.32 s | contact false | 0.0s:27 0.3s:25 0.6s:23 0.9s:21 1.2s:19 1.5s:17 1.8s:16 2.1s:14 2.3s:13 2.6s:12 2.9s:11 3.2s:9 3.5s:8 3.8s:6 4.0s:4 4.3s:1
+  0.15 s tap counter: half-peak 2.73 s | contact false | 0.0s:26 0.3s:32 0.5s:29 0.8s:26 1.0s:23 1.3s:21 1.5s:20 1.7s:18 2.0s:17 2.2s:15 2.5s:14 2.7s:13 3.0s:12 3.2s:11 3.5s:10
+  HELD counter:       half-peak 0.75 s | contact false | 0.0s:27 0.2s:33 0.5s:28 0.7s:16 1.0s:-1 1.3s:-3 1.5s:-3 1.7s:-3 2.0s:-4 2.2s:-4 2.5s:-4 2.7s:-4 3.0s:-4 3.2s:-4 3.5s:-4 3.8s:-4 4.1s:-4 4.3s:-5
+  ORDERING A persists centred: 2.32 s
+  ORDERING B tap lengthens:    2.73 > 2.32 HIT
+  ORDERING C held ends it:     0.75 < 2.32 HIT
+
+== 3. CHAIN DRIFT: six beats of "tap brake, turn" at 130 km/h, real keys, real 0.6 brake cap
+  peak slipAngle 15.0 deg | 21% of samples in the drift state | speed 129 -> 132 km/h | contact false
+  slipAngle: -0 1 3 4 7 9 8 7 6 5 4 12 14 7 -0 -3 -4 -6 -5 0 3 3 3 3 6 2 -2 -3 -3 -3 -4 -6 -1 2 3 3 3 4 6 0 -2 -3 -3 -3
+
+== 4. E-BRAKE HELD, the four speeds the critic measured
+   80 km/h: 0.5s -9% | 1s -26% | 2s -74% | 3.1s -94% | peak slip 32 deg, peak yaw 103 deg/s | contact false
+     then W+D 2.5 s: slip -2 deg, 88 km/h - gathered: true
+  130 km/h: 0.5s -7% | 1s -21% | 2s -52% | 3.1s -85% | peak slip 34 deg, peak yaw 87 deg/s | contact false
+     then W+D 2.5 s: slip -2 deg, 88 km/h - gathered: true
+  200 km/h: 0.5s -8% | 1s -19% | 2s -45% | 3.1s -70% | peak slip 35 deg, peak yaw 59 deg/s | contact false
+     then W+D 2.5 s: slip -3 deg, 108 km/h - gathered: true
+  250 km/h: 0.5s -8% | 1s -20% | 2s -44% | 3.1s -67% | peak slip 35 deg, peak yaw 60 deg/s | contact false
+     then W+D 2.5 s: slip -3 deg, 122 km/h - gathered: true
+
+== 5. THE CHASE RIG: does it lag the car through a slide, or lead it?
+  samples where the rig LEADS the car (bad): 0; where it LAGS toward the velocity: 29
+  max rig-to-nose offset during the slide: 12.3 deg
+
+== 6. setEventSource IN THE LIVE PAGE (traffic.drainEvents() is a peer file; join pending)
+  20 nearMiss events at intensity 1.0 fed through the live tick: bar 0.00 -> 1.000 (expected 20 x 0.060 = 1.00, capped at 1), eventEarn pulse 0.00
+  drainWreck() with no contact: null
+  no event source, 6 s of holding W from an empty bar: 0.0% (round 1 filled a whole bar in 28.6 s of this)
+
+== 7. FRAME TIME — SMOKE TEST ONLY. Two peer builders are running; this is not a result.
+  SMOKE TEST (concurrent peers on this machine, NOT a measurement): n 201, p50 30.4 ms, p90 47.7, p99 107.0, over16.7 9055%, render 1280x720 @ ratio 1 (dpr 1)
+
+== CONSOLE / PAGE ERRORS: NONE across the whole session
