@@ -39,7 +39,14 @@ page.on('pageerror', (e) => { if (!/cannot resume an offline context/.test(Strin
 await page.goto(`http://127.0.0.1:${port}/cap.html`);
 
 const SR = 48000, DUR = 5, EVENT_AT = 1.0;
-const CLIPS = ['crash', 'boost', 'squeal'];
+// --only=<clip>  render just one clip. Same convention as audio-scene.mjs:58-60.
+// Each clip already does a full page.reload() between its bed and event renders, so the
+// per-clip render is independent of which other clips ran; skipping clips cannot change a
+// rendered clip's output. VERIFIED, wave R: `--only=boost` reproduces the full run's
+// `ours-boost-solo.wav` peak and every `_ignmeas` figure to the digit (verdicts/wave-r/audio.md).
+// Paired A/Bs on one clip cost ~4 min instead of ~13.
+const ONLY = (process.argv.find((a) => a.startsWith('--only=')) || '').slice(7);
+const CLIPS = ['crash', 'boost', 'squeal'].filter((c) => !ONLY || c === ONLY);
 
 async function render(clip, withEvent) {
   return page.evaluate(async ({ clip, withEvent, SR, DUR, EVENT_AT }) => {

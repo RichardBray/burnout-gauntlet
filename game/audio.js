@@ -931,7 +931,7 @@ export function createAudio({ enabled = true, volume = 0.62, space = 'city' } = 
       // is also the physically right shape: the pressure step of an ignition is at
       // the front. MEASURED, paired, THUMP_STEP the only variable: 0.60 -> 1.15 took
       // the 10 ms-hop contiguous hold 0 -> 150 ms on the THUMP_PK 0.42 build, with the
-      // boost-solo stem peaking 0.7480. (An earlier revision of this comment claimed
+      // boost-solo stem peaking 0.7481. (An earlier revision of this comment claimed
       // "0 -> 170 ms ... peak 0.797"; those are the THUMP_PK 0.55 build's figures and
       // were never the shipped ones. Corrected in wave R from a re-render.)
       //
@@ -940,10 +940,10 @@ export function createAudio({ enabled = true, volume = 0.62, space = 'city' } = 
       // 0.42 -> 0.48 moves the 0-20 ms frame +5.8 -> +6.8 dB, the 0-50 ms frame
       // +6.2 -> +7.1 dB and over20 +7.8 -> +8.5 dB @ +39 ms, against
       // boost-whoosh-01's +6.6 / +7.5 / +8.7 @ +39 - all three inside a +/-0.6 dB
-      // band on the reference. Cost: the boost-solo stem peak goes 0.7480 -> 0.7762
-      // and the BUSY MIX peak does not move at all (0.9278 both, four decimals),
+      // band on the reference. Cost: the boost-solo stem peak goes 0.7481 -> 0.7762
+      // and the BUSY MIX peak does not move at all (0.9279 both, four decimals),
       // because the busy peak is set by the engine/crash bed and not by the ignition
-      // (ours-busy 0.9278 with boost, 0.9272 without). So BED_TRIM (:351) is NOT the
+      // (ours-busy 0.9279 with boost, 0.9272 without). So BED_TRIM (:351) is NOT the
       // constraint here and must not be touched for onset impact, and IGN_OVER (:813)
       // must not be raised either - it scales the crack and the body along with the
       // thump and drags the spectral tilt off the reference.
@@ -952,7 +952,19 @@ export function createAudio({ enabled = true, volume = 0.62, space = 'city' } = 
       // the impact layer and the LF-skew layer; the two targets pull opposite ways on
       // this one constant and the skew has to be fixed by MOVING the thump in
       // frequency (the o.frequency sweep just below, :962-963), not by cutting level.
-      const THUMP_PK = 0.00;     // fraction of lvl
+      // KILL-CONTROL, wave R, measured: THUMP_PK 0.48 -> 0.001 (an effectively deleted
+      // thump) moves the ignition-attributable 100-300 re 300-800 skew +2.6 -> -0.4 dB
+      // against ref-01's -3.4, so the thump carries 3.0 dB of the 6.0 dB gap and the
+      // OTHER 3.0 dB is 300-800 Hz UNDER-FILL by the crack and the BODY layer. Moving
+      // the sweep below can close at most half of it; the rest needs IGN_BODY_G / F0/F1.
+      //
+      // NEVER SET THUMP_PK TO EXACTLY 0, INCLUDING AS A NULL CONTROL. The gain chain
+      // below ends in exponentialRampToValueAtTime, whose target may not be zero, so
+      // THUMP_PK = 0 throws a RangeError out of ignite() on EVERY boost activation and
+      // deadlocks tools/audio-isolate.mjs (it throws inside the off.suspend() callback,
+      // so off.resume() never runs - a silent 19-minute hang, `lint ok` throughout).
+      // That is exactly how this file was found at the start of wave R. Use 0.001.
+      const THUMP_PK = 0.48;     // fraction of lvl
       const THUMP_STEP = 1.15;   // multiple of THUMP_PK present at IGN_ATK (front-loaded)
       const THUMP_BLOOM = 0.050; // s, where the LF pressure bloom peaks
       const THUMP_DEC = 0.240;   // s, at which the fall reaches THUMP_FLOOR
