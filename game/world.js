@@ -2419,7 +2419,8 @@ export function createWorld(scene, { rng, roadKit }) {
   const carBody = inst(boxGeo, carPaint, 9600);       // lower body + roof cap
   const carCab = inst(boxGeo, carGlass, 4800);        // glasshouse
   const carTrim = inst(boxGeo, darkMat, 9600);        // bumpers / valances
-  const carWheel = inst(new THREE.CylinderGeometry(0.34, 0.34, 0.22, 10), tyreMat, 19200);
+  const carWheelGeo = new THREE.CylinderGeometry(0.34, 0.34, 0.22, 10);
+  const carWheel = inst(carWheelGeo, tyreMat, 19200);
   // Burnout's traffic is not a car park of greys. The old eight were all
   // desaturated and three of them sat within 6% luma of the asphalt, so a rank
   // of them added silhouette but almost no contrast; these keep the muted half
@@ -2430,7 +2431,34 @@ export function createWorld(scene, { rng, roadKit }) {
   ];
   const CAR_Y = 0.03;   // city ribbon surface; the 0.34 m wheel radius sits on it
 
+  // ---- the vehicle kit, published for traffic.js -----------------------------
+  // traffic.js builds the MOVING population and it has to be made of the same parts as this
+  // stationary one, for two reasons that are both about the shader rather than the shape:
+  // these materials are patchAtmo()'d, so they carry the aerial-perspective airlight and the
+  // canyon key:fill term every other prop in this scene carries, and they are already
+  // compiled. A live traffic car on its own MeshStandardMaterial sits in FRONT of the fog at
+  // 200 m and costs another program.
+  //
+  // It hangs off LAYOUT because LAYOUT is the only thing main.js forwards to createTraffic
+  // (`layout: world.LAYOUT`), and the createTraffic signature is a contract main.js is
+  // written against. It is a live reference to this world's materials, not grid data.
+  const carKit = {
+    boxGeo, wheelGeo: carWheelGeo, carPaint, carGlass, darkMat, tyreMat, carColors, CAR_Y,
+  };
+  LAYOUT.carKit = carKit;
+
+  // Which stationary population is currently emitting. "2667 vehicles" was one number for
+  // three mechanisms with three different justifications, and nobody had the split, so nobody
+  // could tell which of them was the defect. Counted, not estimated; published as
+  // world.parkedCounts so the split never has to be guessed at again.
+  //   BEFORE this wave:  rank 1099, queue 313, lane 1255, culled 148  (= 2667 emitted)
+  // `lane` was laneTraffic(), i.e. standing cars filling BOTH carriageways of every road
+  // segment for no reason. It is gone; traffic.js drives that population now.
+  let parkPop = 'rank';
+  const parkCounts = { rank: 0, queue: 0, culled: 0 };
+
   function parkedCar(x, z, ry) {
+    parkCounts[parkPop]++;
     const col = rngPick(R, carColors);
     const fx = Math.cos(ry), fz = -Math.sin(ry);      // unit forward for this yaw
     const at = (m, d, y, sx, sy, sz, c) =>
@@ -2507,7 +2535,7 @@ export function createWorld(scene, { rng, roadKit }) {
   }
 
   function tryPark(x, z, ry, clear) {
-    if (heroDist(x, z) < clear) return;
+    if (heroDist(x, z) < clear) { parkCounts.culled++; return; }
     parkedCar(x, z, ry);
   }
 
@@ -2525,13 +2553,20 @@ export function createWorld(scene, { rng, roadKit }) {
     // as one continuous line of parking rather than alternating jumble.
     const flip = R() < 0.5;
     for (let t = a0 + rngRange(R, 0, 6); t < a1; t += rngRange(R, 10, 14)) {
-      if (R() < 0.30) continue;                 // driveways, hydrants, bus stops
+      // 0.30 -> 0.40: driveways, hydrants, bus stops. A kerb this solidly parked was part of
+      // what made the street read as a car park even where the parking itself was legitimate,
+      // and one gap in five became one in three at a cost of ~150 bodies. It cannot go much
+      // further: kerb parking is the population that carries "this street is inhabited" now
+      // that the carriageways are handed to traffic.js, and thinning it is what would make
+      // the street read abandoned.
+      if (R() < 0.40) continue;
       const x = ox + ax * t + nx * PARK_OFF;
       const z = oz + az * t + nz * PARK_OFF;
       tryPark(x, z, Math.atan2(-az, ax) + (flip ? Math.PI : 0), 2.8);
     }
   }
 
+  parkPop = 'rank';
   for (let j = 0; j < G.length; j++) {
     for (let i = 0; i < G.length - 1; i++) {
       const a0 = G[i] + JCLR, a1 = G[i + 1] - JCLR;
@@ -2544,59 +2579,53 @@ export function createWorld(scene, { rng, roadKit }) {
   }
 
   /**
-   * A stopped queue of 3-5 cars waiting at one arm of a signalled junction.
-   * `(ax,az)` is the direction of travel; with x east and z south the driver's
-   * right is (-az, ax), so the near lane centre is 2.6 m to that side.
+   * A stopped queue of 2-4 cars in the KERBSIDE lane on one arm of a junction.
+   * `(ax,az)` is the direction of travel; with x east and z south the driver's right is
+   * (-az, ax), so the offset is that far to that side.
+   *
+   * THE LANE MOVED, 2.6 -> 7.4, and that is the whole point of the edit rather than
+   * decoration. traffic.js now runs LIVE cars in the inner lane (centre 2.5) of every city
+   * road, and a baked stationary car in the same lane as a live one is a permanent immovable
+   * blockage: the live car brakes correctly, stops behind it, and stays there forever. That is
+   * the car park again with extra steps. There is also a read problem — a baked queue sits on
+   * the stop bar whether traffic.js's signal has that arm green or red, so half of them would
+   * be visibly stopped at a green light.
+   *
+   * At 7.4 (kerbside lane centre 7.5) the body spans 6.59-8.41, so it is 1.2 m clear of the
+   * kerb parking at 10.5 and 3.2 m clear of the live inner lane. It stops reading as "waiting
+   * at the signal" and starts reading as stopped/loading in the kerbside lane, which is a
+   * thing streets actually do and which no longer contradicts the live signal.
    */
   function signalQueue(gx, gz, ax, az) {
-    const n = rngInt(R, 3, 5);
+    const n = rngInt(R, 2, 4);
     const ry = Math.atan2(-az, ax);
     let d = 19.6;                               // nose on the stop bar, behind the crossing
     for (let i = 0; i < n; i++) {
-      const x = gx - ax * d - az * 2.6;
-      const z = gz - az * d + ax * 2.6;
+      const x = gx - ax * d - az * 7.4;
+      const z = gz - az * d + ax * 7.4;
       tryPark(x, z, ry, 4.6);
       d += rngRange(R, 5.6, 7.4);               // bumper gap of a stopped queue
     }
   }
   const ARMS = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+  parkPop = 'queue';
   for (const gx of G) {
     for (const gz of G) {
-      // one or two of the four arms per junction: four would put a queue in
-      // every frame of every cross street and triple the vehicle budget.
+      // ONE arm per junction, was one-or-two. Four would put a queue in every frame of every
+      // cross street; two now also crowds the kerbside lane against the live inner lane at
+      // the junction the player is most likely to be looking through.
       const k = rngInt(R, 0, 3);
       signalQueue(gx, gz, ARMS[k][0], ARMS[k][1]);
-      if (R() < 0.5) {
-        const k2 = (k + rngInt(R, 1, 3)) % 4;
-        signalQueue(gx, gz, ARMS[k2][0], ARMS[k2][1]);
-      }
     }
   }
-  /**
-   * Standing traffic in the carriageway. The signal queues alone only occupy
-   * the last 40 m before a junction; the references have vehicles all the way
-   * down the canyon, and our boulevard was bare tarmac between them.
-   */
-  function laneTraffic(ox, oz, ax, az, a0, a1) {
-    for (const lane of [2.5, 7.5]) {
-      for (const dir of [1, -1]) {
-        // right-hand traffic: the lane sits to the driver's right of centre
-        const nx = -az * dir, nz = ax * dir;
-        for (let t = a0 + rngRange(R, 0, 30); t < a1; t += rngRange(R, 20, 42)) {
-          const x = ox + ax * t + nx * lane;
-          const z = oz + az * t + nz * lane;
-          tryPark(x, z, Math.atan2(-az * dir, ax * dir), 4.6);
-        }
-      }
-    }
-  }
-  for (let j = 0; j < G.length; j++) {
-    for (let i = 0; i < G.length - 1; i++) {
-      const a0 = G[i] + JCLR, a1 = G[i + 1] - JCLR;
-      laneTraffic(0, G[j], 1, 0, a0, a1);
-      laneTraffic(G[j], 0, 0, 1, a0, a1);
-    }
-  }
+  // laneTraffic() USED TO BE HERE and it was the defect. It filled BOTH carriageways of every
+  // road segment, both directions, both lane centres, all the way down the canyon: 1255 cars
+  // standing still in live traffic lanes for no reason. It was added because the references
+  // "have vehicles all the way down the canyon" and the boulevard was bare tarmac between the
+  // signal queues — which was a true observation answered by the wrong object, because the
+  // vehicles in those references are MOVING and a still frame cannot tell the difference.
+  // traffic.js now owns that population: 56 live cars that drive, follow, and stop at signals.
+  // Do not put a standing population back into a carriageway to win a still frame.
   seal(carBody, carCab, carTrim, carWheel);
 
   // ---- road surface paint + utility marks -------------------------------------
@@ -2709,7 +2738,17 @@ export function createWorld(scene, { rng, roadKit }) {
   deckEdge.position.set(0, 14.0, HZ - 62 + 6.5);
   deckEdge.castShadow = true; group.add(deckEdge);
   const deckEdge2 = deckEdge.clone(); deckEdge2.position.z = HZ - 62 - 6.5; group.add(deckEdge2);
-  const pier = inst(new THREE.CylinderGeometry(1.5, 1.7, 1, 12), concMat, 60);
+  // PIER RADIUS. Was r 1.5 -> 1.7 over the 11.6 m height. The row stands 64 m directly
+  // BEHIND the car-paint-closeup camera, in the flank's specular direction, and its 44
+  // cylinders were the carrier of the vertical comb that forced car-paint to widen
+  // clearcoatRoughness to mip ~4 to hide it (wave-q/car-paint.md §5, wave-q/environment.md §8).
+  // The carrier is OCCLUDED SOLID ANGLE, not the 60 m pitch: jitter saturates at -17% by
+  // +/-8 m and buys nothing at +/-24 m, and per-pier height/radius VARIATION is a clean null
+  // (0.275 vs 0.271). Halving the radius halves the fraction of the flank's specular
+  // hemisphere the row blocks, which is the quantity anisAC3 actually tracks. Do NOT delete
+  // or hide the row: it is visible in dusk-highway-chase (max delta 146), crash-cam (72) and
+  // daytime-downtown (68). At half radius it is invisible in daytime-downtown instead.
+  const pier = inst(new THREE.CylinderGeometry(0.75, 0.85, 1, 12), concMat, 60);
   for (let i = 0; i < 44; i++) {
     push(pier, -1300 + i * 60, 5.8, HZ - 62, 0, 0, 1, 11.6, 1);
     shadowAt(-1300 + i * 60, HZ - 62, 0.02, 4.2, 0.9);
@@ -2845,6 +2884,8 @@ export function createWorld(scene, { rng, roadKit }) {
   const world = {
     group, LAYOUT, paths, blocks, buildings, neons, lampPositions, lamps,
     buildingMats, roadKit, atmo, towers,
+    // The STATIONARY vehicle population, split by mechanism. traffic.js owns the moving one.
+    carKit, parkedCounts: parkCounts,
 
     setNight(v) {
       night = !!v;
