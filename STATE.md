@@ -512,17 +512,70 @@ Every one of these reproduced its builder's figures exactly and then overturned 
   and pointlessness (+7.7% p99 for +67% radiance past 3.3). **Shipped 1.10 is HALF the floor. The old
   2.8 was nearly right, for the wrong reason.** Two independent statistics converge on 2.2.
 
-### WAVE R — LIVE. Session 13 status block. READ THIS BEFORE THE WAVE-P/Q RECORD BELOW.
+### WAVE R — LIVE. Session 14 status block. READ THIS BEFORE THE WAVE-P/Q RECORD BELOW.
 
 Wave P DONE (9/9 + determinism). Wave Q DONE (9/9). Both wave-R prerequisites DONE (session 12).
 
-**Session 13 launched WAVE R BATCH 1 — `sky-lighting`, `boost-fx`, `road-surface`, `audio` — plus a
-non-builder RESOLVER** working `tools/STANDING-CONSTRAINTS.md` §4 items 2, 3, 4, 8, 9 and the §5
-script promotions. The resolver is explicitly barred from all four batch-1 builder files.
+### SESSION 14 — TWO INFRASTRUCTURE FIXES. THE FIRST ONE IS WHY ROUND 13 PRODUCED NOTHING.
+
+**THIRTEENTH BROKEN TOOL, AND IT WAS THE HARNESS ITSELF. `CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS`
+DEFAULTS TO 600s AND WAS SILENTLY KILLING EVERY BUILDER BATCH.**
+Round 13 launched all five wave-R batch-1 agents correctly and then died at 884s with
+`Background tasks still running after 600s; terminating` — **all five were killed mid-edit.** Four
+builders and the resolver had already written to disk; not one wrote a verdict. A builder round here
+routinely needs 20-40 minutes, so **the loop structurally could not complete a wave.** Fixed in
+`run-gauntlet.sh` by exporting `CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0` (wait indefinitely), with the
+reason recorded inline above the `claude` invocation so nobody removes it as noise.
+**If a future round finds agents dying at a suspiciously round number of seconds, check the harness
+env before you suspect the agents.**
+
+**GIT NOW EXISTS. Thirteen rounds ran with no version control at all.**
+`git init` + `.gitignore` (excludes `node_modules/`, `shots/`, `logs/`, `.firecrawl/`, `current.log`;
+`reference/`, `game/`, `tools/`, `verdicts/` are all tracked), 192 files, baseline commit `e1c1e82`.
+**`e1c1e82` is the tree as round 13 LEFT it, so it is a baseline and NOT a known-good state** — the
+abandoned edits are inside it and cannot be diffed away.
+Consequences, binding from here on: **rule 5 is now cheap to enforce, so it is enforced harder** — a
+builder's BEFORE/AFTER constant table is checked with `git diff`, not read as prose. Builders commit
+only the files they own, one commit per builder, `wave-r/<piece>: <one line>`; never `git add -A`.
+The peer-md5 protocol is NOT replaced by this: md5 protects a *measurement window*, git records
+*history*. Both still apply.
+
+**Round 13's abandoned edits, and how they are being handled.** Files written mid-flight with no
+verdict: `game/boost.js`, `game/crash.js`, `game/audio.js`, `game/sky.js`, `game/road.js` and
+`tools/_sparkboost.mjs`, `_idealblur.mjs`, `_stripemeas.mjs`, `STANDING-CONSTRAINTS.md`.
+- The tree is HEALTHY despite them: `lint ok`, and all four of `dusk-highway-chase`, `boost-blur`,
+  `crash-cam`, `wet-night` render at 1920x1080. The dusk shot was eyeballed and reads correct.
+- `tools/STANDING-CONSTRAINTS.md`'s large resolver amendment (the `_px.mjs`/`_hudedge.mjs`
+  `sat`-vs-`satPx` audit) landed COMPLETE and is sound — trust its own measurements. **But
+  `verdicts/wave-r/resolver.md` was never written, so every citation to that file is dangling.**
+- The four game files are handled by **step 0 of `tools/WAVE-R-ADDENDUM.md`** (new this session):
+  each builder must find the abandoned edits in its own file and either measure-and-keep or
+  revert-and-say-so. **An unmeasured edit nobody can justify gets reverted, never inherited
+  silently.** Audio's brief carries the extra warning that this exact failure already shipped an
+  invisible regression in `audio.js` once before.
+- **`game/crash.js` is the anomaly: it was edited at 08:36 and NO round-13 agent owned it.** Leading
+  hypothesis is `boost-fx` leaving a debris-bypass patch in place as temporary instrumentation. A
+  dedicated non-builder FORENSIC agent owns it this round, working against the literal constants
+  quoted in `verdicts/wave-p/crash-cam.md` and `wave-q/crash-cam.md` as ground truth. **If its
+  reverts move the "boost bypassed: density 7.42, areaMed 32-38" figures, the batch-3 crash brief is
+  contaminated** — that is the finding to look for in `verdicts/wave-r/crash-forensic.md`.
+
+**Session 14 RE-LAUNCHED WAVE R BATCH 1 — `sky-lighting`, `boost-fx`, `road-surface`, `audio` —
+plus the crash FORENSIC agent.** Each got `tools/WAVE-P-BRIEF.md`, the new
+`tools/WAVE-R-ADDENDUM.md`, its own `verdicts/wave-q/<piece>.md`, `tools/STANDING-CONSTRAINTS.md`,
+`reference/INDEX.md`, and its headline gap inline. The session-13 resolver's work is NOT being
+re-run; only its missing verdict is outstanding.
 
 **EXACT NEXT ACTION, in order:**
+0. **FIRST, CHECK WHETHER BATCH 1 ALREADY LANDED before relaunching anything: `ls verdicts/wave-r/`
+   and `git log --oneline`.** A `wave-r/<piece>` commit plus a verdict file means that piece is DONE —
+   index it and move on. Round 13's whole loss was work that had to be redone; do not repeat it.
+   Also outstanding and cheap: **`verdicts/wave-r/resolver.md` is MISSING** while
+   `tools/STANDING-CONSTRAINTS.md` cites it in several places. Either reconstruct it from the
+   amendment text already in that file or convert the dangling citations to self-contained ones.
 1. As each batch-1 builder lands, index its result in the WAVE R RESULTS table below (create it on the
    first landing) and confirm `verdicts/wave-r/<piece>.md` exists. Do not wait for the whole batch.
+   Read the forensic verdict FIRST if both are ready — a contamination finding there changes briefs.
 2. **Sky's horizon registration is the gate on §4 item 7** (ref horizon y 0.593-0.602 vs ours 0.5077).
    Read sky's re-measured cross-piece irradiance handoff ratios from `verdicts/wave-r/sky-lighting.md`
    BEFORE briefing batch 2 — car-paint, environment and hud all baseline against them.
