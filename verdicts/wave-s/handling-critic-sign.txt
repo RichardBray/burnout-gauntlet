@@ -1,0 +1,19 @@
+
+== D (right)
+  camera screen-right at t=0: (-0.994, 0.003, 0.113)
+  1.0 s later: yaw -28.3 deg, world dx -7.14 m, dz 39.64 m, speed 160 km/h
+  displacement . screen-right = 11.58 m  -> the car went RIGHT on screen. Required: RIGHT.  PASS
+  lean = 1.080; shell world up = (0.0574, 0.9983, 0.0058), horizontal tilt magnitude 0.0577 = 3.31 deg of body roll
+  up_horizontal . carLeft = 0.05331 -> the body rolls toward its LEFT, i.e. AWAY FROM the turn centre.  PASS (outward, car-like)
+
+== A (left)
+  camera screen-right at t=0: (-0.999, -0.005, -0.054)
+  1.0 s later: yaw +25.6 deg, world dx 5.72 m, dz 34.58 m, speed 159 km/h
+  displacement . screen-right = -7.58 m  -> the car went LEFT on screen. Required: LEFT.  PASS
+  lean = -1.063; shell world up = (-0.0570, 0.9984, 0.0023), horizontal tilt magnitude 0.0571 = 3.27 deg of body roll
+  up_horizontal . carLeft = -0.05244 -> the body rolls toward its RIGHT, i.e. AWAY FROM the turn centre.  PASS (outward, car-like)
+
+== CONTROL: lean forced to +1 (what the RETIRED model produced in a LEFT turn)
+  up_horizontal . carLeft = 0.04998 -> rolls toward its LEFT; in a LEFT turn that is INTO the corner (the old bug, reproduced)
+
+== console/page errors: NONE

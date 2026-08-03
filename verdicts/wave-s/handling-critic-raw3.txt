@@ -1,0 +1,29 @@
+
+== R2. COLLISION: a pass ALONG a wall face at increasing approach angles
+   1 deg approach (normal closing ~0.9 m/s): at t=7.93s  73.2 -> 65.1 m/s (89% kept), min afterwards 59.5 m/s, end 59.5 m/s, crashed=false
+   3 deg approach (normal closing ~2.6 m/s): at t=2.98s  63.8 -> 49.6 m/s (78% kept), min afterwards 49.6 m/s, end 55.7 m/s, crashed=false
+   8 deg approach (normal closing ~7.0 m/s): at t=1.21s  56.9 -> 29.8 m/s (52% kept), min afterwards 29.8 m/s, end 54.7 m/s, crashed=false
+  20 deg approach (normal closing ~17.1 m/s): at t=0.52s  53.2 -> 16.0 m/s (30% kept), min afterwards 16.0 m/s, end 53.4 m/s, crashed=false
+  45 deg approach (normal closing ~35.4 m/s): at t=0.26s  51.6 -> 15.5 m/s (30% kept), min afterwards 15.5 m/s, end 53.6 m/s, crashed=false
+  90 deg approach (normal closing ~50.0 m/s): at t=0.18s  51.1 -> 15.4 m/s (30% kept), min afterwards 15.4 m/s, end 53.6 m/s, crashed=false
+  TUNE: hitNormalSpeed 12 m/s, scrapeKeep 0.96, hitKeep 0.3, wallFriction 5
+  head-on into a facade: 68.7 -> 20.6 m/s (30% kept), end 49.1 m/s, crashed=false
+
+== V. SPIN RECOVERY: hold Space + A at speed, then let go. Can the player get out of it?
+  144 km/h: peak slipAngle 72 deg; at release 72 deg / 21 deg/s / 41.8 m/s; straight again after 1.04 s; speed then 52.2 m/s
+  198 km/h: peak slipAngle 89 deg; at release 72 deg / 28 deg/s / 39.7 m/s; straight again after 1.57 s; speed then 42.3 m/s
+  252 km/h: peak slipAngle 89 deg; at release 73 deg / 41 deg/s / 42.1 m/s; straight again after 1.63 s; speed then 42.1 m/s
+
+== W. STEERING RELEASE: does the car snap back when the key comes up?
+   72 km/h: steady 35.1 deg/s -> key released: down to 10% in 0.21 s, counter-yaw overshoot 0.1 deg/s
+  144 km/h: steady 30.5 deg/s -> key released: down to 10% in 0.21 s, counter-yaw overshoot 0.1 deg/s
+  252 km/h: steady 28.3 deg/s -> key released: down to 10% in 0.21 s, counter-yaw overshoot 0.2 deg/s
+  steerRate 10/s, so the smoothed steer input itself takes ~0.30 s to travel full lock -> centre
+
+== X. THE FEEL OF A CORNER: lateral g and the radius a player gets at road speeds
+   54 km/h:  59.9 deg/s, radius   14 m, lateral 1.60 g, steer angle 1.00 of lock
+   72 km/h:  49.0 deg/s, radius   23 m, lateral 1.74 g, steer angle 1.00 of lock
+  108 km/h:  38.4 deg/s, radius   45 m, lateral 2.05 g, steer angle 1.00 of lock
+  144 km/h:  33.5 deg/s, radius   68 m, lateral 2.39 g, steer angle 1.00 of lock
+  198 km/h:  29.7 deg/s, radius  106 m, lateral 2.91 g, steer angle 1.00 of lock
+  252 km/h:  28.0 deg/s, radius  143 m, lateral 3.49 g, steer angle 1.00 of lock

@@ -1,0 +1,27 @@
+== F1. DRIVING INTO A BUILDING at speed: how long does one mistake cost?
+  first contact at t=6.0 s: 231 -> 69 km/h
+  km/h after: 69 72 74 77 80 83 89 95 100 105 109 115 119 124 130
+  back to 90% of the pre-impact speed after >2.9 s
+
+== F2. TRAFFIC: hold throttle down a lane and see what a car in the way costs
+  km/h: 195 203 209 216 222 227 232 236 240 244 247 251 253 255 258 260 261 263 264 265 266 267 268 268 269 269 270 270
+  sudden losses > 25 km/h in one 150 ms sample: none
+
+== F3. CHAIN DRIFT: the Paradise loop. tap-left, tap-right, alternating, at ~130 km/h
+  6 alternating beats over 6.0 s
+  slip deg: -0 -0 -0 -0 1 1 1 2 2 3 3 3 3 3 3 3 3 5 6 6 6 4 2 0 0 -1 -2 -3 -3 -3 -3 -4 -4 -5 -5 -5 -4 -2 -0 -0 1 2 2 2 2 3 3 3 5 6 6 6 4 2 2 0 -1 -1 -2 -2 -3 -3 -3 -3 -5 -6 -6 -6 -4 -2 -0 -0 1 1 2 2 3 3 3 3 3 5 6 6 3 2 -1 -2 -2 -3 -3 -3 -3 -3
+  km/h:     138 128 117 119 122 123 127 129 131 121 110 114 115 120 121 124 125 114 111 114 116 119 120 124 121 110 112 113 117 120 123 125 121 111 113 116 118 121 124 126 127 117 116 121 123 127 130
+  peak |slip| 6 deg, fraction of samples in the drift state 0 %, speed 138 -> 132 km/h
+
+== F4. E-BRAKE COST vs SPEED: hold Space + a steering key for 1.5 s and count the loss
+   80 km/h: peak slip 29 deg, speed 78 -> 98 km/h (--27 %), and 125 km/h after 1.5 s more throttle
+  130 km/h: peak slip 47 deg, speed 127 -> 137 km/h (--8 %), and 121 km/h after 1.5 s more throttle
+  200 km/h: peak slip 66 deg, speed 196 -> 175 km/h (-11 %), and 89 km/h after 1.5 s more throttle
+  280 km/h: peak slip 41 deg, speed 274 -> 231 km/h (-16 %), and 160 km/h after 1.5 s more throttle
+
+== F5. UNDERSTEER: hold a steering key for 6 s at 250 km/h and see if it ever bites
+  yawRate deg/s: 0 25 28 28 28 28 28 28 28 28 28 28 28 28 28 28 28 28 29 29 29 29 29 29 29 29 29 29 29 29
+  km/h:          244 245 246 245 244 242 241 240 238 237 236 235 234 233 232 231 230 229 228 228 227 226 226 225 224 224 224 223 223 222
+  slip stayed under 4.9 deg throughout -> pure grip, never steps out
+
+== console/page errors across the whole play session: NONE

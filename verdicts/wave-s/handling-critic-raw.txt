@@ -1,0 +1,136 @@
+
+== A. TOP SPEED, read as an asymptote
+  unboosted: ground 78.00 m/s = 174.5 mph = 280.8 km/h  (TUNE cap 78)
+    t to 90% 10.95 s | 95% 14.13 s | 99% 21.58 s | 99.9% 32.27 s
+  boosted (tank pinned full): ground 86.00 m/s = 192.4 mph = 309.6 km/h  (TUNE cap 86)
+    t to 90% 9.94 s | 95% 12.88 s | 99% 19.76 s | 99.9% 29.62 s
+  unboosted at t=30 s: 77.87 m/s = 174.2 mph
+  unboosted at t=10 s: 68.41 m/s = 153.0 mph
+
+== B. 0-100 mph (research: 2.22 s best in game, 3.45-3.48 s fast-not-top, 4-5 s mid-tier est)
+  no boost                 0-60 mph 2.63 s | 0-100 mph 4.56 s
+  boost from a full bar    0-60 mph 1.69 s | 0-100 mph 3.45 s
+  boost, tank pinned full  0-60 mph 1.69 s | 0-100 mph 3.45 s
+  peak launch accel, no boost: 10.40 m/s^2 = 1.06 g
+  peak launch accel, boost: 21.37 m/s^2 = 2.18 g
+
+== C. YAW RATE vs SPEED at full lock (research: 28-38 deg/s player-used at ~40.2 m/s; must fall)
+   v m/s |  km/h | PINNED deg/s | radius m | slipAng deg | FREE deg/s | free v m/s
+       5 |    18 |         25.3 |     11.3 |        -6.8 |       36.9 |       39.0
+      10 |    36 |         50.2 |     11.4 |        -5.2 |       35.3 |       41.9
+    12.5 |    45 |         62.6 |     11.4 |        -4.0 |       34.6 |       43.3
+      15 |    54 |         59.9 |     14.3 |        -1.9 |       33.9 |       44.8
+      20 |    72 |         49.0 |     23.4 |         0.6 |       32.6 |       47.5
+      25 |    90 |         42.7 |     33.6 |         1.8 |       31.6 |       49.8
+      30 |   108 |         38.4 |     44.8 |         2.6 |       30.9 |       51.8
+    40.2 |   145 |         33.5 |     68.8 |         3.6 |       29.9 |       55.1
+      50 |   180 |         30.8 |     92.9 |         4.3 |       29.3 |       57.7
+      60 |   216 |         28.9 |    119.0 |         4.7 |       28.8 |       60.5
+      70 |   252 |         28.0 |    143.3 |         5.0 |       28.4 |       63.6
+      78 |   281 |         27.8 |    161.0 |         5.2 |       28.2 |       66.0
+  peak 62.6 deg/s at 12.5 m/s (45 km/h); falls monotonically above the peak: YES; vMax/peak ratio 0.44
+  straight-line yaw at ~40 m/s, steer 0: 0.00e+0 deg/s
+
+== D. DRIFT ENTRY: what input arms it, and at what slip angle
+   72 km/h steer only, throttle         drift NEVER   | peak slipAngle   4.3 deg | peak |slip| 0.17
+   72 km/h steer + brake TAP 0.25 s     drift at 0.13s | peak slipAngle  16.3 deg | peak |slip| 0.55
+   72 km/h steer + brake TAP 0.5 s      drift at 0.13s | peak slipAngle  45.3 deg | peak |slip| 0.99
+   72 km/h steer + e-brake 0.6 s        drift at 0.01s | peak slipAngle  65.5 deg | peak |slip| 1.00
+   72 km/h steer + e-brake held 2 s     drift at 0.01s | peak slipAngle  87.9 deg | peak |slip| 1.00
+  108 km/h steer only, throttle         drift NEVER   | peak slipAngle   4.4 deg | peak |slip| 0.17
+  108 km/h steer + brake TAP 0.25 s     drift at 0.16s | peak slipAngle  14.5 deg | peak |slip| 0.48
+  108 km/h steer + brake TAP 0.5 s      drift at 0.16s | peak slipAngle  40.1 deg | peak |slip| 0.99
+  108 km/h steer + e-brake 0.6 s        drift at 0.01s | peak slipAngle  69.3 deg | peak |slip| 1.00
+  108 km/h steer + e-brake held 2 s     drift at 0.01s | peak slipAngle  88.6 deg | peak |slip| 1.00
+  150 km/h steer only, throttle         drift NEVER   | peak slipAngle   4.6 deg | peak |slip| 0.18
+  150 km/h steer + brake TAP 0.25 s     drift at 0.17s | peak slipAngle  14.0 deg | peak |slip| 0.46
+  150 km/h steer + brake TAP 0.5 s      drift at 0.17s | peak slipAngle  37.4 deg | peak |slip| 0.99
+  150 km/h steer + e-brake 0.6 s        drift at 0.01s | peak slipAngle  73.1 deg | peak |slip| 1.00
+  150 km/h steer + e-brake held 2 s     drift at 0.01s | peak slipAngle  89.0 deg | peak |slip| 1.00
+  tyre saturation slip angle: rear 7.38 deg; enter at 10.34 deg, exit at 7.38 deg (e-brake lowers both)
+
+== E. DRIFT HOLD with steering centred, and the tapped-countersteer survival test
+  entry peak slipAngle 26.1 deg, drifting flag set at release: true
+  steer CENTRED, throttle on: |slipAngle| stays > 50% of peak for 0.21 s; drifting flag held 0.25 s
+  0.15 s TAPPED countersteer then centred: > 50% peak for 0.17 s, flag 0.23 s  (drift must survive the tap)
+  HELD full opposite lock: > 50% peak for 0.17 s, flag 0.23 s  (must gather up)
+  steering HELD INTO the slide: > 50% peak for 0.37 s, flag 0.29 s
+
+== F. DRIFT SCRUB (research: low, nonzero, recoverable)
+  straight 5 s: 66.6 m/s, 284.0 m
+  drifted  5 s: 50.6 m/s, 166.7 m
+  speed delta -24.0 % (must be negative and small)
+  recovers the straight-line speed 3.87 s after
+  net heading change over a 3 s e-brake drift: 65 deg, displacement 81 m
+
+== G. BOOST: bar duration, the full-bar gate, and the ceiling lift
+  full bar lasts 8.000 s  (BURNOUT 8.0 s PUBLISHED, exactly)
+  tank after the burn: 0.739 (TUNE.burnoutRefill 0.32)
+  tank 0.5: boosting = false  (BURNOUT: only a FULL bar may be used)
+  tank 0.9: boosting = false  (BURNOUT: only a FULL bar may be used)
+  tank 0.998: boosting = false  (BURNOUT: only a FULL bar may be used)
+  tank 1: boosting = true  (BURNOUT: only a FULL bar may be used)
+  ceiling ratio boosted/unboosted = 1.103  (BURNOUT ~1.00; best MaxSpeed 201 mph beats every MaxBoostSpeed)
+  accel lift from 20 m/s: 10.07 -> 21.95 m/s^2 = x2.18  (BURNOUT: the lift belongs HERE, not in the ceiling)
+  accel lift from 60 m/s: 4.07 -> 13.78 m/s^2 = x3.39
+
+== H. BOOST CAMERA: fov and standoff deltas across the onset (research: NOT FOUND, so MEASURED)
+  before onset: fov 47.87 deg, standoff 8.80 m, height 1.80 m
+  peak fov 56.06 deg (+8.19) at t=0.700 s
+  fov at t=100 ms: 53.19 (+5.31), i.e. 65 % of the swing inside 100 ms
+  min standoff 7.73 m (-1.07 m) at t=0.808 s
+  settled at t=3 s: fov 54.98 (+7.10), standoff 8.03 m (-0.77 m)
+  0.5 s after release: fov 53.15, 3 s after: fov 48.89 (asymmetric attack/release is the claim)
+
+== I. TICK-RATE INVARIANCE and DETERMINISM (my own check, not the builder's)
+  240 Hz: ground 47.524 m/s (0.00 %), yaw 241.89 deg (0.00 deg)
+   60 Hz: ground 47.524 m/s (0.00 %), yaw 241.89 deg (0.00 deg)
+   30 Hz: ground 47.524 m/s (0.00 %), yaw 241.89 deg (0.00 deg)
+   20 Hz: ground 47.524 m/s (0.00 %), yaw 241.89 deg (0.00 deg)
+  determinism: identical re-run = true
+
+== J. KILL-CONTROL 1 — the BEFORE model, to test FINDING 0 ("vMax was a label")
+  BEFORE, throttle held 300 s: 38.35 m/s = 85.8 mph  (TUNE.vMax was 78 = 174.5 mph)
+  BEFORE, boost held 300 s: 44.42 m/s = 99.4 mph  (TUNE.vMaxBoost was 104 = 232.6 mph)
+  BEFORE yaw at 40.2 m/s, full lock: 67.4 deg/s; lean in a LEFT turn = 1.200 (positive = banked INTO the corner)
+  AFTER  lean in a LEFT turn = -1.056 (negative = banked OUTWARD)
+
+== K. KILL-CONTROL 2 — is the top speed really SOLVED from the ceiling, or is it the clamp?
+  vMax 78 -> 90: top speed 90.00 m/s (predicted 90 if solved, 78-ish if not)
+  clamp deleted, vMax 78: top speed 78.00 m/s (if the clamp were doing the work this would run away)
+  clamp deleted AND vMax 90: top speed 90.00 m/s
+  aero drag term zeroed: top speed 78.00 m/s (the clamp is the only thing left)
+
+== L. KILL-CONTROL 3 — the stability terms the builder credits
+  baseline, full lock held 6 s:
+      40 m/s: peak yaw 33 deg/s, peak slip 5 deg, end ground 57.4 m/s
+      60 m/s: peak yaw 29 deg/s, peak slip 5 deg, end ground 60.3 m/s
+      78 m/s: peak yaw 29 deg/s, peak slip 5 deg, end ground 63.3 m/s
+  gripUse 0.85 -> 1.00 (builder: "marginally stable by construction"):
+      40 m/s: peak yaw 39 deg/s, peak slip 5 deg, end ground 55.3 m/s
+      60 m/s: peak yaw 34 deg/s, peak slip 5 deg, end ground 57.4 m/s
+      78 m/s: peak yaw 33 deg/s, peak slip 6 deg, end ground 59.5 m/s
+  spinDamp 6.0 -> 0 (builder: "set it to 0 and full lock at 60 m/s departs"):
+      40 m/s: peak yaw 33 deg/s, peak slip 5 deg, end ground 57.4 m/s
+      60 m/s: peak yaw 29 deg/s, peak slip 5 deg, end ground 60.3 m/s
+      78 m/s: peak yaw 29 deg/s, peak slip 5 deg, end ground 63.2 m/s
+  stabilityAssist 2.6 -> 0 (builder: "diverges into a flat spin inside 1.3 s"):
+      40 m/s: peak yaw 33 deg/s, peak slip 5 deg, end ground 57.4 m/s
+      60 m/s: peak yaw 29 deg/s, peak slip 5 deg, end ground 60.3 m/s
+      78 m/s: peak yaw 29 deg/s, peak slip 5 deg, end ground 63.3 m/s
+  slideDrop 0.22 -> 0 (builder: "every slide self-corrects"):
+      40 m/s: peak yaw 33 deg/s, peak slip 5 deg, end ground 57.4 m/s
+      60 m/s: peak yaw 29 deg/s, peak slip 5 deg, end ground 60.3 m/s
+      78 m/s: peak yaw 29 deg/s, peak slip 5 deg, end ground 63.3 m/s
+
+== M. COLLISION TIERS (research 8.10: two distinguishable outcomes)
+  head-on (0 deg)  68.1 -> 20.5 m/s (retained 30%), crashed=false
+  15 deg           73.3 -> no contact (retained -), crashed=false
+  3 deg graze      68.1 -> 20.5 m/s (retained 30%), crashed=false
+
+== N. STEERING SIGN, in world coordinates (the user's headline bug)
+  KeyD (steer -1) for 2.5 s from yaw 0: yaw -85.0 deg, pos x -60.1 m, forward (-1.00, 0.09)
+  screen-right at yaw 0 is world -x, so KeyD must give NEGATIVE x: YES
+  KeyA (steer +1): yaw 85.0 deg, pos x 60.1 m (must be POSITIVE)
+  lean while turning right (KeyD): 1.128; car.js does shell.rotation.z = -lean*0.05 about local +z, local +x = car LEFT, so a right turn needs lean > 0 to drop the LEFT (outer) flank
+  lean while turning left  (KeyA): -1.128 (must be NEGATIVE)

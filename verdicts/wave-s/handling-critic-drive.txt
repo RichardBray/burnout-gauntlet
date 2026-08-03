@@ -1,0 +1,51 @@
+== RENDER SIZE (quoted verbatim from ctx.renderSize())
+  {"w":1280,"h":720,"cssW":1280,"cssH":720,"pixelRatio":1,"devicePixelRatio":1}
+
+== 1. PRESS D. DOES THE CAR GO RIGHT? (the user's headline bug)
+  camera world RIGHT vector: (0.137, -0.006, -0.991)
+  after 2.5 s of W+D: yaw -89.3 deg, world x -12.0 m, yawRate -50.4 deg/s, speed 66 km/h
+  displacement projected on screen-right = -63.1 m  -> D steers LEFT (WRONG)
+  mid-turn lean 1.039; shell world up = (0.0462, 0.9986, 0.0245); car LEFT axis = (0.826, -0.052, 0.561)
+  up . carLeft = 0.00000  -> in a RIGHT turn the OUTER flank is the left one, so this must be POSITIVE for an outward bank: OUTWARD (correct)
+
+== 2. PRESS A. MIRROR CHECK
+  after 2.5 s of W+A: yaw 87.7 deg, world x 12.0 m
+  mid-turn lean -1.110, up . carLeft = 0.00000  -> in a LEFT turn the outer flank is the RIGHT one, so this must be NEGATIVE: INWARD (WRONG)
+
+== 3. HOLD W FROM REST: how long to feel fast, and what is the ceiling in play?
+  t=2s: 71 km/h, fov 43.1, camDist 11.94 m
+  t=5s: 165 km/h, fov 44.8, camDist 11.43 m
+  t=10s: 239 km/h, fov 46.1, camDist 10.92 m
+  t=15s: 265 km/h, fov 46.5, camDist 10.76 m
+  t=20s: 276 km/h, fov 46.7, camDist 10.69 m
+
+== 4. BOOST AS AN EVENT: hold W, wait for a full bar, hit Shift
+  before: 209 km/h, fov 45.71, camDist 10.99 m, tank 1.00
+  +0.1s: 212 km/h, fov 50.71 (+4.99), camDist 10.98 (-0.01), kick 0.96, tank 1.00, boosting true
+  +0.25s: 216 km/h, fov 51.27 (+5.55), camDist 10.78 (-0.21), kick 0.88, tank 0.99, boosting true
+  +0.5s: 225 km/h, fov 53.08 (+7.37), camDist 10.14 (-0.85), kick 0.68, tank 0.96, boosting true
+  +1s: 236 km/h, fov 53.85 (+8.13), camDist 9.76 (-1.23), kick 0.47, tank 0.91, boosting true
+  +2s: 254 km/h, fov 53.29 (+7.58), camDist 9.84 (-1.15), kick 0.20, tank 0.82, boosting true
+  +4s: 272 km/h, fov 52.84 (+7.12), camDist 10.06 (-0.93), kick 0.04, tank 0.64, boosting true
+  +8s: 292 km/h, fov 52.99 (+7.27), camDist 10.04 (-0.95), kick 0.00, tank 0.26, boosting true
+  peak fov 53.85 (+8.13) at +1.02 s
+
+== 5. E-BRAKE DRIFT at 130 km/h: enter, hold centred, countersteer
+  entry (W+A+Space 0.9 s): peak slipAngle 33 deg, drifting true, speed 135 km/h
+  after release (W only): 0.0s:35deg 0.2s:34deg 0.3s:30deg 0.5s:25deg 0.6s:18deg 0.8s:8deg 1.0s:0deg 1.1s:0deg 1.3s:-0deg 1.5s:-0deg 1.6s:-0deg 1.8s:0deg
+  held opposite lock:     0.0s:34deg 0.2s:34deg 0.3s:30deg 0.5s:26deg 0.6s:20deg 0.8s:12deg 1.0s:3deg 1.2s:2deg 1.3s:2deg 1.5s:2deg 1.6s:1deg
+
+== 6. E-BRAKE HELD AT 250 km/h (the builder calls this deliberate; I want to see it)
+  peak slipAngle 51 deg, peak yawRate 106 deg/s, speed 246 -> 34 km/h
+  then W+D for 3 s: slipAngle -1 deg, speed 81 km/h -- recoverable: true
+
+== 7. BRAKE TAP under load at 130 km/h (the competitive Paradise entry)
+  peak slipAngle after the tap: 11.3 deg, drift state reached: true
+  trace: 4 6 8 11 11 9 -0 -2 -2 -2 -2 -1 -1 -1 -1 -1 -1
+
+== 8. HUD / AUDIO SPEED under-read while drifting (the builder's routed finding 2)
+  worst gap: ground 178 km/h vs state.speed 86 km/h = 52 % under-read at 61 deg of slip
+  (hud keys: canvas,resize,setVisible,visible,banner,update,snap)
+
+== 9. CONSOLE / PAGE ERRORS across the whole session
+  NONE
