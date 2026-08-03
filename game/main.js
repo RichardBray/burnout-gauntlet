@@ -22,6 +22,8 @@ import { createDamage } from './damage.js';
 import { createCrash } from './crash.js';
 import { createHud } from './hud.js';
 import { createAudio } from './audio.js';
+import { createTraffic } from './traffic.js';
+import { createMenu } from './menu.js';
 import { getScene } from './scenes.js';
 
 const FIXED_DT = 1 / 60;
@@ -60,7 +62,17 @@ export async function boot() {
     canvas, antialias: false, powerPreference: 'high-performance',
     alpha: false, stencil: false, depth: true,
   });
-  renderer.setPixelRatio(shotMode ? 1 : Math.min(window.devicePixelRatio || 1, 2));
+  // ---- RENDER PIXELS ARE CSS PIXELS. THIS IS A MEASUREMENT CONTRACT, NOT A PREFERENCE.
+  // This is a Retina machine: `devicePixelRatio` is 2, so the old
+  // `min(devicePixelRatio, 2)` made a 1280x720 window render a 2560x1440 buffer —
+  // 4x the pixels — and every frame-rate number taken from it was a lie by that factor.
+  // The pixel ratio is now `resScale` and nothing else, defaulting to 1.0, so the drawing
+  // buffer is exactly `innerWidth x innerHeight` REAL pixels and the canvas's CSS
+  // `width:100%/height:100%` upscales it to fill the window. `#res=<n>` (or the pause
+  // menu) scales it below 1 to buy frames; it is never allowed above 1 because that
+  // reintroduces the same lie by a different name.
+  let resScale = clamp(parseFloat(params.res) || 1, 0.4, 1);
+  renderer.setPixelRatio(shotMode ? 1 : resScale);
   renderer.setSize(window.innerWidth, window.innerHeight, false);
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
@@ -81,16 +93,62 @@ export async function boot() {
   camera.position.set(0, 3, -10);
   scene.add(camera);
 
+  // ---- boot progress ---------------------------------------------------
+  // Every builder below is SYNCHRONOUS and some take seconds, so the overlay can
+  // only repaint if we hand the browser a frame between stages. One rAF merely
+  // queues the paint; the second resolves after it has actually happened, which is
+  // what stops the bar jumping from 0 to 100 at the very end.
+  //
+  // STAGE_MS is a measured cost per stage, used only to weight the bar so it moves
+  // at a roughly even rate rather than sitting still through the expensive parts.
+  // Re-measure with `?bootlog=1` (times land in the console) if the builders change
+  // materially; being a little stale only makes the bar uneven, never wrong.
+  // Measured 2026-08-03 via `?bootlog=1` in headless chromium at 1280x720. A discrete
+  // GPU shifts the shader-bound stages (post, warm) up somewhat; the ordering, which is
+  // all the weighting depends on, holds.
+  const STAGE_MS = {
+    sky: 337, road: 654, world: 154, car: 231, sim: 124, post: 93, warm: 78,
+  };
+  const bootLog = params.bootlog === '1' || params.bootlog === true;
+  const bootBarEl = document.getElementById('bootbar');
+  const bootLabelEl = document.getElementById('bootlabel');
+  const stageTotal = Object.values(STAGE_MS).reduce((a, b) => a + b, 0);
+  let stageDone = 0;
+  let stageT0 = 0;
+  let stageName = '';
+
+  /**
+   * Announce the stage that is ABOUT to run, then yield so the bar paints.
+   * In shot mode this is a no-op: the screenshot harness wants no extra frames.
+   * @param {string} key   key into STAGE_MS
+   * @param {string} label human-facing text
+   */
+  async function stage(key, label) {
+    if (shotMode) return;
+    if (stageName && bootLog) console.log(`boot ${stageName} ${Math.round(performance.now() - stageT0)}ms`);
+    if (stageName) stageDone += STAGE_MS[stageName] || 0;
+    stageName = key;
+    stageT0 = performance.now();
+    if (bootLabelEl) bootLabelEl.textContent = label;
+    if (bootBarEl) bootBarEl.style.width = `${(100 * stageDone / stageTotal).toFixed(1)}%`;
+    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+  }
+
   // ---- modules --------------------------------------------------------
+  await stage('sky', 'sky and atmosphere');
   const sky = createSky(scene, renderer);
+  await stage('road', 'paving roads');
   const roadKit = createRoadKit(makeRng(0xA5FA17), { renderer });
+  await stage('world', 'building the city');
   const world = createWorld(scene, { rng: makeRng(0xC17E), roadKit });
 
+  await stage('car', 'assembling the car');
   const car = createCar(makeRng(0xCA5), { paint: 0xd8420f });
   const carRoot = new THREE.Group();
   carRoot.add(car.group);
   scene.add(carRoot);
 
+  await stage('sim', 'physics and effects');
   const physics = createPhysics({ blocks: world.blocks });
   const camRig = createCamRig(camera);
   const boostFx = createBoost(car);
@@ -99,8 +157,12 @@ export async function boot() {
   const crash = createCrash(scene, car, physics, damage);
   const hud = createHud(document.getElementById('hud'), { layout: world.LAYOUT });
   const audio = createAudio({ enabled: !shotMode });
+  const traffic = createTraffic(scene, {
+    rng: makeRng(0x7AFF1C), layout: world.LAYOUT, blocks: world.blocks, roadKit,
+  });
 
   // ---- post chain ------------------------------------------------------
+  await stage('post', 'post-processing');
   const dpr = renderer.getPixelRatio();
   const rtW = Math.max(2, Math.floor(window.innerWidth * dpr));
   const rtH = Math.max(2, Math.floor(window.innerHeight * dpr));
@@ -132,21 +194,72 @@ export async function boot() {
     const w = window.innerWidth, h = window.innerHeight;
     camera.aspect = w / h;
     camera.updateProjectionMatrix();
+    renderer.setPixelRatio(shotMode ? 1 : resScale);
     renderer.setSize(w, h, false);
+    // EffectComposer keeps its own copy of the pixel ratio (it was read off the
+    // renderer in the constructor) and multiplies setSize() by it, so changing the
+    // renderer's ratio alone leaves every post target at the old resolution.
+    composer.setPixelRatio(renderer.getPixelRatio());
     composer.setSize(w, h);
     ssao.setSize(w * renderer.getPixelRatio(), h * renderer.getPixelRatio());
     bloom.setSize(w * renderer.getPixelRatio(), h * renderer.getPixelRatio());
+    // The HUD is drawn on its own 2-D canvas that is NOT part of the post chain, so it
+    // always renders at full window resolution: dropping resScale must not soften the
+    // HUD, which is exactly what Burnout does (see reference/INDEX.md hud-overlay-03).
     hud.resize(w, h);
   }
   window.addEventListener('resize', resize);
+
+  /** Change the render resolution scale at runtime. 1.0 = one render pixel per CSS pixel. */
+  function setResScale(s) {
+    resScale = clamp(s, 0.4, 1);
+    resize();
+    return resScale;
+  }
 
   // ---- shared per-frame update ------------------------------------------
   const cfg = getScene(sceneId);
   const ctx = {
     THREE, renderer, scene, camera, sky, roadKit, world, car, carRoot,
-    physics, camRig, boost: boostFx, damage, crash, hud, audio, bloom, composer, ssao,
+    physics, camRig, boost: boostFx, damage, crash, hud, audio, traffic, bloom, composer, ssao,
     outputPass, toneMode, bloomMode,
+    setResScale,
+    getResScale: () => resScale,
+    /** The buffer the frame is actually rasterised into. Quote this beside every fps figure. */
+    renderSize() {
+      const v = renderer.getDrawingBufferSize(new THREE.Vector2());
+      return { w: v.x, h: v.y, cssW: window.innerWidth, cssH: window.innerHeight,
+        pixelRatio: renderer.getPixelRatio(), devicePixelRatio: window.devicePixelRatio || 1 };
+    },
   };
+
+  // ---- time of day / weather, as a single reversible operation --------------
+  // Both knobs already existed but each one needed three or four collaborators poked in
+  // the right order, which is why nothing but the boot path had ever changed them. The
+  // order matters: sky.apply() rewrites the exposure and the grade, world.setNight()
+  // switches the emissive window sets and the street-lamp pool, applyBloom() pushes the
+  // preset's bloom, and applyKeyFill() reads the *post-apply* sun elevation.
+  let curTod = cfg.timeOfDay || 'dusk';
+  let curWet = cfg.wet || 0;
+  function applyTimeOfDay(tod) {
+    curTod = tod;
+    sky.apply(tod);
+    const night = tod === 'night';
+    world.setNight(night);
+    traffic.setNight(night);
+    car.setLights(night || tod === 'dusk');
+    sky.applyBloom(bloom);
+    world.applyKeyFill(sky);
+    audio.setSpace(cfg.audioSpace || 'city');
+  }
+  function applyWet(w) {
+    curWet = clamp(w, 0, 1);
+    world.setWet(curWet);
+  }
+  ctx.applyTimeOfDay = applyTimeOfDay;
+  ctx.applyWet = applyWet;
+  ctx.getTimeOfDay = () => curTod;
+  ctx.getWet = () => curWet;
 
   function gearOf(speed) {
     const kmh = Math.abs(speed) * 3.6;
@@ -233,6 +346,10 @@ export async function boot() {
       speed: s.speed, pos: s.pos, yaw: s.yaw,
     });
     world.update(sdt, s.pos);
+    // Traffic runs on the SCALED dt so a crash's slow-mo dilates the other cars too;
+    // a wreck tumbling in slow motion past traffic moving at full rate is the single
+    // most obvious way to break the crash cam's read.
+    traffic.update(sdt, s.pos, s.yaw, s.speed);
     sky.update(sdt, s.pos);
     reassertKeyDir(s.pos);
     camRig.update(dt, s);
@@ -260,6 +377,7 @@ export async function boot() {
   sky.apply(cfg.timeOfDay || 'dusk');
   world.setNight((cfg.timeOfDay || 'dusk') === 'night');
   world.setWet(cfg.wet || 0);
+  traffic.setNight((cfg.timeOfDay || 'dusk') === 'night');
   physics.reset(new THREE.Vector3(0, 0, 0), 0, 0);
   cfg.setup(ctx);
   sky.applyBloom(bloom); // sky owns bloom threshold/radius/strength per time-of-day
@@ -337,7 +455,12 @@ export async function boot() {
   const down = (e) => {
     keys[e.code] = true;
     audio.start();
-    if (e.code === 'KeyR') { crash.reset(); damage.reset(); physics.reset(physics.state.pos, physics.state.yaw, 0); }
+    if (e.code === 'KeyR') {
+      crash.reset(); damage.reset();
+      physics.reset(physics.state.pos, physics.state.yaw, 0);
+      traffic.reset(physics.state.pos);
+      camRig.configure({ mode: 'chase' });
+    }
     if (e.code === 'KeyC' && !crash.active) {
       const yaw = physics.state.yaw;
       crash.trigger({
@@ -359,16 +482,72 @@ export async function boot() {
   window.addEventListener('keyup', up);
   window.addEventListener('pointerdown', () => audio.start());
 
+  // ---- FRAME-TIME INSTRUMENT -------------------------------------------------
+  // A ring of wall-clock deltas between consecutive rAF callbacks. rAF-to-rAF is the
+  // honest quantity for "does it hold 60": it includes compositing and any main-thread
+  // work outside our own render call, which a `performance.now()` bracket around
+  // `composer.render()` silently omits. GPU work is pipelined, so the bracket routinely
+  // reads 4 ms on a build that is visibly dropping frames — do not measure that instead.
+  //
+  // `reset()` before a measurement window, then read `stats()`. Percentiles come from a
+  // full sort of the window, not a subsample: `tools/_px.mjs` shipped a subsampled
+  // percentile for four waves and it was wrong by up to 15% (STATE.md, nineteenth finding).
+  const FT_CAP = 4096;
+  const ftBuf = new Float64Array(FT_CAP);
+  let ftN = 0, ftHead = 0, ftLongTotal = 0;
+  const frameStats = {
+    reset() { ftN = 0; ftHead = 0; ftLongTotal = 0; },
+    push(ms) {
+      ftBuf[ftHead] = ms; ftHead = (ftHead + 1) % FT_CAP;
+      if (ftN < FT_CAP) ftN++;
+      if (ms > 16.7) ftLongTotal++;
+    },
+    stats() {
+      if (!ftN) return null;
+      const a = Array.prototype.slice.call(Array.from(ftBuf.subarray(0, ftN))).sort((x, y) => x - y);
+      const q = (p) => a[Math.min(a.length - 1, Math.max(0, Math.round(p * (a.length - 1))))];
+      const mean = a.reduce((s, v) => s + v, 0) / a.length;
+      const rs = ctx.renderSize();
+      return {
+        n: a.length, mean, p50: q(0.50), p90: q(0.90), p99: q(0.99), max: a[a.length - 1],
+        fpsMean: 1000 / mean, fpsP50: 1000 / q(0.50), fpsP99: 1000 / q(0.99),
+        over16_7pct: 100 * ftLongTotal / a.length,
+        renderW: rs.w, renderH: rs.h, pixelRatio: rs.pixelRatio,
+        devicePixelRatio: rs.devicePixelRatio, resScale,
+      };
+    },
+  };
+  ctx.frameStats = frameStats;
+  window.__frameStats = frameStats;
+
+  // ---- pause ----------------------------------------------------------------
+  // Paused means: no tick, no input, but KEEP RENDERING. A frozen canvas behind a
+  // translucent menu reads as a hang, and the menu has to be able to show a time-of-day
+  // change taking effect on the live frame behind it.
+  let paused = false;
+  ctx.isPaused = () => paused;
+  ctx.setPaused = (v) => { paused = !!v; if (paused) for (const k in keys) keys[k] = false; };
+
   let last = performance.now();
   function frame(now) {
-    const dt = clamp((now - last) / 1000, 0, 0.05);
+    const dtRaw = (now - last) / 1000;
     last = now;
+    frameStats.push(dtRaw * 1000);
+    if (paused) { composer.render(); requestAnimationFrame(frame); return; }
+    const dt = clamp(dtRaw, 0, 0.05);
 
     if (!crash.active) {
       physics.setInput({
         throttle: (keys.KeyW || keys.ArrowUp ? 1 : 0) - (keys.KeyS || keys.ArrowDown ? 1 : 0),
         brake: keys.KeyS || keys.ArrowDown ? 0.6 : 0,
-        steer: (keys.KeyD || keys.ArrowRight ? 1 : 0) - (keys.KeyA || keys.ArrowLeft ? 1 : 0),
+        // LEFT is +1, and that is deliberate: physics.js:141 integrates
+        // `yaw += steer * turnRate * dt`, and a positive Y rotation in three.js is
+        // counter-clockwise seen from above — i.e. a LEFT turn. Mapping right to +1
+        // steered the car the wrong way. Fixing the sign here rather than on
+        // `yawRate` keeps every downstream sign consistent: `lat` on physics.js:144
+        // is derived from `yawRate`, and it drives `slip` and `lean`, so negating
+        // `yawRate` instead would make the car bank the wrong way through corners.
+        steer: (keys.KeyA || keys.ArrowLeft ? 1 : 0) - (keys.KeyD || keys.ArrowRight ? 1 : 0),
         boost: !!(keys.ShiftLeft || keys.ShiftRight),
         handbrake: !!keys.Space,
       });
@@ -383,9 +562,43 @@ export async function boot() {
     composer.render();
     requestAnimationFrame(frame);
   }
+  // Compiling shaders is the last real cost and it is the one that used to stall on a
+  // black screen with the overlay already dismissed, which read as a hang. Do it while
+  // the bar is still up and honest about it.
+  await stage('warm', 'compiling shaders');
+  renderer.compile(scene, camera);
+  await stage('done', 'ready');
+  if (bootBarEl) bootBarEl.style.width = '100%';
+  await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+
   bootEl.classList.add('gone');
   setTimeout(() => { bootEl.style.display = 'none'; }, 500);
+
+  // ---- start / pause menu ----------------------------------------------------
+  // The rAF loop starts either way; the START menu opens with the game PAUSED on top of a
+  // live first frame, so the player sees the scene they are about to drive and any
+  // time-of-day change lands on it immediately. `#nomenu=1` skips straight to driving,
+  // which is what the frame-time harness uses so a measurement never depends on a click.
+  const menu = createMenu({
+    ctx,
+    onStart() {
+      // The start click is a real user gesture, so it is the correct and only reliable
+      // place to unlock WebAudio. Every other path (keydown, pointerdown anywhere) was a
+      // guess about what the player would do first.
+      audio.start();
+      physics.reset(physics.state.pos, physics.state.yaw, 0);
+      traffic.reset(physics.state.pos);
+      frameStats.reset();
+    },
+  });
+  ctx.menu = menu;
+  traffic.reset(physics.state.pos);
+
   requestAnimationFrame(frame);
+  if (!(params.nomenu === '1' || params.nomenu === true)) {
+    ctx.setPaused(true);
+    menu.showStart();
+  }
   window.__ready = true;
   return ctx;
 }
