@@ -120,6 +120,7 @@ const SCENARIOS = {
   },
 };
 const SCENARIO_NAMES = list(args.scenarios, Object.keys(SCENARIOS));
+const TOGGLE_NAMES = list(args.toggles, null); // null = all, else a comma list of toggle names
 for (const n of SCENARIO_NAMES) {
   if (!SCENARIOS[n]) {
     console.error(`unknown scenario "${n}". known: ${Object.keys(SCENARIOS).join(', ')}`);
@@ -220,6 +221,19 @@ const TOGGLES = [
             if (Array.isArray(m)) m.forEach((x) => { x.needsUpdate = true; }); else m.needsUpdate = true; });`,
   },
 ];
+
+// `--toggles a,b` narrows the sweep. An 11-row sweep is minutes long, and re-confirming ONE row
+// after the tree changes under you should not cost a full pass.
+if (TOGGLE_NAMES) {
+  const keep = new Set(TOGGLE_NAMES);
+  for (const n of keep) {
+    if (!TOGGLES.some((t) => t.name === n)) {
+      console.error(`unknown toggle "${n}". known: ${TOGGLES.map((t) => t.name).join(', ')}`);
+      process.exit(2);
+    }
+  }
+  TOGGLES.splice(0, TOGGLES.length, ...TOGGLES.filter((t) => keep.has(t.name)));
+}
 
 // ---------------------------------------------------------------------------
 // static server (same shape as tools/shot.mjs)
@@ -495,16 +509,23 @@ try {
     }
     if (RES_LIST.length > 1) {
       console.log('');
-      console.log('# resolution sweep, median p50 per scenario (the "at what res do we hold 60" answer)');
+      // BEST p50 across the repeats, not the median. Same one-sided argument as the subsystem
+      // table: contention only ever slows a frame, so the floor is the estimator that survives it.
+      // The median is printed underneath because a large gap between the two is itself the signal
+      // that the machine was not quiet and the sweep should be re-run alone.
+      console.log('# resolution sweep. Headline is the BEST p50 of the repeats per cell.');
       for (const name of SCENARIO_NAMES) {
-        const cells = RES_LIST.map((res) => {
-          const rs = report.runs.filter((r) => r.scenario === name && r.res === res).map((r) => r.p50);
-          if (!rs.length) return `${res.toFixed(2)}: -`;
-          const m = spread(rs).med;
-          return `${res.toFixed(2)}: ${m.toFixed(1)}ms/${(1000 / m).toFixed(1)}fps${m <= 16.7 ? ' HOLDS60' : ''}`;
-        });
-        console.log(`  ${pad(name, 12)} ${cells.join('   ')}`);
+        for (const stat of ['min', 'med']) {
+          const cells = RES_LIST.map((res) => {
+            const rs = report.runs.filter((r) => r.scenario === name && r.res === res).map((r) => r.p50);
+            if (!rs.length) return `${res.toFixed(2)}: -`;
+            const m = spread(rs)[stat];
+            return `${res.toFixed(2)}: ${m.toFixed(1)}${m <= 16.7 ? '*' : ' '}`;
+          });
+          console.log(`  ${pad(name, 12)} ${stat === 'min' ? 'best' : ' med'} p50 ms   ${cells.join('  ')}`);
+        }
       }
+      console.log('  (* = p50 <= 16.7 ms, i.e. holds 60 fps at that resolution scale)');
     }
   } else {
     // -----------------------------------------------------------------------
@@ -599,20 +620,27 @@ try {
           deltaPct: 100 * s.med / spread(bases).med, sameSign,
           callsSaved: spread(r.pairs.map((p) => p.baseStats.counters.calls - p.offStats.counters.calls)).med,
           trisSaved: spread(r.pairs.map((p) => p.baseStats.counters.triangles - p.offStats.counters.triangles)).med,
-          verdict: (cleanDelta > noiseFloorClean && sameSign) ? 'REAL'
-            : (cleanDelta > noiseFloorClean ? 'weak' : 'noise') };
+          nPos: deltas.filter((d) => d > 0).length, nPass: deltas.length,
+          // THE VERDICT RULE, stated so it can be argued with rather than trusted.
+          //   REAL   sign agrees in every pass AND the min-envelope delta clears the noise floor.
+          //   likely sign agrees in every pass and the WEAKEST pass still saw >= 2 ms. Under
+          //          contention a genuinely-zero-cost toggle scatters sign; consistent sign across
+          //          four independent passes is the one piece of evidence contention cannot fake.
+          //   noise  anything else. Do not act on a `noise` row.
+          verdict: (sameSign && cleanDelta > noiseFloorClean) ? 'REAL'
+            : (sameSign && Math.min(...deltas.map(Math.abs)) >= 2) ? 'likely' : 'noise' };
       }).sort((a, b) => b.cleanDelta - a.cleanDelta);
       console.log('# RANKED SUBSYSTEM ATTRIBUTION, most expensive first.');
       console.log('# minBase/minOff are the LOWEST p50 each state reached across all passes: contention');
       console.log('# is one-sided (it can only slow a frame), so the floor is the robust estimator here.');
       console.log(`${pad('subsystem disabled', 20)} ${lpad('minBase', 8)} ${lpad('minOff', 8)} ` +
         `${lpad('delta', 8)} ${lpad('delta%', 7)} ${lpad('medDelta', 9)} ${lpad('calls-', 7)} ` +
-        `${lpad('tris-', 10)} ${lpad('verdict', 8)}  per-pass deltas`);
+        `${lpad('tris-', 10)} ${lpad('sign', 5)} ${lpad('verdict', 8)}  per-pass deltas`);
       for (const r of ranked) {
         console.log(`${pad(r.name, 20)} ${lpad(f2(r.minBase), 8)} ${lpad(f2(r.minOff), 8)} ` +
           `${lpad(f2(r.cleanDelta), 8)} ${lpad(f2(r.cleanPct), 7)} ${lpad(f2(r.deltaMed), 9)} ` +
           `${lpad(Math.round(r.callsSaved), 7)} ${lpad(Math.round(r.trisSaved), 10)} ` +
-          `${lpad(r.verdict, 8)}  [${r.deltas.map((d) => d.toFixed(1)).join(', ')}]`);
+          `${lpad(`${r.nPos}/${r.nPass}`, 5)} ${lpad(r.verdict, 8)}  [${r.deltas.map((d) => d.toFixed(1)).join(', ')}]`);
       }
       console.log('');
       for (const r of ranked) console.log(`  ${pad(r.name, 20)} ${r.note}`);
@@ -624,7 +652,11 @@ try {
         `${Math.round(anyBase.counters.triangles)} triangles/frame, ${anyBase.counters.programs} programs, ` +
         `${anyBase.counters.geometries} geometries, ${anyBase.counters.textures} textures`);
       report.subsystem = { scenario: SUB_SCENARIO, res, passes, baselineP50s: baseAll,
-        baselineSpread: baseSpread, noiseFloorMs: noiseFloor, ranked };
+        baselineSpread: baseSpread,
+        // Two different floors, and confusing them is easy: `Range` is the spread of ALL baseline
+        // windows (the machine's overall noise), `Clean` is the spread of the per-toggle baseline
+        // MINIMA and is the gate the ranked verdict column actually uses.
+        noiseFloorRangeMs: noiseFloor, noiseFloorCleanMs: noiseFloorClean, ranked };
       if (page._fpsErrors.length) console.log(`# page errors: ${page._fpsErrors.slice(0, 8).join(' | ')}`);
     } finally {
       await stopOsc();

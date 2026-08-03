@@ -1,0 +1,152 @@
+{
+  "when": "2026-08-03T16:39:49.622Z",
+  "scene": "dusk-highway-chase",
+  "viewport": {
+    "w": 1280,
+    "h": 720,
+    "deviceScaleFactor": 1
+  },
+  "warmupMs": 1500,
+  "measureMs": 3000,
+  "repeat": 4,
+  "concurrencyWarning": "frame time is invalid under concurrent load; label these smoke tests unless you own the machine",
+  "runs": [],
+  "spreads": [],
+  "subsystem": {
+    "scenario": "cruise",
+    "res": 1,
+    "passes": 4,
+    "baselineP50s": [
+      22.410000000000764,
+      21.57999999999811,
+      22.235000000000582,
+      21.635000000002037,
+      37.95499999999447,
+      48.145000000004075,
+      21.875,
+      21.820000000006985,
+      22.180000000007567,
+      34.24499999999534,
+      25.54000000000815,
+      52.05500000002212,
+      33.31500000000233,
+      36.64999999999418,
+      21.63499999998021,
+      28.779999999998836
+    ],
+    "baselineSpread": {
+      "min": 21.57999999999811,
+      "med": 22.410000000000764,
+      "max": 52.05500000002212,
+      "rangePct": 141.2187210381218
+    },
+    "noiseFloorRangeMs": 30.47500000002401,
+    "noiseFloorCleanMs": 0.6000000000094587,
+    "ranked": [
+      {
+        "name": "car-hidden",
+        "note": "carRoot.visible = false (hero shell, glass, lights)",
+        "deltas": [
+          9.645000000004075,
+          10.290000000008149,
+          38.625000000029104,
+          13.829999999987194
+        ],
+        "deltaMed": 10.290000000008149,
+        "deltaMin": 9.645000000004075,
+        "deltaMax": 38.625000000029104,
+        "baselineMed": 21.820000000006985,
+        "offMed": 11.989999999997963,
+        "minBase": 21.635000000002037,
+        "minOff": 11.529999999998836,
+        "cleanDelta": 10.105000000003201,
+        "cleanPct": 46.706725213784374,
+        "deltaPct": 47.15857011917899,
+        "sameSign": true,
+        "callsSaved": 423.15,
+        "trisSaved": 1071774,
+        "nPos": 4,
+        "nPass": 4,
+        "verdict": "REAL"
+      },
+      {
+        "name": "world-hidden",
+        "note": "world.group.visible = false (city, roads, props, lamps)",
+        "deltas": [
+          9.17000000000553,
+          9.07499999999709,
+          7.8399999999965075,
+          7.664999999979045
+        ],
+        "deltaMed": 7.8399999999965075,
+        "deltaMin": 7.664999999979045,
+        "deltaMax": 9.17000000000553,
+        "baselineMed": 21.875,
+        "offMed": 13.064999999995052,
+        "minBase": 21.63499999998021,
+        "minOff": 12.80000000000291,
+        "cleanDelta": 8.834999999977299,
+        "cleanPct": 40.83660734913511,
+        "deltaPct": 35.83999999998404,
+        "sameSign": true,
+        "callsSaved": 447.09999999999997,
+        "trisSaved": 10559330.299999999,
+        "nPos": 4,
+        "nPass": 4,
+        "verdict": "REAL"
+      },
+      {
+        "name": "ssao-off",
+        "note": "SSAO pass disabled",
+        "deltas": [
+          -18.534999999998945,
+          20.234999999993306,
+          4.310000000012224,
+          11.270000000018626
+        ],
+        "deltaMed": 4.310000000012224,
+        "deltaMin": -18.534999999998945,
+        "deltaMax": 20.234999999993306,
+        "baselineMed": 22.410000000000764,
+        "offMed": 17.869999999995343,
+        "minBase": 22.180000000007567,
+        "minOff": 17.720000000001164,
+        "cleanDelta": 4.460000000006403,
+        "cleanPct": 20.10820559064419,
+        "deltaPct": 19.23248549759963,
+        "sameSign": false,
+        "callsSaved": 315.775,
+        "trisSaved": 3062241.4000000004,
+        "nPos": 3,
+        "nPass": 4,
+        "verdict": "noise"
+      },
+      {
+        "name": "traffic-hidden",
+        "note": "traffic.group.visible = false",
+        "deltas": [
+          -0.1500000000014552,
+          17.970000000001164,
+          10.954999999987194,
+          6.065000000002328
+        ],
+        "deltaMed": 6.065000000002328,
+        "deltaMin": -0.1500000000014552,
+        "deltaMax": 17.970000000001164,
+        "baselineMed": 34.24499999999534,
+        "offMed": 23.29000000000815,
+        "minBase": 21.57999999999811,
+        "minOff": 21.729999999999563,
+        "cleanDelta": -0.1500000000014552,
+        "cleanPct": -0.695088044492439,
+        "deltaPct": 17.710614688284867,
+        "sameSign": false,
+        "callsSaved": 3.4750000000000227,
+        "trisSaved": -340386.7999999989,
+        "nPos": 3,
+        "nPass": 4,
+        "verdict": "noise"
+      }
+    ]
+  }
+}
