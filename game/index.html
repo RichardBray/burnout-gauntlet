@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Burnout Gauntlet</title>
+<style>
+  html, body { margin: 0; padding: 0; height: 100%; background: #05070c; overflow: hidden; }
+  #app { position: fixed; inset: 0; }
+  canvas#gl { display: block; width: 100%; height: 100%; }
+  #hud { position: fixed; inset: 0; pointer-events: none; }
+  #hud canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+  #boot { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
+    color: #cfd8e3; font: 300 14px/1.4 system-ui, sans-serif; letter-spacing: .3em;
+    text-transform: uppercase; background: #05070c; transition: opacity .4s; }
+  #boot.gone { opacity: 0; pointer-events: none; }
+  #err { position: fixed; left: 0; right: 0; top: 0; padding: 12px 16px; color: #ff9a9a;
+    background: #200; font: 12px/1.5 ui-monospace, monospace; white-space: pre-wrap; display: none; }
+</style>
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://esm.sh/three@0.180.0",
+    "three/webgpu": "https://esm.sh/three@0.180.0/webgpu",
+    "three/tsl": "https://esm.sh/three@0.180.0/tsl",
+    "three/addons/": "https://esm.sh/three@0.180.0/examples/jsm/"
+  }
+}
+</script>
+</head>
+<body>
+  <div id="app">
+    <canvas id="gl"></canvas>
+    <div id="hud"></div>
+  </div>
+  <div id="boot">loading</div>
+  <pre id="err"></pre>
+  <script type="module">
+    const err = document.getElementById('err');
+    function fail(e) {
+      err.style.display = 'block';
+      err.textContent += (e && (e.stack || e.message) || String(e)) + '\n';
+    }
+    window.addEventListener('error', (e) => fail(e.error || e.message));
+    window.addEventListener('unhandledrejection', (e) => fail(e.reason));
+    try {
+      const { boot } = await import('./main.js');
+      await boot();
+    } catch (e) { fail(e); }
+  </script>
+</body>
+</html>
