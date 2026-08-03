@@ -1,0 +1,64 @@
+# tools/fps.mjs  scene=dusk-highway-chase  viewport 1280x720 dsf 1  warmup 2.5s  measure 4.0s  repeat 2
+# frame time is rAF-to-rAF from window.__frameStats. Invalid under concurrent load.
+
+# SUBSYSTEM ATTRIBUTION  scenario=cruise (throttle held, no boost, highway, lane-keeping)  res=1.00  passes=2  interleaved A/B, car respotted before every window
+# every toggle pokes live objects via window.__game; no file in game/ is edited.
+
+    scenario   res  run     n     mean      p50      p90       p99       max  fpsP50  >16.7%  renderW  renderH  ratio  dpr resScale  calls      tris  progs   geos   texs    km/h  |slip|
+    BASELINE  1.00    1   190    21.13    20.28    33.92     77.55     94.56   49.30   64.21     1280      720      1    1        1   1087   1284475    133    393     92  270.46    0.00
+post-chain-off  1.00    1   244    16.45    13.10    31.98     83.83     94.14   76.34   35.66     1280      720      1    1        1    647    804617    146    393     92  270.04    0.00
+    BASELINE  1.00    1   187    21.55    20.60    34.01     75.45    100.53   48.54   68.98     1280      720      1    1        1   1020   1187941    146    393     92  270.76    0.00
+    ssao-off  1.00    1   211    19.30    17.84    34.27     88.64     97.03   56.07   55.92     1280      720      1    1        1    726    897351    146    393     92  270.32    0.00
+    BASELINE  1.00    1   205    19.87    18.82    33.68     73.10     82.93   53.15   61.95     1280      720      1    1        1   1018   1183972    146    393     92  270.60    0.00
+   bloom-off  1.00    1   215    18.69    18.34    33.43     65.23     84.14   54.53   55.35     1280      720      1    1        1   1011   1191981    146    393     92  270.41    0.00
+    BASELINE  1.00    1   205    19.62    19.43    33.69     69.39     80.76   51.48   63.90     1280      720      1    1        1   1087   1287447    146    393     92  270.34    0.00
+output-grade-off  1.00    1   209    19.21    18.76    33.53     70.90     76.13   53.32   61.72     1280      720      1    1        1   1020   1189092    146    393     92  270.46    0.00
+    BASELINE  1.00    1   205    19.59    18.60    32.32     76.89     87.32   53.78   63.90     1280      720      1    1        1   1025   1200524    146    393     92  270.33    0.00
+world-hidden  1.00    1   301    13.34    13.67    19.01     32.13     33.55   73.15   13.95     1280      720      1    1        1    436    323141    146    393     92  270.36    0.00
+    BASELINE  1.00    1   209    19.13    18.79    33.20     71.04     79.43   53.22   62.68     1280      720      1    1        1   1083   1281841    146    393     92  270.51    0.00
+     hud-off  1.00    1   269    14.93    14.57    16.63     65.92     68.07   68.61    9.67     1280      720      1    1        1   1028   1203274    146    393     92  270.24    0.00
+    BASELINE  1.00    1   206    19.48    18.83    33.33     77.36     81.02   53.09   62.62     1280      720      1    1        1   1021   1189385    146    393     92  270.40    0.00
+ shadows-off  1.00    1   257    15.62    15.29    30.43     55.74     84.87   65.38   32.30     1280      720      1    1        1    818    905227    195    393     92  270.44    0.00
+    BASELINE  1.00    2   205    19.50    19.61    32.50     72.82     77.36   50.99   61.95     1280      720      1    1        1   1027   1199857    195    393     92  270.37    0.00
+post-chain-off  1.00    2   266    15.09    13.89    29.82     74.99     83.68   71.99   26.69     1280      720      1    1        1    712    903077    195    393     92  270.18    0.00
+    BASELINE  1.00    2   205    19.53    19.40    33.77     58.40     79.54   51.56   63.41     1280      720      1    1        1   1084   1283575    195    393     92  270.58    0.00
+    ssao-off  1.00    2   223    17.95    16.79    33.38     78.60    105.23   59.58   50.22     1280      720      1    1        1    662    800199    195    393     92  270.11    0.00
+    BASELINE  1.00    2   205    19.47    19.49    32.83     71.29     79.38   51.30   65.37     1280      720      1    1        1   1026   1199453    195    393     92  270.37    0.00
+   bloom-off  1.00    2   224    17.89    17.13    32.87     71.83     86.80   58.39   52.68     1280      720      1    1        1   1011   1193847    195    393     92  270.41    0.00
+    BASELINE  1.00    2   207    19.45    18.73    31.81     77.85     84.05   53.40   63.77     1280      720      1    1        1   1019   1186850    195    393     92  270.58    0.00
+output-grade-off  1.00    2   213    18.93    18.93    33.25     71.41     85.30   52.84   61.03     1280      720      1    1        1   1083   1285396    195    393     92  270.57    0.00
+    BASELINE  1.00    2   206    19.78    19.50    33.17     71.05     97.11   51.28   63.59     1280      720      1    1        1   1086   1284348    195    393     92  270.57    0.00
+world-hidden  1.00    2   301    13.31    13.88    21.66     30.90     33.54   72.05   14.29     1280      720      1    1        1    436    323141    195    393     92  270.40    0.00
+    BASELINE  1.00    2   207    19.41    18.55    33.42     71.23     88.42   53.89   60.87     1280      720      1    1        1   1025   1196632    195    393     92  270.39    0.00
+     hud-off  1.00    2   268    14.93    14.64    16.50     66.14     68.48   68.31    9.33     1280      720      1    1        1   1032   1210964    195    393     92  270.09    0.00
+    BASELINE  1.00    2   206    19.44    18.74    33.20     83.55     85.42   53.35   63.59     1280      720      1    1        1   1027   1202320    195    393     92  270.35    0.00
+ shadows-off  1.00    2   250    15.99    15.00    31.24     54.61     69.96   66.67   33.60     1280      720      1    1        1    823    911197    195    393     92  270.32    0.00
+
+# 14 interleaved baseline windows: p50 min 18.55 med 18.83 max 20.60 (range 11.02%). That range is the noise floor of this machine right now.
+# per-toggle baseline MINIMA: 18.55 .. 19.61 ms -> min-envelope noise floor 1.06 ms. Full-range floor 2.05 ms.
+# REAL = clears the min-envelope floor and has the same sign in every pass.
+
+# RANKED SUBSYSTEM ATTRIBUTION, most expensive first.
+# minBase/minOff are the LOWEST p50 each state reached across all passes: contention
+# is one-sided (it can only slow a frame), so the floor is the robust estimator here.
+subsystem disabled    minBase   minOff    delta  delta%  medDelta  calls-      tris-  sign  verdict  per-pass deltas
+post-chain-off          19.61    13.10     6.51   33.20      5.72     315     296780   2/2     REAL  [7.2, 5.7]
+world-hidden            18.60    13.67     4.93   26.49      4.93     589     877383   2/2     REAL  [4.9, 5.6]
+hud-off                 18.55    14.57     3.98   21.45      3.91      -7     -14332   2/2     REAL  [4.2, 3.9]
+shadows-off             18.74    15.00     3.74   19.98      3.54     203     284158   2/2     REAL  [3.5, 3.7]
+ssao-off                19.40    16.79     2.61   13.46      2.61     295     290590   2/2     REAL  [2.8, 2.6]
+bloom-off               18.82    17.13     1.69    8.98      0.47       7      -8009   2/2     REAL  [0.5, 2.4]
+output-grade-off        18.73    18.76    -0.03   -0.16     -0.20     -65     -98546   1/2    noise  [0.7, -0.2]
+
+  post-chain-off       RenderPass straight to the canvas; SSAO+bloom+smear+grade all bypassed
+  world-hidden         world.group.visible = false (city, roads, props, lamps)
+  hud-off              hud.setVisible(false) — the HUD is a separate 2-D canvas at full window res
+  shadows-off          renderer.shadowMap.enabled = false (4096 map, PCFSoft)
+  ssao-off             SSAO pass disabled
+  bloom-off            bloom pass disabled
+  output-grade-off     graded tonemap output pass disabled (frame will look wrong; cost only)
+
+# render buffer for EVERY line above: renderW 1280 renderH 720 pixelRatio 1 devicePixelRatio 1 resScale 1
+# baseline counters: 1087 draw calls/frame, 1284475 triangles/frame, 133 programs, 393 geometries, 92 textures
+
+json /Users/robray/fc/demos/burnout-gauntlet/verdicts/wave-s/perf-toggles-step4.json

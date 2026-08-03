@@ -914,10 +914,44 @@ export function createHud(container, { layout } = {}) {
       const dx = ix - bx, dy = iy - by;
       ctx.save();
       ctx.globalCompositeOperation = 'lighter';
+      // ---- THE HALO IS BLURRED AT REDUCED SCALE. THIS IS THE HUD'S WHOLE FRAME COST.
+      // These three additive passes were 3.55 ms of a 19.15 ms frame on their own — measured by
+      // skipping this loop and nothing else, with every fbm, mask, fray and filament pass in the
+      // routine left running (verdicts/wave-s/perf.md section 5). Nothing else the HUD draws is
+      // above the noise floor. The reason is `ctx.filter`: Skia allocates a save-layer and runs a
+      // full separable blur over the whole source bitmap per pass per frame, on the raster thread,
+      // where it lands on our rAF-to-rAF time without appearing in any CPU bracket around
+      // hud.update() — which is why the profile pass saw hud.update at 0.92 ms and the kill-control
+      // saw 3.8 ms.
+      //
+      // A blur of radius r is, by definition, a signal with no content finer than r. So each pass
+      // is now blurred in a buffer downscaled by D, with the radius scaled by D too, and expanded
+      // back bilinearly: one sixteenth of the pixels for D = 4. The composite-order rule from r7
+      // is untouched — halo first, crisp body last — and the crisp body is still drawn at native
+      // resolution, so the silhouette this whole routine exists to keep hard stays hard.
+      //
+      // D is capped so the small-buffer radius never falls below MIN_SMALL_R; below about two
+      // texels a downscaled blur stops being a blur and starts being a resample, and the tightest
+      // pass (0.030 bar-heights) correctly ends up at D = 1, i.e. exactly as it was.
+      const MIN_SMALL_R = 2.0;
+      let hi = 0;
       for (const [b, a, green] of BOOST_BLOOM) {
-        ctx.filter = `blur(${(ih * b).toFixed(2)}px)`;
+        const r = ih * b;
+        const D = Math.max(1, Math.min(4, Math.floor(r / MIN_SMALL_R)));
         ctx.globalAlpha = clamp(a * (1 + 0.16 * hot + 0.08 * pulse), 0, 1);
-        ctx.drawImage(green ? Hb.c : F.c, dx, dy);
+        if (D === 1) {
+          ctx.filter = `blur(${r.toFixed(2)}px)`;
+          ctx.drawImage(green ? Hb.c : F.c, dx, dy);
+          continue;
+        }
+        const sw = Math.ceil(bw / D), sh = Math.ceil(bh / D);
+        const Sb = scratch(`bloom${hi++}`, sw, sh);
+        Sb.g.filter = `blur(${(r / D).toFixed(2)}px)`;
+        Sb.g.drawImage(green ? Hb.c : F.c, 0, 0, sw, sh);
+        Sb.g.filter = 'none';
+        ctx.filter = 'none';
+        ctx.imageSmoothingQuality = 'low';
+        ctx.drawImage(Sb.c, 0, 0, sw, sh, dx, dy, sw * D, sh * D);
       }
       ctx.filter = 'none';
       ctx.globalAlpha = 1;

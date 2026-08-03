@@ -1,5 +1,5 @@
 {
-  "generated": "2026-08-03T18:04:57.219Z",
+  "generated": "2026-08-03T20:25:52.974Z",
   "waves": [
     "wave-k",
     "wave-l",
@@ -17,11 +17,36 @@
       "piece": "perf",
       "goal": "holds 60 fps at 1280x720 real pixels",
       "rounds": 0,
-      "verdict": "not started",
-      "waves": "",
-      "building": false,
-      "metrics": null,
-      "metricsFrom": null
+      "verdict": "built, not yet judged",
+      "waves": "s*",
+      "building": true,
+      "metrics": [
+        {
+          "k": "cruise p50",
+          "v": "16.50 ms (60.6 fps) at 1280x720 @ ratio 1.0, 3 runs 16.33-16.65"
+        },
+        {
+          "k": "cruise p99",
+          "v": "46.73 ms at 1280x720 @ ratio 1.0 (was 119.07)"
+        },
+        {
+          "k": "city p50",
+          "v": "22.53 ms (44.4 fps) at 1280x720 @ ratio 1.0"
+        },
+        {
+          "k": "night-wet p50",
+          "v": "49.95 ms (20.0 fps) at 1280x720 @ ratio 1.0 - worst scene, routed"
+        },
+        {
+          "k": "cruise mean",
+          "v": "17.16 ms (was 46.48) at 1280x720 @ ratio 1.0"
+        },
+        {
+          "k": "60 fps holds at resScale",
+          "v": "1.0 highway, ~0.55 city, never night-wet"
+        }
+      ],
+      "metricsFrom": "wave s builder"
     },
     {
       "piece": "handling",

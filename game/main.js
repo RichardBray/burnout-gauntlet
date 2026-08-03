@@ -7,6 +7,8 @@ import * as THREE from 'three';
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
+import { FXAAShader } from 'three/addons/shaders/FXAAShader.js';
 
 
 import { makeRng, clamp, lerp } from './util.js';
@@ -166,8 +168,21 @@ export async function boot() {
   const dpr = renderer.getPixelRatio();
   const rtW = Math.max(2, Math.floor(window.innerWidth * dpr));
   const rtH = Math.max(2, Math.floor(window.innerHeight * dpr));
+  // ---- ANTI-ALIASING: MSAA SAMPLE COUNT, AND WHY IT IS A HASH PARAMETER NOW ------------
+  // 4x MSAA on a 1280x720 HalfFloat target is the single most expensive line in this file:
+  // measured 7.34 ms of a 25.5 ms frame, i.e. 29% of the whole frame for edge quality alone
+  // (2x costs 4.14 ms of it). Half-float MSAA is bandwidth, not shading — the tiler resolves
+  // four 64-bit samples per pixel — so it does not get cheaper as the scene gets cheaper, and it
+  // was the one item that made 60 fps at resScale 1.0 arithmetically impossible.
+  //
+  // So the default is now 0 samples plus an FXAA pass at the end of the chain (see below), and
+  // `#msaa=<n>` restores hardware MSAA for anyone who wants to A/B it or who has the headroom.
+  // FXAA is not free either (0.35 ms) and it is not as good as 4x MSAA on a near-vertical mullion
+  // edge; what it IS is 7 ms cheaper, and 60 fps is this wave's bar. The regression gate for the
+  // swap is in verdicts/wave-s/perf.md section 4, with both PNGs.
+  const msaaSamples = Math.max(0, Math.min(8, Math.round(parseFloat(params.msaa) || 0)));
   const rt = new THREE.WebGLRenderTarget(rtW, rtH, {
-    type: THREE.HalfFloatType, samples: 4,
+    type: THREE.HalfFloatType, samples: msaaSamples,
     minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter,
   });
   const composer = new EffectComposer(renderer, rt);
@@ -189,6 +204,15 @@ export async function boot() {
   // to be reachable only via #tone=agx, which left every preset's grade inert.
   const outputPass = createOutputPass(toneMode);
   composer.addPass(outputPass);
+  // FXAA runs LAST, on the graded sRGB image, which is where a luma-based edge filter belongs:
+  // run before the tonemap it would be estimating luma from HDR values that the curve is about to
+  // redistribute, and it would smooth edges the display never sees while missing the ones it does.
+  // Skipped entirely when hardware MSAA is on, because stacking the two only costs sharpness.
+  const fxaa = msaaSamples > 0 ? null : new ShaderPass(FXAAShader);
+  if (fxaa) {
+    composer.addPass(fxaa);
+    fxaa.material.uniforms.resolution.value.set(1 / rtW, 1 / rtH);
+  }
 
   function resize() {
     const w = window.innerWidth, h = window.innerHeight;
@@ -203,6 +227,12 @@ export async function boot() {
     composer.setSize(w, h);
     ssao.setSize(w * renderer.getPixelRatio(), h * renderer.getPixelRatio());
     bloom.setSize(w * renderer.getPixelRatio(), h * renderer.getPixelRatio());
+    // FXAA's kernel is stepped in texels, so it needs the DRAWING BUFFER size, not the CSS size:
+    // at resScale 0.75 a CSS-sized reciprocal would step 1.33 texels per tap and blur the frame.
+    if (fxaa) {
+      const bs = renderer.getDrawingBufferSize(new THREE.Vector2());
+      fxaa.material.uniforms.resolution.value.set(1 / bs.x, 1 / bs.y);
+    }
     // The HUD is drawn on its own 2-D canvas that is NOT part of the post chain, so it
     // always renders at full window resolution: dropping resScale must not soften the
     // HUD, which is exactly what Burnout does (see reference/INDEX.md hud-overlay-03).
@@ -434,6 +464,12 @@ export async function boot() {
       gear: gearOf(s.speed), pos: s.pos, yaw: s.yaw, crashed: s.crashed,
     });
     scene.updateMatrixWorld(true);
+    // The car's reflection probe is now rate-limited (car.js PROBE_MIN_FRAMES), so the last
+    // automatic bake can sit up to 90 ticks behind the final pose. A screenshot must never
+    // reflect a street the car has already left, so bake it once more here, after the sim has
+    // landed on its final frame. This costs one re-bake in shot mode and nothing at runtime,
+    // and it makes the shot path MORE current than it was before the rate limit, not less.
+    car.refreshEnv();
     // render a handful of identical frames so nothing is mid-upload
     for (let i = 0; i < 4; i++) composer.render();
     await new Promise((r) => requestAnimationFrame(r));
@@ -451,6 +487,19 @@ export async function boot() {
   hud.setVisible(true);
   hud.banner('BURNOUT GAUNTLET', 2.5);
 
+  // ---- crash feel ------------------------------------------------------------
+  // Two knobs, named rather than inlined as magic numbers, and declared BEFORE the
+  // keydown listener below: boot still yields frames after that listener is registered,
+  // so a `const` declared later would be in its temporal dead zone if the player
+  // pressed C during the last few stages of loading.
+  //
+  // CRASH_HOLD_S is how long the wreck replay runs before control returns.
+  // CRASH_DEMO_SEVERITY scales the C-key demo crash only: `severity` multiplies debris
+  // launch velocity, body spin on all three axes, the damage level and the camera kick
+  // (crash.js:1409-1428), so one number governs how BIG the wreck reads.
+  const CRASH_HOLD_S = 2.2;
+  const CRASH_DEMO_SEVERITY = 0.55;
+
   const keys = Object.create(null);
   const down = (e) => {
     keys[e.code] = true;
@@ -463,12 +512,16 @@ export async function boot() {
     }
     if (e.code === 'KeyC' && !crash.active) {
       const yaw = physics.state.yaw;
+      // The 30 m/s floor meant the demo crash was violent even from a standstill, which is
+      // why it read as oversized. Use the real speed, with a small floor so C still does
+      // something visible when parked.
       crash.trigger({
-        speed: Math.max(30, Math.abs(physics.state.speed)),
-        dir: new THREE.Vector3(Math.sin(yaw), 0, Math.cos(yaw)), severity: 1,
+        speed: Math.max(12, Math.abs(physics.state.speed)),
+        dir: new THREE.Vector3(Math.sin(yaw), 0, Math.cos(yaw)),
+        severity: CRASH_DEMO_SEVERITY,
       });
-      audio.crash(1);
-      hud.banner('WRECKED', 2.2);
+      audio.crash(CRASH_DEMO_SEVERITY);
+      hud.banner('WRECKED', 1.4);
       camRig.configure({
         mode: 'orbit', orbitRadius: 10, orbitHeight: 3.2, orbitSpeed: 0.35,
         orbitTarget: new THREE.Vector3(physics.state.pos.x, 0.95, physics.state.pos.z),
@@ -551,7 +604,9 @@ export async function boot() {
         boost: !!(keys.ShiftLeft || keys.ShiftRight),
         handbrake: !!keys.Space,
       });
-    } else if (crash.time > 4.5) {
+      // How long the wreck replay holds before control is handed back. 4.5 s read as a
+      // punishment rather than a beat; Paradise's own takedown replay is nearer 2 s.
+    } else if (crash.time > CRASH_HOLD_S) {
       crash.reset();
       physics.reset(physics.state.pos, physics.state.yaw, 0);
       camRig.configure({ mode: 'chase' });

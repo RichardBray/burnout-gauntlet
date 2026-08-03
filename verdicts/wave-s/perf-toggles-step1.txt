@@ -1,0 +1,88 @@
+# tools/fps.mjs  scene=dusk-highway-chase  viewport 1280x720 dsf 1  warmup 2.5s  measure 4.0s  repeat 2
+# frame time is rAF-to-rAF from window.__frameStats. Invalid under concurrent load.
+
+# SUBSYSTEM ATTRIBUTION  scenario=cruise (throttle held, no boost, highway, lane-keeping)  res=1.00  passes=2  interleaved A/B, car respotted before every window
+# every toggle pokes live objects via window.__game; no file in game/ is edited.
+
+    scenario   res  run     n     mean      p50      p90       p99       max  fpsP50  >16.7%  renderW  renderH  ratio  dpr resScale  calls      tris  progs   geos   texs    km/h  |slip|
+    BASELINE  1.00    1   117    34.30    32.78    49.19    100.84    105.09   30.51   94.02     1280      720      1    1        1    707   7739088    132    392     92  271.43    0.00
+post-chain-off  1.00    1   209    19.23    17.32    34.18     69.64     87.85   57.74   57.42     1280      720      1    1        1    443   5577941    145    392     92  270.32    0.00
+    BASELINE  1.00    1   115    35.07    32.74    51.72    102.24    109.32   30.54   94.78     1280      720      1    1        1    707   7739088    145    392     92  271.32    0.00
+    ssao-off  1.00    1   138    29.11    27.59    31.41    115.26    116.25   36.25   89.86     1280      720      1    1        1    436   5214678    145    392     92  270.29    0.00
+    BASELINE  1.00    1   117    34.31    32.89    49.94    105.31    106.46   30.41   94.02     1280      720      1    1        1    707   7739088    145    392     92  271.29    0.00
+   bloom-off  1.00    1   131    30.56    29.53    32.98     83.85     96.59   33.86   93.89     1280      720      1    1        1    694   7739075    145    392     92  271.27    0.00
+    BASELINE  1.00    1   116    34.75    33.13    50.44    104.49    106.10   30.19   93.10     1280      720      1    1        1    707   7739087    145    392     92  271.37    0.00
+smear-pass-off  1.00    1   118    34.19    32.68    49.01    105.00    106.47   30.60   94.07     1280      720      1    1        1    707   7739087    145    392     92  271.50    0.00
+    BASELINE  1.00    1   119    34.38    32.72    50.22    102.49    103.42   30.56   94.96     1280      720      1    1        1    728   8102360    145    392     92  271.31    0.00
+output-grade-off  1.00    1   127    32.23    30.30    33.45    104.21    104.25   33.00   93.70     1280      720      1    1        1    707   7739088    147    392     92  271.15    0.00
+    BASELINE  1.00    1   117    34.32    32.82    50.47    105.22    105.80   30.47   94.02     1280      720      1    1        1    728   8102361    147    392     92  271.31    0.00
+traffic-hidden  1.00    1   116    34.44    32.91    51.07    102.87    103.20   30.38   93.97     1280      720      1    1        1    693   7727744    147    392     92  271.39    0.00
+    BASELINE  1.00    1   119    34.39    32.73    50.05    105.20    107.05   30.56   94.12     1280      720      1    1        1    729   8102361    147    392     92  271.23    0.00
+world-hidden  1.00    1   189    21.28    20.66    28.66     42.11     46.28   48.40   90.48     1280      720      1    1        1    435    323140    147    392     92  271.25    0.00
+    BASELINE  1.00    1   119    34.31    33.03    50.65    103.40    119.73   30.27   93.28     1280      720      1    1        1    728   8102360    147    392     92  271.32    0.00
+  sky-hidden  1.00    1   124    32.51    31.25    34.51    102.97    107.04   32.00   93.55     1280      720      1    1        1    727   8102345    147    392     92  271.38    0.00
+    BASELINE  1.00    1   117    34.46    32.74    49.95    104.97    105.44   30.54   93.16     1280      720      1    1        1    707   7739088    147    392     92  271.33    0.00
+  car-hidden  1.00    1   117    34.61    31.85    48.88    173.18    174.52   31.40   88.89     1280      720      1    1        1    323   7439702    147    392     92  270.27    0.00
+    BASELINE  1.00    1   117    34.29    32.90    49.89    102.79    103.07   30.39   93.16     1280      720      1    1        1    728   8102361    147    392     92  271.24    0.00
+     hud-off  1.00    1   132    30.53    29.40    32.98     98.74    100.11   34.01   93.94     1280      720      1    1        1    707   7739088    147    392     92  271.12    0.00
+    BASELINE  1.00    1   117    34.36    33.01    49.17    103.20    103.89   30.29   94.87     1280      720      1    1        1    728   8102361    147    392     92  271.33    0.00
+ shadows-off  1.00    1   141    28.61    28.28    32.51     83.42    100.69   35.36   92.91     1280      720      1    1        1    602   5794478    196    392     92  271.26    0.00
+    BASELINE  1.00    2   117    34.44    33.07    50.64    103.81    105.56   30.24   93.16     1280      720      1    1        1    707   7739088    196    392     92  271.35    0.00
+post-chain-off  1.00    2   210    19.06    17.07    34.82     70.76     88.27   58.60   55.71     1280      720      1    1        1    422   5214667    196    392     92  270.17    0.00
+    BASELINE  1.00    2   117    34.30    33.04    50.33    104.01    105.64   30.27   94.87     1280      720      1    1        1    707   7739087    196    392     92  271.34    0.00
+    ssao-off  1.00    2   143    27.97    27.11    30.89    114.92    116.11   36.89   87.41     1280      720      1    1        1    457   5577953    196    392     92  270.51    0.00
+    BASELINE  1.00    2   116    34.61    33.16    50.76    104.51    105.32   30.16   93.97     1280      720      1    1        1    707   7739087    196    392     92  271.32    0.00
+   bloom-off  1.00    2   134    29.95    29.15    32.61     80.10     97.53   34.30   94.03     1280      720      1    1        1    715   8102348    196    392     92  271.25    0.00
+    BASELINE  1.00    2   116    34.38    33.05    49.44    104.88    106.65   30.26   93.10     1280      720      1    1        1    707   7739088    196    392     92  271.29    0.00
+smear-pass-off  1.00    2   119    34.34    33.15    36.07    106.73    106.84   30.16   93.28     1280      720      1    1        1    729   8102361    196    392     92  271.31    0.00
+    BASELINE  1.00    2   117    34.50    32.61    51.10    103.98    105.50   30.66   94.02     1280      720      1    1        1    707   7739087    196    392     92  271.34    0.00
+output-grade-off  1.00    2   128    31.45    30.41    33.67     96.19    102.25   32.88   93.75     1280      720      1    1        1    707   7739088    196    392     92  271.20    0.00
+    BASELINE  1.00    2   114    34.98    33.11    51.29     91.58    103.60   30.20   95.61     1280      720      1    1        1    707   7739088    196    392     92  271.22    0.00
+traffic-hidden  1.00    2   116    34.80    33.06    51.57    105.34    106.90   30.25   93.10     1280      720      1    1        1    693   7727744    196    392     92  271.39    0.00
+    BASELINE  1.00    2   115    34.90    33.06    49.94    103.34    105.54   30.25   94.78     1280      720      1    1        1    707   7739088    196    392     92  271.24    0.00
+world-hidden  1.00    2   187    21.56    20.91    29.32     41.28     44.13   47.84   90.91     1280      720      1    1        1    435    323140    196    392     92  271.22    0.00
+    BASELINE  1.00    2   116    34.39    33.10    49.08    104.57    105.22   30.21   94.83     1280      720      1    1        1    707   7739088    196    392     92  271.21    0.00
+  sky-hidden  1.00    2   122    32.92    30.83    39.10    104.33    121.04   32.44   92.62     1280      720      1    1        1    727   8102345    196    392     92  271.15    0.00
+    BASELINE  1.00    2   117    34.44    32.97    38.33    104.84    106.18   30.33   93.16     1280      720      1    1        1    707   7739087    196    392     92  271.31    0.00
+  car-hidden  1.00    2   122    32.69    31.24    34.77    157.43    174.79   32.01   86.07     1280      720      1    1        1    323   7439702    196    392     92  270.07    0.00
+    BASELINE  1.00    2   119    34.47    32.72    49.41    104.64    106.29   30.56   93.28     1280      720      1    1        1    729   8102361    196    392     92  271.13    0.00
+     hud-off  1.00    2   134    30.41    29.39    33.36     82.95    101.86   34.03   92.54     1280      720      1    1        1    706   7739087    196    392     92  271.37    0.00
+    BASELINE  1.00    2   119    33.80    33.16    47.75    102.74    104.03   30.16   94.96     1280      720      1    1        1    707   7739087    196    392     92  271.45    0.00
+ shadows-off  1.00    2   140    28.59    28.39    32.19     79.53    101.15   35.22   92.86     1280      720      1    1        1    581   5431205    196    392     92  271.24    0.00
+
+# 22 interleaved baseline windows: p50 min 32.61 med 32.97 max 33.16 (range 1.67%). That range is the noise floor of this machine right now.
+# per-toggle baseline MINIMA: 32.61 .. 33.05 ms -> min-envelope noise floor 0.43 ms. Full-range floor 0.54 ms.
+# REAL = clears the min-envelope floor and has the same sign in every pass.
+
+# RANKED SUBSYSTEM ATTRIBUTION, most expensive first.
+# minBase/minOff are the LOWEST p50 each state reached across all passes: contention
+# is one-sided (it can only slow a frame), so the floor is the robust estimator here.
+subsystem disabled    minBase   minOff    delta  delta%  medDelta  calls-      tris-  sign  verdict  per-pass deltas
+post-chain-off          32.78    17.07    15.71   47.94     15.46     264    2161147   2/2     REAL  [15.5, 16.0]
+world-hidden            32.73    20.66    12.07   36.87     12.07     272    7415948   2/2     REAL  [12.1, 12.2]
+ssao-off                32.74    27.11     5.64   17.21      5.16     250    2161135   2/2     REAL  [5.2, 5.9]
+shadows-off             33.01    28.28     4.73   14.33      4.73     126    2307882   2/2     REAL  [4.7, 4.8]
+bloom-off               32.89    29.15     3.73   11.34      3.36      -8    -363260   2/2     REAL  [3.4, 4.0]
+hud-off                 32.72    29.39     3.34   10.21      3.34      22     363273   2/2     REAL  [3.5, 3.3]
+output-grade-off        32.61    30.30     2.31    7.08      2.20       0         -2   2/2     REAL  [2.4, 2.2]
+sky-hidden              33.03    30.83     2.20    6.67      1.78     -20    -363257   2/2     REAL  [1.8, 2.3]
+car-hidden              32.74    31.24     1.51    4.60      0.90     384     299385   2/2     REAL  [0.9, 1.7]
+smear-pass-off          33.05    32.68     0.37    1.10     -0.11     -21    -363273   1/2    noise  [0.4, -0.1]
+traffic-hidden          32.82    32.91    -0.10   -0.29     -0.10      14      11344   1/2    noise  [-0.1, 0.0]
+
+  post-chain-off       RenderPass straight to the canvas; SSAO+bloom+smear+grade all bypassed
+  world-hidden         world.group.visible = false (city, roads, props, lamps)
+  ssao-off             SSAO pass disabled
+  shadows-off          renderer.shadowMap.enabled = false (4096 map, PCFSoft)
+  bloom-off            bloom pass disabled
+  hud-off              hud.setVisible(false) — the HUD is a separate 2-D canvas at full window res
+  output-grade-off     graded tonemap output pass disabled (frame will look wrong; cost only)
+  sky-hidden           sky.skyMesh.visible = false
+  car-hidden           carRoot.visible = false (hero shell, glass, lights)
+  smear-pass-off       boost radial-smear pass disabled
+  traffic-hidden       traffic.group.visible = false
+
+# render buffer for EVERY line above: renderW 1280 renderH 720 pixelRatio 1 devicePixelRatio 1 resScale 1
+# baseline counters: 707 draw calls/frame, 7739088 triangles/frame, 132 programs, 392 geometries, 92 textures
+
+json /Users/robray/fc/demos/burnout-gauntlet/verdicts/wave-s/perf-toggles-step1.json

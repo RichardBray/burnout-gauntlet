@@ -2454,6 +2454,17 @@ export function createWorld(scene, { rng, roadKit }) {
   //   BEFORE this wave:  rank 1099, queue 313, lane 1255, culled 148  (= 2667 emitted)
   // `lane` was laneTraffic(), i.e. standing cars filling BOTH carriageways of every road
   // segment for no reason. It is gone; traffic.js drives that population now.
+  // NPC_DENSITY scales every STATIONARY npc population by one number, on the user's explicit
+  // instruction to cut the cars by 60% after driving it. One multiplier rather than three
+  // scattered constants so the next request is a single edit.
+  //
+  // Note the tension this is resolving deliberately: the kerb-rank comment below argues that
+  // thinning this population is what makes a street "read abandoned", and it was tuned against
+  // the reference stills. The stills are a regression gate now, not a target, and a person who
+  // has driven the city outranks a still that cannot be driven. If it does read empty, raise
+  // this rather than reintroducing a second population.
+  const NPC_DENSITY = 0.40;
+
   let parkPop = 'rank';
   const parkCounts = { rank: 0, queue: 0, culled: 0 };
 
@@ -2559,7 +2570,9 @@ export function createWorld(scene, { rng, roadKit }) {
       // further: kerb parking is the population that carries "this street is inhabited" now
       // that the carriageways are handed to traffic.js, and thinning it is what would make
       // the street read abandoned.
-      if (R() < 0.40) continue;
+      // 0.60 was the surviving fraction before NPC_DENSITY; keeping it as a factor means the
+      // multiplier reads as "fraction of the old population" at every site that uses it.
+      if (R() >= 0.60 * NPC_DENSITY) continue;
       const x = ox + ax * t + nx * PARK_OFF;
       const z = oz + az * t + nz * PARK_OFF;
       tryPark(x, z, Math.atan2(-az, ax) + (flip ? Math.PI : 0), 2.8);
@@ -2597,7 +2610,9 @@ export function createWorld(scene, { rng, roadKit }) {
    * thing streets actually do and which no longer contradicts the live signal.
    */
   function signalQueue(gx, gz, ax, az) {
-    const n = rngInt(R, 2, 4);
+    // Scaled by NPC_DENSITY like the ranks, with a floor of 1: a "queue" of zero cars is just
+    // an absent queue, and dropping the whole mechanism was not what was asked for.
+    const n = Math.max(1, Math.round(rngInt(R, 2, 4) * NPC_DENSITY));
     const ry = Math.atan2(-az, ax);
     let d = 19.6;                               // nose on the stop bar, behind the crossing
     for (let i = 0; i < n; i++) {
@@ -2868,6 +2883,141 @@ export function createWorld(scene, { rng, roadKit }) {
     highway: makePath([[-1000, HZ + 6.5], [-300, HZ + 6.5], [400, HZ + 6.5], [1000, HZ + 6.5]], false),
   };
 
+  // ---- SPATIAL CHUNKING: the one change that makes this city affordable ----------------
+  // Every pool above was allocated by inst() with `frustumCulled = false`, and that was
+  // correct while each pool was ONE mesh: a single InstancedMesh holding 150 000 window
+  // mullions spread over the whole map has a map-wide bounding sphere, so the frustum test
+  // could only ever cost a matrix multiply and then say "yes". The consequence, measured:
+  // 203 540 instances and 2.40 M triangles, of which 0.19% are within 200 m of the camera and
+  // 92% are beyond 400 m, ALL submitted, EVERY frame (verdicts/wave-s/perf-profile.md, map
+  // census). And not once per frame but three times: the colour pass, the shadow pass, and
+  // SSAO's depth/normal pass each re-submit the whole scene — `ssao-off` alone drops 2.16 M
+  // triangles out of the frame, which is how you can see the third submission in the counters.
+  //
+  // So this pass re-cuts every large pool into one InstancedMesh per `CHUNK` metre cell of
+  // ground, each with `frustumCulled = true` and its own tight bounding sphere. Nothing about
+  // the scene's contents changes — the same instances exist at the same transforms with the
+  // same materials — but three can now reject a cell that is behind the camera or outside the
+  // shadow cascade, which is a pixel-identical, provably lossless cull. This is why the fix is
+  // frustum culling and NOT a distance cull: the skyline is 800 m away and is supposed to be
+  // there, so throwing geometry away by range would be a visible regression, whereas throwing
+  // away what is not in the view volume cannot be.
+  //
+  // WHY THE SOURCE MESH IS KEPT AS THE PARENT rather than replaced. Later code holds direct
+  // references to individual pools (`spillMesh.visible = night` in setNight, `towers`,
+  // `carKit`) and toggles them. Making the chunks CHILDREN of the original mesh preserves every
+  // one of those handles: visibility still inherits down the parent, the material is shared so
+  // every setNight()/setWet() material edit still lands, and the parent itself draws nothing
+  // because its count is zeroed. `layers.disableAll()` on the parent is what removes its own
+  // (now empty) draw call: three's projectObject tests the layer mask of an object before
+  // adding it to the render list but recurses into children regardless of that test.
+  //
+  // CHUNK is a real trade and was measured, not guessed: smaller cells cull more triangles and
+  // cost more draw calls (one per occupied cell per pool). See the verdict for the sweep.
+  let chunkStats = null;
+  const CHUNK = 200;
+  // Below this many instances a pool is left exactly as it was. A 60-instance pool cannot pay
+  // back the extra draw calls chunking it would add, and the whole point is to spend calls
+  // only where there are triangles behind them.
+  const CHUNK_MIN = 400;
+  {
+    const _m = new THREE.Matrix4();
+    const _c = new THREE.Color();
+    const pools = [];
+    group.traverse((o) => {
+      // contactMesh is rebuilt by layoutContacts() on every time-of-day change, so its
+      // instance list is not static and it must not be re-cut here.
+      if (o.isInstancedMesh && o !== contactMesh) pools.push(o);
+    });
+    // ---- POOLS ARE MERGED BY (geometry, material, shadow flags) BEFORE THEY ARE CUT.
+    // Chunking on its own trades triangles for draw calls, and downtown that trade went the wrong
+    // way: it took the city from 849 calls to 2285 because ~50 pools each contributed a chunk per
+    // occupied cell. But those pools are not 50 distinct THINGS to the GPU — a bench slat, a
+    // traffic-light head, a sign frame and a bumper are all `boxGeo` with `darkMat`, i.e. the same
+    // program and the same buffers, split across pools only because they were built by different
+    // functions. Bucketing by (geometry, material, castShadow, receiveShadow) merges them, so a
+    // cell costs one call per distinct DRAW STATE rather than one per author.
+    //
+    // THE CONSTRAINT THIS INTRODUCES, stated because it is not obvious: instances that get merged
+    // lose their individual pool's `visible` flag. That is safe for every pool here — the only
+    // pool this file ever toggles individually is `spillMesh`, whose `spillMat` is unique to it, so
+    // it can never share a bucket with anything. If a future pool needs its own visibility, give
+    // it its own material (which it needs anyway to look different) or exclude it above.
+    let chunks = 0, moved = 0;
+    const buckets = new Map();
+    for (const src of pools) {
+      // A multi-material pool would need its groups carried across too; none exists here, and
+      // silently merging two of them by a shared undefined uuid is exactly the kind of bug that
+      // only shows up as one wrong-coloured object somewhere in the city.
+      if (src.count < 1 || Array.isArray(src.material)) continue;
+      const key = `${src.geometry.uuid}|${src.material.uuid}`
+        + `|${src.castShadow ? 1 : 0}${src.receiveShadow ? 1 : 0}|${src.renderOrder}`;
+      let b = buckets.get(key);
+      if (!b) buckets.set(key, b = []);
+      b.push(src);
+    }
+    for (const srcs of buckets.values()) {
+      const total = srcs.reduce((a, s) => a + s.count, 0);
+      if (total < CHUNK_MIN) continue;
+      // cell key -> flat list of matrices (and colours, if any source carries them)
+      const cells = new Map();
+      let anyColor = false;
+      for (const src of srcs) if (src.instanceColor) anyColor = true;
+      for (const src of srcs) {
+        for (let i = 0; i < src.count; i++) {
+          src.getMatrixAt(i, _m);
+          // elements[12]/[14] are the translation x/z of a column-major mat4.
+          const key = `${Math.floor(_m.elements[12] / CHUNK)},${Math.floor(_m.elements[14] / CHUNK)}`;
+          let b = cells.get(key);
+          if (!b) cells.set(key, b = { mats: [], cols: [] });
+          b.mats.push(_m.clone());
+          // A source with no instanceColor in a bucket where another source has one must
+          // contribute white, or its instances would come out black.
+          if (anyColor) {
+            if (src.instanceColor) { src.getColorAt(i, _c); b.cols.push(_c.clone()); }
+            else b.cols.push(new THREE.Color(1, 1, 1));
+          }
+        }
+      }
+      if (cells.size < 2 && srcs.length < 2) continue;  // nothing to win
+      const host = srcs[0];
+      for (const cell of cells.values()) {
+        const im = new THREE.InstancedMesh(host.geometry, host.material, cell.mats.length);
+        im.castShadow = host.castShadow;
+        im.receiveShadow = host.receiveShadow;
+        im.renderOrder = host.renderOrder;
+        im.name = `${host.name || 'pool'}:chunk`;
+        for (let k = 0; k < cell.mats.length; k++) {
+          im.setMatrixAt(k, cell.mats[k]);
+          if (anyColor) im.setColorAt(k, cell.cols[k]);
+        }
+        im.instanceMatrix.needsUpdate = true;
+        if (im.instanceColor) im.instanceColor.needsUpdate = true;
+        // Explicit: three would compute this lazily on the first frustum test anyway, but
+        // doing it here keeps the whole cost of this restructure inside boot.
+        im.computeBoundingSphere();
+        host.add(im);
+        chunks++;
+      }
+      for (const src of srcs) {
+        moved += src.count;
+        src.count = 0;
+        src.layers.disableAll();
+      }
+    }
+    // ---- STATIC TRANSFORMS. The chunking multiplies the object count in this subtree, and
+    // every one of those objects would otherwise have its world matrix recomposed on every
+    // renderer.render() — measured at 2.9 ms/frame BEFORE the chunks existed. Nothing under
+    // world.group ever moves: the city is built once at fixed coordinates, and the only things
+    // that change afterwards are visibility flags, material uniforms and instance matrices,
+    // none of which are object transforms. So compose the subtree's matrices once and then opt
+    // out. three's updateMatrixWorld() skips recursing into a child whose matrixWorldAutoUpdate
+    // is false unless it is called with force = true, which main.js's setup path does.
+    group.updateMatrixWorld(true);
+    group.matrixWorldAutoUpdate = false;
+    chunkStats = { chunks, moved, cell: CHUNK };
+  }
+
   let night = false;
   const _fogC = new THREE.Color();
   const _warm = new THREE.Color();
@@ -2886,6 +3036,8 @@ export function createWorld(scene, { rng, roadKit }) {
     buildingMats, roadKit, atmo, towers,
     // The STATIONARY vehicle population, split by mechanism. traffic.js owns the moving one.
     carKit, parkedCounts: parkCounts,
+    /** What the spatial chunking pass did, so a harness can assert it actually ran. */
+    chunkStats,
 
     setNight(v) {
       night = !!v;

@@ -1866,9 +1866,26 @@ export function createCar(rng, { paint = 0xd8420f } = {}) {
   // roughness-0.03 clearcoat lobe lands on a mip that still has detail in it rather than
   // on the top of a short, already-blurred chain. Half-float throughout — an LDR cube
   // would clip the sun and quantise the sky gradient the flank is reflecting.
-  const PROBE_RES = 512;
-  const PROBE_EVERY = 6;      // frames between refreshes
-  const PROBE_MOVE = 5.0;     // ...or sooner, once the car has driven this far (metres)
+  const PROBE_RES = 256;
+  // ---- HOW OFTEN THE PROBE MAY RE-BAKE. THIS IS THE SINGLE MOST EXPENSIVE THING IN THE FRAME.
+  // One re-bake is six 512-px scene renders plus a PMREM chain: measured at +828 draw calls,
+  // +15.4 M triangles and 138-236 ms of GPU time (verdicts/wave-s/perf-profile.md, section 3).
+  // The old pair `PROBE_EVERY 6 frames` / `PROBE_MOVE 5.0 m` fired on the DISTANCE trigger, not
+  // the frame one: at highway speed 5 m is 66 ms of travel, so the probe re-baked on 33-37% of
+  // frames, ~7 times a second, forever. It also fed back on itself — a slower frame covers more
+  // ground, which triggers the next bake sooner — which is what made the frame time bimodal
+  // (743 calls on a normal frame, 1594 on every third) and the p99 five times the p50.
+  //
+  // So the trigger is now floor-first: a minimum interval that nothing can undercut, and only
+  // then the distance test. What the reflection loses by waiting is small and bounded, because
+  // this cube is consumed exclusively as a PMREM roughness chain on curved painted panels — the
+  // detail that survives to the mip a 0.06-roughness lobe samples is the sky gradient, the
+  // horizon split and the road's brightness, none of which change materially over 40 m of the
+  // same street. What it gains is the whole 11 ms/frame mean.
+  const PROBE_MIN_FRAMES = 60; // hard floor: never re-bake sooner than this many ticks
+  const PROBE_MOVE = 60.0;     // ...then re-bake once the car has moved this far (metres)
+  const PROBE_MAX_FRAMES = 180; // ...and always by here, so a PARKED car still tracks a time-of-day
+                               // change or a light coming on rather than holding a stale sky
   const PROBE_Y = 0.95;       // eye height of the probe ≈ the shoulder-crease line
 
   // Local reflection box. group.position.y sits on the wheel contact plane, so the
@@ -1881,6 +1898,8 @@ export function createCar(rng, { paint = 0xd8420f } = {}) {
 
   let probe = null;
   let probeAge = 1e9;
+  // -1 = no bake in flight. 0..5 = the next cube face to render. 6 = faces done, PMREM next.
+  let probeFace = -1;
   const probeAt = new THREE.Vector3(NaN, NaN, NaN);
   const _pw = new THREE.Vector3();
 
@@ -1908,11 +1927,9 @@ export function createCar(rng, { paint = 0xd8420f } = {}) {
     return true;
   }
 
-  /** Re-render the six faces with the car itself hidden, then PMREM into the live envMap. */
-  function refreshEnv() {
-    if (!probe) return;
-    const { renderer, scene, cubeCam, cubeRT, pmrem } = probe;
-
+  /** Aim the cube camera and the parallax box at the car's current position. */
+  function aimProbe() {
+    const { cubeCam } = probe;
     group.updateWorldMatrix(true, false);
     group.getWorldPosition(_pw);
     cubeCam.position.set(_pw.x, _pw.y + PROBE_Y, _pw.z);
@@ -1922,37 +1939,103 @@ export function createCar(rng, { paint = 0xd8420f } = {}) {
     ENV_BOX.uProbePos.value.copy(cubeCam.position);
     ENV_BOX.uBoxCenter.value.set(_pw.x, _pw.y + BOX_H * 0.5, _pw.z);
     ENV_BOX.uBoxHalf.value.set(BOX_R, BOX_H * 0.5, BOX_R);
+  }
 
+  /**
+   * Render ONE face of the cube, or -1 for "all six".
+   *
+   * THIS IS WHY IT IS PER FACE. A whole re-bake is six scene renders and it lands inside a
+   * single rAF callback, so however cheap the average frame gets, the frame a bake falls on
+   * is ~6x an ordinary one — measured as a p99 of 100 ms against a p50 of 19 ms. Splitting the
+   * faces across consecutive frames does not reduce the total GPU work by one microsecond; it
+   * turns one 100 ms hitch into six ~14 ms ones, and the p99 is a separate deliverable from the
+   * p50 precisely because a player feels the hitch and not the average.
+   *
+   * All six faces are still rendered from the position captured when the bake STARTED (aimProbe
+   * runs once, at the start), so the cube stays internally consistent even though the car has
+   * moved a few metres by the time face 5 lands. A cube assembled from six different positions
+   * would show a seam.
+   *
+   * This inlines what THREE.CubeCamera.update() does per face, because that method has no
+   * per-face entry point. `cubeCam.children` is [+X, -X, +Y, -Y, +Z, -Z] in three's own order.
+   */
+  function renderProbeFace(face) {
+    const { renderer, scene, cubeCam, cubeRT } = probe;
     // The car must not reflect itself, and the shadow map is already current from the
     // main pass — re-deriving it six times per refresh is the one thing that would make
     // this expensive.
     const wasVisible = group.visible;
     const wasAuto = renderer.shadowMap.autoUpdate;
+    const prevRT = renderer.getRenderTarget();
+    const prevFace = renderer.getActiveCubeFace();
+    const prevMip = renderer.getActiveMipmapLevel();
     group.visible = false;
     renderer.shadowMap.autoUpdate = false;
     try {
-      cubeCam.update(renderer, scene);
+      if (face < 0) {
+        cubeCam.update(renderer, scene);
+      } else {
+        if (cubeCam.coordinateSystem !== renderer.coordinateSystem) {
+          cubeCam.coordinateSystem = renderer.coordinateSystem;
+          cubeCam.updateCoordinateSystem();
+        }
+        renderer.setRenderTarget(cubeRT, face, 0);
+        renderer.render(scene, cubeCam.children[face]);
+      }
     } finally {
+      renderer.setRenderTarget(prevRT, prevFace, prevMip);
       group.visible = wasVisible;
       renderer.shadowMap.autoUpdate = wasAuto;
     }
+  }
 
+  /** Prefilter the finished cube into the live envMap and close the bake out. */
+  function finishProbe() {
+    const { pmrem, cubeRT } = probe;
     // fromCubemap reuses the target we hand it, so this allocates exactly once.
     const rt = pmrem.fromCubemap(cubeRT.texture, probe.envRT);
     probe.envRT = rt;
     bindEnvMap(rt.texture);
-
     probeAge = 0;
+    probeFace = -1;
     probeAt.copy(_pw);
+  }
+
+  /**
+   * Re-render all six faces and prefilter, all in this call.
+   *
+   * Kept synchronous for the two callers that need the probe to be exactly current on the very
+   * next render and cannot wait seven frames: the first bake at boot (nothing should ever draw
+   * with no envMap at all) and main.js's deterministic screenshot path.
+   */
+  function refreshEnv() {
+    if (!probe) return;
+    aimProbe();
+    renderProbeFace(-1);
+    finishProbe();
   }
 
   function serviceEnv() {
     if (!probe && !attachEnv(typeof window !== 'undefined' ? window.__game : null)) return;
     group.updateWorldMatrix(true, false);
     group.getWorldPosition(_pw);
+
+    // A bake already in flight: one face per tick, then the PMREM chain on its own tick.
+    if (probeFace >= 0) {
+      if (probeFace < 6) renderProbeFace(probeFace++);
+      else finishProbe();
+      return;
+    }
+
     const moved = Number.isFinite(probeAt.x) ? _pw.distanceTo(probeAt) : Infinity;
-    if (probeAge >= PROBE_EVERY || moved > PROBE_MOVE) refreshEnv();
-    else probeAge++;
+    // Floor first, then either trigger. The first bake still happens on tick 1 because
+    // probeAge starts at 1e9, so nothing is ever reflection-less at boot.
+    const due = probeAge >= PROBE_MIN_FRAMES
+      && (moved > PROBE_MOVE || probeAge >= PROBE_MAX_FRAMES);
+    if (!due) { probeAge++; return; }
+    if (!probe.envRT) { refreshEnv(); return; }  // first bake: synchronous, see refreshEnv
+    aimProbe();
+    probeFace = 0;
   }
 
   function disposeEnv() {
@@ -1962,6 +2045,7 @@ export function createCar(rng, { paint = 0xd8420f } = {}) {
     probe.cubeRT.dispose();
     probe.pmrem.dispose();
     probe = null;
+    probeFace = -1;
     probeAt.set(NaN, NaN, NaN);
   }
 
