@@ -760,6 +760,30 @@ float gBand = 0.0;
 // lensing. The lens now comes from 'lensH'/'lensC'/'lensG' in MAP_FRAG: the same tile,
 // band-passed to 3-9 screen px by a mip difference, so it can bulge the film without
 // being able to create pixel-scale grain. See the CHIP LENS note in REFL_FRAG.
+//
+// r15 sparse-facet constants. See the SPARSE FACET POPULATION note in REFL_FRAG for FLK_*
+// and the DENSE-FLOOR THINNER note beside 'lensC' in MAP_FRAG for SPARSE_*. The two are a
+// PAIR and are tuned jointly; neither is meaningful alone and the verdict says why.
+//
+// sparseShape() is, as it ships, a compress-below-the-knee map with a hard ceiling, and NOT
+// the power law it looks like. Measured, not assumed: PWR 2.30 and PWR 2.55 return figures
+// identical to three digits at fixed G, which can only happen if min() is taking CAP for
+// essentially the whole population - i.e. |v| / KN exceeds CAP^(1/PWR) almost everywhere, so
+// the carrier's own sigma is well above SPARSE_KN and the exponent is inert above ~2.3. What
+// the map therefore does is: leave the small-|v| population squashed toward zero, and clip
+// everything else to KN * G * CAP = 0.228. Do not re-tune PWR expecting it to do work, and do
+// not describe this as a power expansion; the r13 draft of this block did, and it was wrong.
+#define FLK_A    0.580
+#define FLK_B    0.700
+#define FLK_AMP  0.240
+#define SPARSE_KN  0.020
+#define SPARSE_PWR 2.30
+#define SPARSE_CAP 6.00
+#define SPARSE_G   1.90
+float sparseShape( float v ) {
+  float a = abs( v ) / SPARSE_KN;
+  return sign( v ) * SPARSE_KN * SPARSE_G * min( pow( a, SPARSE_PWR ), SPARSE_CAP );
+}
 `;
 
 // map_fragment: parallax-march the aggregate, then fold it into albedo and derive
@@ -942,7 +966,20 @@ vec4  dL1 = texture2D( uDetailMap, dUv0, 3.170 );
 // wave-M brief named it as. The gate is still correct - it removes a screen-locked term
 // - it is just worth ~1.5 of d1's 21, not ~12.
 float lensH = ( dL0.r - dL1.r ) * 3.4 * lensRes;   // relief:  film bulge that bends the mirror
-float lensC = ( dL0.b - dL1.b ) * 3.4 * lensRes;   // cavity:  open-to-the-sky vs shadowed
+// DENSE-FLOOR THINNER (r15). lensC is the carrier of the ambient chip floor ('chipAmb' in
+// REFL_FRAG), and that floor is where the near-field residual's DENSE, symmetric bulk lives:
+// measured one channel at a time at (PWR 2.30, G 1.50), passing lensC through the compressive
+// map below moves the d5 top-5% energy share 33.4% -> 48.4% while the same map on lensH moves
+// it 33.4% -> 33.3%, i.e. nothing, at any (PWR, G) tried; the roughness path was separately
+// kill-controlled to near-zero authority over the same statistic.
+// Alone this is NOT a fix and must not be shipped alone: it buys share by DELETING energy
+// (d5 5x5 rms 11.20 -> 7.57 against the T3 band 10.0-13.5), and at gain zero - the floor
+// removed outright - the share reads 58.5%, PAST the reference. A statistic that scores best
+// with the feature deleted is not measuring the feature. It ships only as the other half of a
+// pair: thin the dense floor here, add a genuinely sparse population at FLK_* in REFL_FRAG,
+// and the two amplitude effects cancel while the two share effects add. That is what the
+// plate is - the same total energy, redistributed - and it is why neither half is tuned alone.
+float lensC = sparseShape( ( dL0.b - dL1.b ) * 3.4 ) * lensRes;   // cavity:  open-to-the-sky vs shadowed
 float lensG = ( dL0.g - dL1.g ) * 3.4 * lensRes;   // roughness: stone face vs binder
 
 vec4  surf = texture2D( roughnessMap, vRoughnessMapUv );
@@ -1425,7 +1462,7 @@ const REFL_FRAG = /* glsl */`
     // film sits over the cavities, so on a wet road the mirror is handed back most of
     // it and the cavity term does its work in the shading specular (AO_FRAG) where it
     // reads as glint breakup instead of as ripple.
-    float k = 0.25 * reflGate * fres * mix( 0.32, 1.0, reflW ) * ( 0.25 + 0.75 * gloss )
+    float k = reflGate * fres * mix( 0.32, 1.0, reflW ) * ( 0.25 + 0.75 * gloss )
       * chop * mix( microAO, 1.0, max( water * depthN, uWet * 0.70 ) );
     // CHIP LENS, RADIANCE HALF. The other half of what the UV warp used to do, done as a
     // gain on the mirror rather than as a displacement of it. Physically it is the same
@@ -1474,6 +1511,46 @@ const REFL_FRAG = /* glsl */`
   float chipFar = 1.0 - smoothstep( 12.0, 50.0, vDist );
   float chipAmb = lensC * 2.0 * uChipAmb * uWet * detAmt * chipFar;
   outgoingLight += chipAmb * vec3( 0.84, 0.94, 1.12 );
+  // SPARSE FACET POPULATION (r15). Everything above, chipAmb included, is an AFFINE map of a
+  // unimodal noise field, so the specular residual it produces is symmetric and dense. The
+  // reference plate's is sparse: on wet-night-asphalt-01 at 1920, HALF the high-frequency
+  // energy in the near road lives in 5% of the pixels (top-5% share 50.7% at d5 / 46.6% at
+  // d4, p99/p50 of the 5x5 residual 7.88 / 7.52) against ours at 33.4% / 33.0% and 4.63 /
+  // 4.60, with 16.4% (white noise) and 27.8% (3x3-blurred noise) as the dense controls.
+  //
+  // Reshaping an existing channel CANNOT fix that, and this is measured, not argued: a signed
+  // power expansion on lensC reaches 48.6% at d5 but only by deleting the dense floor, and it
+  // takes the wave-P amplitude ladder with it (d5 5x5 rms 11.20 -> 7.39, T3 band 10.0-13.5).
+  // The limit case is the proof: with lensC's gain at ZERO the share reads 58.5%, i.e. PAST
+  // the reference, at rms 6.68. A statistic that scores best with the feature deleted is not
+  // measuring the feature.
+  //
+  // So the population has to be ADDED, and it has to be sparse in its own right rather than
+  // the tail of something dense. It is the product of two DECORRELATED upper tails of the
+  // band-limited mip sample dL0 - height and cavity - so a facet has to be both a proud crown
+  // and open to the sky; the product of two ~15% tails of weakly correlated fields is a ~2%
+  // population, which is the sparsity the plate has. Sampled from dL0 (LOD 1.585) and not
+  // from dA, so the mask inherits the same >= 3 px band-limit as the lens and cannot be
+  // per-pixel salt - the 960/1920 persistence guard is what checks it, not this comment.
+  //
+  // This is a ONE-SIDED add, which the notes above rightly warn about: a one-sided add on a
+  // DENSE field is the "pale grit crust" inversion this file has failed into twice. What makes
+  // it admissible is measured rather than argued, and it is the crust test: at the shipped
+  // constants the d5 region mean moves 96.1 -> 96.9 and d4 90.8 -> 91.5, i.e. +0.8 and +0.7
+  // code values, while the top of the residual distribution moves a great deal (d5 p99/p50
+  // 4.63 -> 7.91). A crust raises the mean and the floor together; a sparkle raises the top
+  // and leaves the mean where it was. The population fraction itself is NOT measured here, so
+  // do not quote one: the mean shift is the bound. If a later wave finds the mean moving more
+  // than ~1.5 codes, tighten FLK_A / FLK_B, not FLK_AMP.
+  //
+  // KNOWN RESIDUAL, and it is the honest next gap: this population is one-sided BRIGHT, and
+  // the plate's is not. Our d5 residual skew is +1.40 at the shipped constants (A leg +0.30)
+  // against the reference's +0.06 - the plate reaches its 50.7% share with a SYMMETRIC
+  // high-contrast field (bright specks AND dark voids, i.e. ripple), not with additive
+  // sparkle. Matching share and p99/p50 while the skew is 23x the plate's means the shape of
+  // the sparse population is still wrong even though its concentration is now right.
+  float flk = smoothstep( FLK_A, 1.0, dL0.r ) * smoothstep( FLK_B, 1.0, dL0.b );
+  outgoingLight += flk * FLK_AMP * uWet * detAmt * chipFar * vec3( 0.90, 0.96, 1.10 );
 }
 `;
 
