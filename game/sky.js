@@ -830,7 +830,26 @@ void main() {
     // neither is a hand-picked texel. At the measurement column (u 0.1132) and the valley row
     // (l 0.25 rad) the tap becomes (u 0.048, 4.49 deg) = [0.5249, 0.4663, 0.2416], B/R 0.460:
     // 2.53x less red, blue held to within 2%, and the arch's own leverage on it halves
-    // (archEl 0.651 -> 0.325). uCloudMix.z (clouds.sunGain) is unchanged — see :1042.
+    // (archEl 0.651 -> 0.325). uCloudMix.z (clouds.sunGain) is unchanged — see :1111
+    // (NOT :1042; that address was copied forward from wave Q and points at comment prose in
+    // this tree. Corrected wave R, re-greped after the final save.)
+    //
+    // *** WAVE R: THIS LINE WAS WRITTEN BY A KILLED ROUND-13 AGENT AND WAS NEVER MEASURED.
+    // It is now measured, in a paired A/B with the pre-edit lutAt(0.02, 0.030) reconstructed
+    // byte-exactly (leg A reproduced every wave-Q shipped figure to the digit, which is what
+    // proves this line was round 13's ONLY code change in this file). Peer md5s held across
+    // both legs. 1920x1080, x 0.55-0.65, _px.mjs 6b0e73db, satPx:
+    //   valley y0.16-0.20  satPx 0.137 -> 0.225   (clear-sky ceiling 0.263, target band 0.19-0.27)
+    //   mid    y0.24-0.28  satPx 0.137 -> 0.168   (hold: must not fall below 0.133)  HELD
+    //   s      y0.46-0.48  rgb 210.3,185.1,105.6 -> 210.3,185.1,105.6   HELD to 0.0/255
+    // So it closes 68% of the cloud veil's chroma penalty, not the ~50% that was asked for.
+    // THE COST, and it is real: it takes R OUT of the same rows. v2 y0.18-0.22 99.4 -> 88.9
+    // (-10.5/255), mid 100.5 -> 95.2, valley 101.8 -> 88.7. Those rows were already ~1.6x too
+    // DARK against the elevation-registered reference, so this trades luma deficit for chroma.
+    // Kept because the blind-crop failure this piece is judged on is "the wisps read as a dirty
+    // grey-brown over a teal sky", which is chroma, and because the luma deficit is a GRADIENT
+    // SHAPE problem no flat gain can fix — see the skyGain refusal in
+    // verdicts/wave-r/sky-lighting.md. ***
     vec3 warmL = lutAt(mix(u, 0.02, 0.70), mix(l, 0.030, 0.78)) * (uCloudMix.z * sunReach);
     // Clamped because the HG peak is unbounded as g -> 1 and one pixel carrying 40x
     // the horizon radiance is a fireball in the bloom pyramid, not a silver lining.
@@ -1021,6 +1040,30 @@ export const PRESETS = {
     msBeam: 3.2,
     camAltitude: 0.03, groundAlbedo: 0.09,
     discSize: 0.0, discIntensity: 0.0, discColor: 0xffd2a4,
+    // *** skyGain STAYS AT 0.55. WAVE R WAS BRIEFED TO SPEND IT AND MEASURED THAT IT IS THE
+    // WRONG LEVER. Do not re-try it as a flat gain; the proof is one render, reproduced below.
+    // The brief's case was "the dome between 8 and 21 deg is 1.8-2.2x too low, skyGain is the
+    // only lever that moves the ladder". The first half is true only at the BOTTOM of that
+    // range. Registered in elevation against reference/dusk-highway-chase-01 (see the T0
+    // section of verdicts/wave-r/sky-lighting.md; ref horizon y 0.455 +/- 0.020, NOT the
+    // 0.593-0.602 wave Q published, and OUR horizon is y 0.4923 not 0.5077 — wave Q inverted
+    // the sign of its own pitch term), our ramp reads, as ours/ref at matched elevation:
+    //     20.9 deg  1.10x     18.3 deg  0.90x     15.6 deg  0.73x
+    //     13.0 deg  0.62x     10.3 deg  0.55x      7.7 deg  0.61x
+    // That is not a level error, it is a SHAPE error: we hold 21 deg and 18 deg correctly and
+    // lose the ramp below. Our span 21 -> 7.7 deg is 62.3 -> 135.3 = 2.17x; the registered
+    // reference's is 55.6 -> 220 = 3.96x. We have HALF the vertical gradient.
+    // Measured, skyGain 0.55 -> 1.00 on this tree (shots/_r-sg1.00.png): the 13.0 deg row goes
+    // 88.9 -> 132.3 R (0.62x -> 0.92x, a pass) but the 20.9 deg row goes 61.3 -> 96.7 R, i.e.
+    // 1.10x -> 1.74x, a 74% OVERSHOOT of a row that already passed, while 10.3 deg is still
+    // only 0.80x. A flat multiplier cannot close a shape deficit: it breaks two passing rows to
+    // half-fix two failing ones. It also costs chroma everywhere (valley satPx 0.225 -> 0.172,
+    // out of its 0.19-0.27 band) because the ACES shoulder desaturates as it brightens.
+    // AND IT IS NOT THE CLOUD DECK EITHER, proven with the same instrument: _skyprobe
+    // --noclouds c (all three decks at 0, null leg byte-identical to shot.mjs) leaves the span
+    // at 62.3 -> 137.4 = 2.21x against the needed 3.96x. The shape lives in the ATMOSPHERE
+    // BAKE (ozone / rayleigh / turbidity / msW / the aerial terminal), not in skyGain and not
+    // in the decks. That is the next round's gap. ***
     stars: 0, skyGain: 0.55, night: false,
     ground: 0x0f1217,
 
