@@ -26,6 +26,7 @@ import { createHud } from './hud.js';
 import { createAudio } from './audio.js';
 import { createTraffic } from './traffic.js';
 import { createMenu } from './menu.js';
+import { createMusic } from './music.js';
 import { getScene } from './scenes.js';
 
 const FIXED_DT = 1 / 60;
@@ -39,6 +40,17 @@ function parseHash() {
     out[decodeURIComponent(k)] = v === undefined ? true : decodeURIComponent(v);
   }
   return out;
+}
+
+// The soundtrack is a MODULE-LEVEL singleton, deliberately outside boot(). The user's
+// requirement is that music persists across a scene change rather than restarting, and a
+// scene change re-runs boot(); anything constructed inside it would be torn down and the
+// track would start over from zero. Constructed lazily so `tools/shot.mjs` (which boots
+// this module) pays nothing for it.
+let _music = null;
+function getMusic() {
+  if (!_music) _music = createMusic();
+  return _music;
 }
 
 export async function boot() {
@@ -159,6 +171,7 @@ export async function boot() {
   const crash = createCrash(scene, car, physics, damage);
   const hud = createHud(document.getElementById('hud'), { layout: world.LAYOUT });
   const audio = createAudio({ enabled: !shotMode });
+  const music = shotMode ? createMusic() : getMusic();
   const traffic = createTraffic(scene, {
     rng: makeRng(0x7AFF1C), layout: world.LAYOUT, blocks: world.blocks, roadKit,
   });
@@ -251,7 +264,7 @@ export async function boot() {
   const cfg = getScene(sceneId);
   const ctx = {
     THREE, renderer, scene, camera, sky, roadKit, world, car, carRoot,
-    physics, camRig, boost: boostFx, damage, crash, hud, audio, traffic, bloom, composer, ssao,
+    physics, camRig, boost: boostFx, damage, crash, hud, audio, music, traffic, bloom, composer, ssao,
     outputPass, toneMode, bloomMode,
     setResScale,
     getResScale: () => resScale,
@@ -383,16 +396,22 @@ export async function boot() {
     sky.update(sdt, s.pos);
     reassertKeyDir(s.pos);
     camRig.update(dt, s);
+    // SPEED SOURCE: `s.ground` (= |v|), NOT `s.speed` (the longitudinal component).
+    // wave-s/handling-critic measured the difference live at 61 deg of slip: real ground
+    // speed 178 km/h against `s.speed` 86 km/h, so the speedo and the engine note both read
+    // 52% LOW during the exact moment the player is doing something interesting. A
+    // speedometer shows |v|; so does an engine whose wheels are being dragged sideways.
+    const gspd = s.ground !== undefined ? s.ground : Math.abs(s.speed);
     hud.update(dt, {
-      speed: s.speed, boost: s.boost, boosting: s.boosting,
-      gear: gearOf(s.speed), pos: s.pos, yaw: s.yaw, crashed: s.crashed,
+      speed: gspd, boost: s.boost, boosting: s.boosting,
+      gear: gearOf(gspd), pos: s.pos, yaw: s.yaw, crashed: s.crashed,
     });
     audio.update(dt, {
-      rpm01: rpmOf(s.speed), load: clamp(0.25 + s.accelG * 0.09, 0, 1),
+      rpm01: rpmOf(gspd), load: clamp(0.25 + s.accelG * 0.09, 0, 1),
       throttle: clamp(0.25 + s.accelG * 0.09, 0, 1),
       brake: clamp(-s.accelG * 0.10, 0, 1),
-      speed: Math.abs(s.speed), boost: s.boostBlend, slip: Math.abs(s.slip),
-      gear: gearOf(s.speed), boosting: s.boosting, airborne: s.airborne,
+      speed: gspd, boost: s.boostBlend, slip: Math.abs(s.slip),
+      gear: gearOf(gspd), boosting: s.boosting, airborne: s.airborne,
       wet: cfg.wet || 0,
       listener: {
         pos: camera.position,
@@ -551,6 +570,11 @@ export async function boot() {
   const frameStats = {
     reset() { ftN = 0; ftHead = 0; ftLongTotal = 0; },
     push(ms) {
+      // ftLongTotal must count over the RING'S CONTENTS, not over all time since reset:
+      // `stats()` divides it by `a.length`, which saturates at FT_CAP. wave-s/perf-critic
+      // hit this deliberately and got over16_7pct 4.13 on a window whose true figure was
+      // far higher. So decrement for the sample this push evicts.
+      if (ftN === FT_CAP && ftBuf[ftHead] > 16.7) ftLongTotal--;
       ftBuf[ftHead] = ms; ftHead = (ftHead + 1) % FT_CAP;
       if (ftN < FT_CAP) ftN++;
       if (ms > 16.7) ftLongTotal++;
@@ -641,6 +665,10 @@ export async function boot() {
       // place to unlock WebAudio. Every other path (keydown, pointerdown anywhere) was a
       // guess about what the player would do first.
       audio.start();
+      // Same gesture unlocks the soundtrack. Music owns its own AudioContext and its own
+      // gain straight to destination (see music.js's contract header), so it is unlocked
+      // beside audio rather than through it, and an `audio.stop()` cannot take it down.
+      music.unlock();
       physics.reset(physics.state.pos, physics.state.yaw, 0);
       traffic.reset(physics.state.pos);
       frameStats.reset();
