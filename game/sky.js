@@ -1525,11 +1525,35 @@ export function createSky(scene, renderer) {
 
   const skyMat = new THREE.ShaderMaterial({
     uniforms, vertexShader: SKY_VERT, fragmentShader: SKY_FRAG,
-    side: THREE.BackSide, depthWrite: false, depthTest: false, toneMapped: false, fog: false,
+    // depthTest TRUE and drawn LAST in the opaque list, which together make the sky cost only the
+    // pixels the player can actually see. See the note on skyMesh.renderOrder below.
+    side: THREE.BackSide, depthWrite: false, depthTest: true, toneMapped: false, fog: false,
   });
   const skyMesh = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), skyMat);
   skyMesh.frustumCulled = false;
-  skyMesh.renderOrder = -1000;
+  // THE SKY WAS SHADING EVERY PIXEL OF EVERY FRAME AND THEN BEING PAINTED OVER.
+  //
+  // BEFORE: `depthTest: false` + `renderOrder = -1000`, i.e. the sky ran its full procedural
+  // shader (LUT tap, stars, three cloud layers, halo) over all 921,600 pixels FIRST, and the
+  // city then drew buildings on top of nearly all of them. Measured cost of the sky mesh
+  // (`tools/_perfr3.mjs --mode drive --kill sky-off`, 1280x720 ratio 1 dpr 1, 2 runs each):
+  // city -1.30 ms, boost -1.60, cruise -0.90, night-wet -0.40.
+  //
+  // AFTER: the vertex shader already emits `gl_Position = p.xyww` (SKY_VERT above), so every sky
+  // fragment sits at NDC z = 1.0 — exactly the far plane. With `depthTest: true` and the sky drawn
+  // after the opaque geometry, the depth test rejects it wherever anything has been drawn and
+  // passes it wherever the buffer is still at its cleared 1.0. The visible result is identical by
+  // construction; the invisible fragments are simply not shaded.
+  //
+  // WHY THIS IS SAFE TO REORDER, checked rather than assumed. Reordering only matters for
+  // something that was relying on being painted OVER the sky within the opaque pass. I enumerated
+  // every mesh in the live scene with `material.transparent !== true && material.depthWrite ===
+  // false` (the only combination that can be in the opaque list without owning its depth) at
+  // dusk/dry and again at night/wet with boost and a crash both live: **the list contains exactly
+  // one entry, this mesh.** Everything else additive or blended in this build is
+  // `transparent: true`, so it is in three's TRANSPARENT list, which is drawn after the whole
+  // opaque list either way and therefore keeps its old relationship to the sky.
+  skyMesh.renderOrder = 1000;
   scene.add(skyMesh);
 
   const sun = new THREE.DirectionalLight(0xffffff, 1);
@@ -1579,6 +1603,30 @@ export function createSky(scene, renderer) {
     apply(name) {
       const p = PRESETS[name] || PRESETS[PRESET_ALIAS[name]] || PRESETS.dusk;
       api.preset = p; api.presetName = name;
+
+      // ---- WHERE IN THE FRAME THE SKY IS DRAWN, and it is a per-preset MEASUREMENT ----------
+      // See the long note on `skyMesh.renderOrder`. Drawing the dome last with a depth test
+      // shades only the visible sky pixels, which is a clear win when the dome's shader is
+      // expensive — but it also gives up being the frame's first full-screen draw, and on a
+      // tiler that is not free. Paired A/B in ONE page (`--kill sky-old` reverts exactly these
+      // two lines at runtime), 3 runs each, 1280x720 ratio 1 dpr 1 resScale 1, p50:
+      //
+      //             sky drawn FIRST   sky drawn LAST    total cost of the dome (--kill sky-off)
+      //   city         21.70            20.70  -1.00        1.30
+      //   boost        23.20            22.50  -0.70        1.60
+      //   cruise       16.00            15.90  -0.10        0.90
+      //   night-wet    33.30            33.80  +0.50        0.40
+      //
+      // night-wet is the one that goes the other way, and the reason is in the last column: the
+      // night dome is a cheap shader (stars and a dark gradient, no lit cloud layers) and it is
+      // almost entirely occluded by the city anyway, so there are only 0.40 ms on the table and
+      // the reordering costs more than that. So the choice is made per preset from the
+      // measurement rather than applied blindly, and `night` keeps the old order.
+      // This changes NO pixels either way: the dome is at NDC z = 1.0, so the depth test can
+      // only ever reject fragments that something else has already covered.
+      const skyLate = !p.night;
+      skyMesh.renderOrder = skyLate ? 1000 : -1000;
+      if (skyMat.depthTest !== skyLate) { skyMat.depthTest = skyLate; skyMat.needsUpdate = true; }
 
       // ---- atmosphere ------------------------------------------------------
       bakeLut(p);

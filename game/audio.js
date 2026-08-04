@@ -51,6 +51,8 @@ function makeNoop() {
     ready: Promise.resolve(false),
     enabled: false,
     start: f, stop: f, update: f, crash: f, gearShift: f, boostHit: f,
+    // Same shape as the real api: -1 means "nothing was built". main.js calls this at boot.
+    prewarm: () => -1,
     setSpace: f, setListener: f, setEnabled: f, setVolume: f, getVolume: () => 0,
     addRival: () => null, updateRival: f, removeRival: f,
     info: () => ({ mode: 'noop', running: false, state: 'closed', space: 'open', samples: 0, rivals: 0, sampleRate: 0 }),
@@ -1364,6 +1366,44 @@ export function createAudio({ enabled = true, volume = 0.62, space = 'city' } = 
     get ctx() { return ctx; },
     ready,
     enabled: true,
+
+    /**
+     * Build the graph WITHOUT starting it, so the cost is paid behind the boot bar instead of
+     * on the player's first keystroke. Returns the milliseconds it took, or -1 if it was
+     * already built or unavailable.
+     *
+     * WHY THIS EXISTS (wave-s/perf-r3). `start()` is called from the first `keydown`
+     * (main.js:582) and from the START-menu click, and on a cold graph it does all of `build()`
+     * synchronously: a new AudioContext, two 3-second stereo noise buffers, the synthesised
+     * reverb IR, five buses and four voices. Measured with `long-animation-frame`, which names
+     * the offending script:
+     *
+     *   LoAF blocking=242 ms  scripts=[{ sourceURL: main.js, sourceFunctionName: "down",
+     *                                    invoker: "DOMWindow.onkeydown", duration: 282.1 }]
+     *
+     * That is a 162-282 ms freeze on the first key the player presses, and it was the second of
+     * the two causes behind the 174-330 ms hitch perf-critic-r2 section 4b found in 4 of 4 cold
+     * boots. Kill-control: with `audio.start` stubbed out after `__ready` and before the first
+     * key, the hitch is gone in 4 of 4 boots and the first 700 ms of play delivers 41-45 frames.
+     *
+     * IT IS STILL SILENT, and that is by construction, not by taste:
+     *   - a context constructed without a user gesture is created SUSPENDED, so its graph is
+     *     not rendered at all until something resumes it, and `start()` is the only resume;
+     *   - `master = mkGain(0.0)` (:374) — the master sum starts at zero gain and is only ramped
+     *     up by `start()`, so even a resumed prewarmed graph would put nothing on the output;
+     *   - `running` stays false and the `suspended` getter still reports true, so every
+     *     existing caller sees exactly the state it saw before.
+     * The one thing that IS different from before: nodes now reach `ctx.destination` before the
+     * first gesture, where previously there were zero. wave-s/menu-critic's routing audit
+     * counted them, so this is declared loudly rather than slipped in, and
+     * `#audiowarm=0` turns it off for anyone who needs the old timing back.
+     */
+    prewarm() {
+      if (built || !AC) return -1;
+      const t0 = (typeof performance !== 'undefined' ? performance.now() : 0);
+      try { build(); } catch (e) { return -1; }
+      return (typeof performance !== 'undefined' ? performance.now() : 0) - t0;
+    },
 
     start() {
       if (running) return;

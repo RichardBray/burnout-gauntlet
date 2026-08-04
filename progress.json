@@ -1,5 +1,5 @@
 {
-  "generated": "2026-08-04T01:14:58.117Z",
+  "generated": "2026-08-04T03:35:06.299Z",
   "waves": [
     "wave-k",
     "wave-l",
@@ -18,47 +18,39 @@
       "goal": "holds 60 fps at 1280x720 real pixels",
       "rounds": 2,
       "verdict": "PARTIAL",
-      "waves": "s* s s* s",
-      "building": false,
+      "waves": "s* s s* s s*",
+      "building": true,
       "metrics": [
         {
           "k": "night-wet p50",
-          "v": "32.70 ms at 1280x720 ratio 1 dpr 1 (BEFORE 46.70, -30.0%, 3 runs 32.50-33.10)"
+          "v": "27.60 ms (35.8 fps) at 1280x720 @ ratio 1.0, 3 runs 27.30-27.60 - was 33.30 (29.5 fps)"
         },
         {
-          "k": "night-wet p99",
-          "v": "52.90 ms at 1280x720 ratio 1 (BEFORE 86.90, -39%)"
+          "k": "city p50",
+          "v": "20.60 ms (46.0 fps) at 1280x720 @ ratio 1.0 - was 21.90 (44.7 fps) - MISSES, needs 3.9 ms"
         },
         {
-          "k": "cruise p50",
-          "v": "16.10 ms at 1280x720 ratio 1 - inside the bar, but 55.2 frames/s and 33.5% over 16.7 ms"
+          "k": "cruise",
+          "v": "15.90 ms p50 but 57.6 fps delivered and 26.3% of frames over 16.7 at 1280x720 @ ratio 1.0"
         },
         {
           "k": "corner",
-          "v": "13.00 ms p50, 79.5 frames/s, 3.5% over 16.7 ms - the only scenario that SUSTAINS 60 fps"
+          "v": "12.90 ms p50, 80.8 fps, 4.2% over 16.7 at 1280x720 @ ratio 1.0 - PASSES 60 fps sustained"
         },
         {
-          "k": "city / boost p50",
-          "v": "21.80 / 22.10 ms at 1280x720 ratio 1 - MISS, flat vs the true BEFORE"
-        },
-        {
-          "k": "point light cost",
-          "v": "2.2 ms each at night-wet 1280x720 (kill-control: 14 -> 10 lights = -8.9 ms)"
-        },
-        {
-          "k": "reflection gate 2 (the only pixel-moving change)",
-          "v": "0.00 ms p50, 0.00 ms p99, -18 to -31 ms on max"
+          "k": "Retina (dpr 2, same 1280x720 buffer)",
+          "v": "city 25.70 -> 20.70 ms, corner 15.80 -> 12.90, night-wet 37.80 -> 27.70"
         },
         {
           "k": "first 700 ms of play",
-          "v": "HEAD 24-32 frames with a 174-300 ms hitch in 4/4 boots; BEFORE 42-43 in 3/4"
+          "v": "40-43 frames in 12 of 12 cold boots, max 33.9-48.2 ms (was 21-31 with a 171-330 ms hitch in 7 of 7)"
         },
         {
-          "k": "visual regression gate",
-          "v": "no scene worse; wet-night-asphalt maxDiff 87 on the car only, noise floor 3-6"
+          "k": "visual gate",
+          "v": "5 presets identical, daytime-downtown inside its own noise floor, wet-night-asphalt 0.75% of px (night shadow 1024, read at 3x)"
         }
       ],
-      "metricsFrom": "wave s critic"
+      "metricsFrom": "wave s builder"
     },
     {
       "piece": "handling",
@@ -69,35 +61,39 @@
       "building": true,
       "metrics": [
         {
-          "k": "chain drift, 6 beats at 130 km/h, LIVE real keys",
-          "v": "17.7 deg peak / 57% of samples drifting (critic measured 6.2 deg / 0%) FIXED"
+          "k": "worst WRONG-WAY yaw rate on brake+lock, LIVE",
+          "v": "0 deg/s at every speed (was -96 deg/s at 250 km/h; two earlier passes measured heading unsigned and could not see it)"
         },
         {
-          "k": "chain per beat, headless, beats 3-6",
-          "v": "16.2 deg at 69% drifting (pre-repair 6.0-6.6 deg at 0%) FIXED"
+          "k": "chain drift, all 6 beats, LIVE per beat",
+          "v": "15.4/24.2/15.6/15.0/15.5/14.9 deg at 68-98% drifting - all six above the critic's 10 deg bar for the first time (round 2: beat 1 was 9.0 deg)"
         },
         {
-          "k": "of that 16.2 deg, driftFlick supplies 7.5",
-          "v": "with driftFlick 0 the beats are 8.5-8.7 deg, i.e. under the critic's 10 deg bar"
+          "k": "one 200 ms brake tap after 0.5 s load, LIVE",
+          "v": "13.8/13.9/13.3 deg held 2.53/2.54/2.48 s at 100/130/150 km/h (round 2: 9.5/8.5/8.0 deg held 2.05/1.70/1.53 s)"
         },
         {
-          "k": "drift orderings, LIVE",
-          "v": "2.22 / 2.77 / 0.78 s centred / tapped / held (critic 2.22 / 2.72 / 0.80) HELD"
-        },
-        {
-          "k": "turn-in from straight at 130 km/h, LIVE",
-          "v": "S+D sweeps 2.8 deg of heading in 400 ms vs 11.9 deg for W+D - NEW REGRESSION"
+          "k": "three orderings, LIVE, matched 25.5 deg entries",
+          "v": "2.22 s centred / 2.68 s tapped / 0.77 s held - all three HIT on the half-peak AND the fixed 10 deg bar"
         },
         {
           "k": "power-on grip edge at 250 km/h, LIVE",
-          "v": "28-29 deg/s, peak slip 4.9 deg, 0% drifting - STILL NO EDGE, third round"
+          "v": "28-29 deg/s, 4.9 deg slip, 0% drifting - STRUCTURAL LIMIT, not a miss: 11 kill-controls inert, rear demand/capacity is 0.78 on throttle vs 0.86 coasting"
         },
         {
-          "k": "constants verified against git diff",
-          "v": "gripUse 0.95 -> 0.85, driftEnterRatio 1.0 -> 1.4, driftBreakRatio new 1.0, driftTapLinger new 0.35"
+          "k": "regression gates LIVE, all unmoved",
+          "v": "sign invariant PASS both ways, e-brake monotone -27/-70/-93% at 80 km/h, wall 77%/25%, rig leads the car 0/226 samples, handling-measure 40 HIT / 1 MISS, zero console errors"
+        },
+        {
+          "k": "pixel gate",
+          "v": "every _px.mjs statistic IDENTICAL on all 7 presets; raw decode 5-270 of 3686400 channels differ; opened the worst pair and looked - nothing worse"
+        },
+        {
+          "k": "frame time",
+          "v": "NOT MEASURED, not even a smoke test"
         }
       ],
-      "metricsFrom": "wave s critic"
+      "metricsFrom": "wave s builder"
     },
     {
       "piece": "traffic",

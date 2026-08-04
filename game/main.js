@@ -176,7 +176,11 @@ export async function boot() {
   scene.add(boostFx.group);
   const damage = createDamage(car);
   const crash = createCrash(scene, car, physics, damage);
-  const hud = createHud(document.getElementById('hud'), { layout: world.LAYOUT });
+  // maxPixelRatio caps the HUD's own 2-D backing store. Default 1 = one HUD pixel per CSS pixel,
+  // which is what the 3-D buffer is too; `#hudres=2` restores the Retina-supersampled HUD and
+  // costs 4.0 ms/frame in the city. The measurement and the kill-control are in hud.js's resize().
+  const hudRes = Math.max(1, Math.min(3, parseFloat(params.hudres) || 1));
+  const hud = createHud(document.getElementById('hud'), { layout: world.LAYOUT, maxPixelRatio: hudRes });
   const audio = createAudio({ enabled: !shotMode });
   const music = shotMode ? createMusic() : getMusic();
   const traffic = createTraffic(scene, {
@@ -310,6 +314,11 @@ export async function boot() {
     sky.applyBloom(bloom);
     world.applyKeyFill(sky);
     audio.setSpace(cfg.audioSpace || 'city');
+    // The sun's depth map is sized per time of day (see applyShadowRes, in the shadow-cascade
+    // block): 4096 by day, 1024 at night, where the sun is intensity 0.45 below the horizon and
+    // the map was worth 6.00 ms of a 33.30 ms frame. Assigned there, called here, because the
+    // menu changes the time of day at runtime and the boot path is not the only caller any more.
+    if (ctx.applyShadowRes) ctx.applyShadowRes(tod);
   }
   function applyWet(w) {
     curWet = clamp(w, 0, 1);
@@ -497,10 +506,41 @@ export async function boot() {
     // facade relief and the facades read FLAT. This wave may not make a scene look worse, so the
     // frames stay spent and the alternative is one hash parameter with its price printed here.
     // `#shadow=0` disables the sun's shadow map entirely.
-    const shadowPx = params.shadow === undefined
-      ? 4096 : Math.max(0, Math.min(8192, Math.round(parseFloat(params.shadow) || 0)));
-    if (shadowPx === 0) renderer.shadowMap.enabled = false;
-    sh.mapSize.set(Math.max(256, shadowPx), Math.max(256, shadowPx));
+    //
+    // WAVE-S PERF-R3: THE DEFAULT IS NOW PER TIME OF DAY, AND ONLY NIGHT MOVED.
+    // The refusal above is a DAYTIME result: it is about the sun modelling 20-45 cm of facade
+    // relief. At night the sun is `intensity 0.45` at `-7.5 deg` elevation (read off the live
+    // preset) against a hemisphere ambient of 0.40 and a city full of lamps, so its depth map is
+    // paying full price for almost nothing. Measured, 1280x720 ratio 1 dpr 1, night-wet, p50:
+    //
+    //   4096 (was the default)  33.30 ms      shadows off entirely  23.80 ms
+    //   2048                    28.40 (-4.90)
+    //   1024                    27.30 (-6.00)   <- the new night default
+    //
+    // and the whole map is only worth 9.50 ms at night, so 1024 collects two thirds of it.
+    // THE VISUAL GATE FOR IT, because this is a quality decision and not a free one:
+    // `wet-night-asphalt` rendered at 4096 and at 1024 differs by maxDiff 37, mean 0.1700,
+    // 0.75% of pixels over 2/255 (same-build noise floor on this scene: maxDiff 4, mean 0.0001).
+    // I cropped the cell with the largest difference — the right-hand lit facade, x 880-1200,
+    // y 20-220 — and read both at 3x (`shots/r3/crop-4096.png` vs `shots/r3/crop-1024.png`):
+    // same mullion piers, same per-floor cornices, same sill shadows, same lamp falloff. Nothing
+    // reads flatter. Day, dusk and dawn are UNCHANGED at 4096.
+    // `#shadow=<px>` still overrides, and an explicit override wins at every time of day.
+    const shadowParam = params.shadow === undefined
+      ? null : Math.max(0, Math.min(8192, Math.round(parseFloat(params.shadow) || 0)));
+    /** Size the sun's depth map for a time of day. Called again by applyTimeOfDay(). */
+    function applyShadowRes(todName) {
+      const px = shadowParam !== null ? shadowParam : (todName === 'night' ? 1024 : 4096);
+      renderer.shadowMap.enabled = px !== 0;
+      const n = Math.max(256, px);
+      if (sh.mapSize.x === n && sh.mapSize.y === n) return;
+      sh.mapSize.set(n, n);
+      // three allocates the depth target once and caches it on the shadow; it has to be dropped
+      // for a new mapSize to take effect at runtime.
+      if (sh.map) { sh.map.dispose(); sh.map = null; }
+    }
+    ctx.applyShadowRes = applyShadowRes;
+    applyShadowRes(tod);
     // 100 m -> 4.9 cm/texel in the city, still well under the 20 cm facade relief.
     // It cannot go tighter than this: at 42 deg a 40 m block throws a 44 m shadow and
     // a 100 m tower a 110 m one, so a +/-62 m box clipped every long shadow out of the
@@ -677,11 +717,47 @@ export async function boot() {
   ctx.isPaused = () => paused;
   ctx.setPaused = (v) => { paused = !!v; if (paused) for (const k in keys) keys[k] = false; };
 
+  // ---- ONE SHADOW MAP PER FRAME ---------------------------------------------
+  //
+  // THE SUN'S 4096x4096 DEPTH MAP WAS RASTERISED TWO OR THREE TIMES EVERY FRAME.
+  //
+  // `WebGLRenderer.render()` calls `shadowMap.render()` at the top of every invocation, and this
+  // build invokes it more than once per frame with the REAL scene and the real light list:
+  // the colour pass, the SSAO normal/depth prepass, boost's hero-mask depth pass, and — on a wet
+  // frame — road.js's planar reflection. Counted live by wrapping `renderer.shadowMap.render` and
+  // only counting the calls whose `shadowsArray` is non-empty (`tools/_perfr3.mjs` companion probe;
+  // the other ~18 calls per frame are post-processing fullscreen quads with no lights, which are
+  // already no-ops):
+  //
+  //   dusk highway  2.03 real shadow renders/frame   124 shadow draw calls/frame
+  //   city midday   2.00                             260
+  //   night + wet   3.00                             436
+  //
+  // Every one of those rasters the SAME map: `light.shadow.camera` is derived from the light and
+  // the scene, NOT from the camera being rendered, so the second and third passes recompute a
+  // bit-identical depth buffer. This is the same defect class as wave-s/perf-r2's planar
+  // reflection (one collaborator's cost multiplied by the number of outer passes) and the fix is
+  // the same shape: render it once, reuse it for the rest of the frame.
+  //
+  // `shadowMap.autoUpdate = false` makes `shadowMap.render()` an early return unless
+  // `needsUpdate` is set; three clears `needsUpdate` after the first pass that consumes it. So
+  // arming it once per frame here yields exactly one raster per frame. It is set BEFORE the
+  // pass that renders the real scene (`composer.passes[0]` is the RenderPass) so the map is
+  // always fresh for the frame it is used in, and it is armed on the paused path too.
+  //
+  // LOSSLESS BY CONSTRUCTION, not by taste: the map's content is a function of the light and the
+  // scene only, and neither changes between the passes of a single frame.
+  // The deterministic screenshot path is not touched at all — it returns at :556, above this —
+  // so `tools/shot.mjs` still renders with three's default per-render shadow update.
+  renderer.shadowMap.autoUpdate = false;
+  renderer.shadowMap.needsUpdate = true;
+
   let last = performance.now();
   function frame(now) {
     const dtRaw = (now - last) / 1000;
     last = now;
     frameStats.push(dtRaw * 1000);
+    renderer.shadowMap.needsUpdate = true;
     if (paused) { composer.render(); requestAnimationFrame(frame); return; }
     const dt = clamp(dtRaw, 0, 0.05);
 
@@ -809,6 +885,74 @@ export async function boot() {
   });
   ctx.menu = menu;
   traffic.reset(physics.state.pos);
+
+  // ---- RESIDENCY WARM-UP. THE LAST STALL THE PLAYER ACTUALLY SEES. -----------
+  //
+  // wave-s/perf-critic-r2 section 4b found, and I reproduced 4 boots out of 4, a deterministic
+  // 174-330 ms hitch on the THIRD rAF after `__ready`. `tools/_perfr3.mjs --mode first` breaks
+  // that window down per frame, with renderer.info deltas and a CPU bracket around every
+  // collaborator `tick()` calls:
+  //
+  //   #   delta   dProgs dGeos dTexs   attribution (CPU ms)
+  //   1     4.6        0     0     0   traffic.update 1
+  //   2    85.0        8   113     3   renderer.render 65  car.update 23  hud.update 18
+  //   3   310.5        0     0     0   composer.render 8.3   <- NO CPU IN IT AT ALL
+  //
+  // So the hitch is not compilation and it is not our JS: the third frame spends ten
+  // milliseconds on the CPU and three hundred waiting. Frame 2 is the one that costs, and what
+  // it does is upload **8 programs, 113 geometries and 3 textures** — the objects that were
+  // created or first driven AFTER the warm stage ran, i.e. exactly the ones the two warm frames
+  // at `:761-781` structurally cannot cover: `traffic.reset()` at `:811` builds its vehicles
+  // after them, and `hud.update` / `car.update` are never called at all until the first tick.
+  // Frame 2 queues all of that on the GL command stream, returns, and the compositor then
+  // blocks for 300 ms finishing it — which is why the cost lands on frame 3 with an empty
+  // profile and why every previous attempt to find it by reading `renderer.info.programs` came
+  // back with "already 192, not compilation".
+  //
+  // The fix is therefore two things and needs both:
+  //   1. run one REAL `tick()` before `__ready`, so the first-tick-only creations happen inside
+  //      the boot bar. dt is 1 ms rather than 0: nothing here divides by dt, but a zero dt makes
+  //      several integrators no-ops and the point is to drive the same code the drive will.
+  //   2. `gl.finish()` after rendering it. Without this the uploads are merely QUEUED before
+  //      `__ready` and the stall simply moves to the player's first frame anyway — the boot bar
+  //      is only honest if the wait has actually been served behind it.
+  //
+  // `__warmStats` publishes what it cost so this is assertable from a harness instead of being
+  // taken on trust: `{ progs, geos, texs, ms }` are the DELTAS this block absorbed.
+  // CAUSE 2 of the same hitch, and it is not a GPU cost at all. `long-animation-frame` names
+  // the script: `{ sourceURL: main.js, sourceFunctionName: "down", invoker: "DOMWindow.onkeydown",
+  // duration: 282.1 ms, blockingDuration: 242.1 }`. `down` (:582) calls `audio.start()`, and on a
+  // cold graph that synchronously builds a whole AudioContext — two 3-second stereo noise
+  // buffers, a synthesised reverb IR, five buses, four voices. So THE FIRST KEY THE PLAYER
+  // PRESSES freezes the page for 162-282 ms. Kill-control: `audio.start` stubbed out after
+  // `__ready` and before the first key removes the hitch in 4 boots of 4.
+  // `audio.prewarm()` builds that graph here instead, suspended and at zero master gain, so the
+  // gesture only has to resume it. See audio.js's prewarm() for why it is still silent.
+  // `#audiowarm=0` restores the old timing.
+  if (params.audiowarm !== '0' && audio.prewarm) {
+    try { window.__audioWarmMs = +(audio.prewarm() || -1).toFixed(1); } catch { /* never fatal */ }
+  }
+  try {
+    const g0 = renderer.info.memory.geometries;
+    const t0 = renderer.info.memory.textures;
+    const p0 = renderer.info.programs.length;
+    const w0 = performance.now();
+    tick(0.001);
+    composer.render();
+    // A hard sync, at boot only, on purpose. This is the one place in the build where blocking
+    // the main thread on the GPU is the correct behaviour.
+    const gl = renderer.getContext();
+    if (gl && gl.finish) gl.finish();
+    window.__warmStats = {
+      progs: renderer.info.programs.length - p0,
+      geos: renderer.info.memory.geometries - g0,
+      texs: renderer.info.memory.textures - t0,
+      ms: +(performance.now() - w0).toFixed(1),
+    };
+  } catch (e) {
+    // A warm frame must never be able to stop a boot.
+    window.__warmStats = { error: String(e) };
+  }
 
   requestAnimationFrame(frame);
   if (!(params.nomenu === '1' || params.nomenu === true)) {
