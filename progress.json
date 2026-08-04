@@ -1,5 +1,5 @@
 {
-  "generated": "2026-08-03T20:25:52.974Z",
+  "generated": "2026-08-04T01:13:37.757Z",
   "waves": [
     "wave-k",
     "wave-l",
@@ -16,10 +16,10 @@
     {
       "piece": "perf",
       "goal": "holds 60 fps at 1280x720 real pixels",
-      "rounds": 0,
+      "rounds": 1,
       "verdict": "built, not yet judged",
-      "waves": "s*",
-      "building": true,
+      "waves": "s* s",
+      "building": false,
       "metrics": [
         {
           "k": "cruise p50",
