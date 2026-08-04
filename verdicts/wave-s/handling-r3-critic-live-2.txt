@@ -1,0 +1,17 @@
+== RENDER SIZE, verbatim from ctx.renderSize()
+  {"w":1280,"h":720,"cssW":1280,"cssH":720,"pixelRatio":1,"devicePixelRatio":1}
+
+== 1. TURN-IN FROM DEAD STRAIGHT, LIVE, SIGNED (+ = the direction the driver asked for)
+
+== 2. THE BOOST JOIN: physics.setEventSource(() => traffic.drainEvents())
+  (a) the game calls traffic.drainEvents() 90 times in 1.5 s -> the join IS made | events seen 0 {}
+  (b) road EMPTIED (setPool 0): 1000 m of held W in 13.5 s -> bar 0.0000 -> 0.0000 | traffic events fed to physics 0 {} | POOL 0 | samples drifting 0%
+  (b) normal traffic (setPool 30): 1001 m of held W in 13.6 s -> bar 0.0000 -> 0.2932 | traffic events fed to physics 7 {"nearMiss":7} | POOL 30 | samples drifting 0%
+  (b) road EMPTIED again      : 1000 m of held W in 13.5 s -> bar 0.0000 -> 0.0000 | traffic events fed to physics 0 {} | POOL 0 | samples drifting 0%
+
+== 3. THE WRECK JOIN: physics.drainWreck() -> crash.trigger()
+
+== 4. carRoot.rotation.y vs s.yaw through a deep e-brake slide
+
+== CONSOLE / PAGE ERRORS ACROSS THE WHOLE SESSION
+  NONE

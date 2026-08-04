@@ -1,0 +1,96 @@
+
+== 1. FREE ENERGY, METERED AT THE FLICK LINE BY ME. sum of |v| created over the 6-beat chain
+  BEFORE (68c093b, adds to state.vLat)
+    applications 923 | TOTAL |v| created 6.2173 m/s (22.3824 km/h) | biggest single +0.0409 | most negative 0.0000 m/s
+    chain: 8.9deg/100% | 20.6deg/69% | 16.2deg/69% | 16.2deg/69% | 16.2deg/69% | 16.2deg/69%
+  AFTER  (3e4e645, rotates the vector)
+    applications 822 | TOTAL |v| created 0.0000 m/s (0.0000 km/h) | biggest single +0.0000 | most negative -0.0000 m/s
+    chain: 14.1deg/100% | 23.0deg/69% | 14.9deg/69% | 14.9deg/69% | 14.8deg/69% | 14.8deg/69%
+
+== 2. CHAIN PER BEAT at 130 km/h, headless, and the driftFlick 0 kill-control
+  BEFORE 68c093b        : 8.9deg/100% | 20.6deg/69% | 16.2deg/69% | 16.2deg/69% | 16.2deg/69% | 16.2deg/69%
+  AFTER  3e4e645        : 14.1deg/100% | 23.0deg/69% | 14.9deg/69% | 14.9deg/69% | 14.8deg/69% | 14.8deg/69%
+  BEFORE, driftFlick 0  : 8.9deg/100% | 13.5deg/69% | 8.5deg/69% | 8.6deg/69% | 8.7deg/69% | 8.7deg/69%
+  AFTER,  driftFlick 0  : 14.1deg/100% | 16.0deg/69% | 6.4deg/69% | 6.4deg/69% | 6.4deg/69% | 6.4deg/69%
+  AFTER,  driftRefFloor 1 (floor OFF): 11.1deg/100% | 20.8deg/69% | 14.4deg/69% | 14.4deg/69% | 14.4deg/69% | 14.4deg/69%
+  AFTER,  driftFlick 0 + floor OFF   : 11.1deg/100% | 13.4deg/69% | 6.3deg/69% | 6.3deg/69% | 6.3deg/69% | 6.3deg/69%
+  AFTER,  driftFlick 0 + gate OFF    : 11.6deg/100% | 16.0deg/69% | 8.3deg/69% | 8.3deg/69% | 8.4deg/69% | 8.4deg/69%
+  AFTER,  driftFlick 0 + BOTH OFF    : 8.9deg/100% | 13.5deg/69% | 8.5deg/69% | 8.6deg/69% | 8.7deg/69% | 8.7deg/69%
+  AFTER,  proRotation forced true    : 11.6deg/100% | 22.5deg/69% | 16.2deg/69% | 16.3deg/69% | 16.3deg/69% | 16.4deg/69%
+
+== 3. TURN-IN FROM DEAD STRAIGHT, SIGNED heading in 400 ms (+ = the way the driver asked)
+  BEFORE 68c093b               400 ms
+      100: S+lock +7.2 (wrong-way yaw 0) vs W+lock +12.6
+      130: S+lock +0.4 (wrong-way yaw -3) vs W+lock +10.8
+      200: S+lock -9.3 (wrong-way yaw -52) vs W+lock +9.0
+      250: S+lock -14.2 (wrong-way yaw -92) vs W+lock +8.6
+  AFTER  3e4e645               400 ms
+      100: S+lock +11.2 (wrong-way yaw 0) vs W+lock +12.6
+      130: S+lock +7.7 (wrong-way yaw 0) vs W+lock +10.8
+      200: S+lock +4.1 (wrong-way yaw 0) vs W+lock +9.0
+      250: S+lock +3.3 (wrong-way yaw 0) vs W+lock +8.6
+  AFTER, driftRefFloor OFF     400 ms
+      100: S+lock +7.4 (wrong-way yaw 0) vs W+lock +12.6
+      130: S+lock +3.9 (wrong-way yaw 0) vs W+lock +10.8
+      200: S+lock +1.4 (wrong-way yaw 0) vs W+lock +9.0
+      250: S+lock +1.0 (wrong-way yaw 0) vs W+lock +8.6
+  AFTER, proRotation gate OFF  400 ms
+      100: S+lock +10.4 (wrong-way yaw 0) vs W+lock +12.6
+      130: S+lock +2.8 (wrong-way yaw -0) vs W+lock +10.8
+      200: S+lock -7.3 (wrong-way yaw -38) vs W+lock +9.0
+      250: S+lock -12.5 (wrong-way yaw -83) vs W+lock +8.6
+  AFTER, BOTH OFF              400 ms
+      100: S+lock +7.2 (wrong-way yaw 0) vs W+lock +12.6
+      130: S+lock +0.4 (wrong-way yaw -3) vs W+lock +10.8
+      200: S+lock -9.3 (wrong-way yaw -52) vs W+lock +9.0
+      250: S+lock -14.2 (wrong-way yaw -92) vs W+lock +8.6
+
+== 4. POWER-ON EDGE. (a) the behaviour, (b) the demand/capacity ratio, (c) my kill-controls
+  (a) 6 s of held full lock, AFTER 3e4e645:
+    130 km/h full throttle: peak yaw 35 deg/s | peak slip 4.6 deg | drifting 0% | -> 205 km/h | yaw/s trace 35 33 32 32 31 31 30 30 30 30 30 29
+    130 km/h coasting     : peak yaw 76 deg/s | peak slip 4.5 deg | drifting 0% | -> 47 km/h | yaw/s trace 38 40 43 46 50 54 59 64 70 75 69 65
+    200 km/h full throttle: peak yaw 29 deg/s | peak slip 4.7 deg | drifting 0% | -> 215 km/h | yaw/s trace 29 29 29 29 29 29 29 29 29 29 29 29
+    200 km/h coasting     : peak yaw 57 deg/s | peak slip 5.4 deg | drifting 0% | -> 75 km/h | yaw/s trace 30 31 32 34 35 37 39 42 45 48 52 57
+    250 km/h full throttle: peak yaw 29 deg/s | peak slip 5.0 deg | drifting 0% | -> 223 km/h | yaw/s trace 28 28 28 28 28 28 28 29 29 29 29 29
+    250 km/h coasting     : peak yaw 45 deg/s | peak slip 5.6 deg | drifting 0% | -> 98 km/h | yaw/s trace 28 29 29 30 31 32 34 35 37 40 42 45
+  (b) rear demand/capacity, sampled inside substep() over the same 6 s (mean, max):
+    100 km/h full throttle: demand/capacity mean 0.768 max 0.783 | |fxRear|/(mu*fz) mean 0.430 | fzRear/fzRear0 mean 1.210
+    100 km/h coasting     : demand/capacity mean 0.736 max 0.859 | |fxRear|/(mu*fz) mean 0.000 | fzRear/fzRear0 mean 0.992
+    130 km/h full throttle: demand/capacity mean 0.768 max 0.783 | |fxRear|/(mu*fz) mean 0.396 | fzRear/fzRear0 mean 1.189
+    130 km/h coasting     : demand/capacity mean 0.822 max 0.859 | |fxRear|/(mu*fz) mean 0.000 | fzRear/fzRear0 mean 0.991
+    200 km/h full throttle: demand/capacity mean 0.771 max 0.785 | |fxRear|/(mu*fz) mean 0.317 | fzRear/fzRear0 mean 1.143
+    200 km/h coasting     : demand/capacity mean 0.844 max 0.859 | |fxRear|/(mu*fz) mean 0.000 | fzRear/fzRear0 mean 0.991
+    250 km/h full throttle: demand/capacity mean 0.777 max 0.793 | |fxRear|/(mu*fz) mean 0.270 | fzRear/fzRear0 mean 1.118
+    250 km/h coasting     : demand/capacity mean 0.844 max 0.859 | |fxRear|/(mu*fz) mean 0.000 | fzRear/fzRear0 mean 0.991
+  (c) MY OWN kill-controls, 6 s full lock + full throttle at 250 km/h. peak slip / drifting:
+    baseline AFTER                       peak yaw 29 deg/s | peak slip 5.0 deg | drifting 0% | -> 223 km/h
+    stabilityAssist 2.6 -> 0             peak yaw 29 deg/s | peak slip 5.0 deg | drifting 0% | -> 223 km/h
+    spinDamp 6.0 -> 0                    peak yaw 29 deg/s | peak slip 5.0 deg | drifting 0% | -> 223 km/h
+    both servo terms 0                   peak yaw 29 deg/s | peak slip 5.0 deg | drifting 0% | -> 223 km/h
+    intent gate takes throttle           peak yaw 29 deg/s | peak slip 5.0 deg | drifting 0% | -> 223 km/h
+    driveSplitRear 0.65 -> 1.00          peak yaw 29 deg/s | peak slip 5.0 deg | drifting 0% | -> 223 km/h
+    load transfer OFF (transferCap 0)    peak yaw 29 deg/s | peak slip 5.5 deg | drifting 0% | -> 220 km/h
+    delta = mechanical lock              peak yaw 53 deg/s | peak slip 5.2 deg | drifting 0% | -> 206 km/h
+    muRear 2.32 -> 1.60 (rear made weak) peak yaw 19 deg/s | peak slip 3.4 deg | drifting 0% | -> 247 km/h
+
+== 5. driftRefFloor SWEEP and the pathologies a one-sided rotation floor could create
+  driftRefFloor 1.2         : S+lock heading 130 7.7 deg | 250 3.3 deg | orderings (half-peak/10deg) centred 2.28s/2.89s | tap 2.80s/3.42s | held 0.81s/0.85s
+  driftRefFloor 1.5 (SHIPPED): S+lock heading 130 7.7 deg | 250 3.3 deg | orderings (half-peak/10deg) centred 2.28s/2.89s | tap 2.80s/3.34s | held 0.81s/0.85s
+  driftRefFloor 2.0         : S+lock heading 130 7.7 deg | 250 3.3 deg | orderings (half-peak/10deg) centred 2.28s/2.89s | tap 2.69s/2.87s | held 0.81s/0.85s
+  driftRefFloor 3.0         : S+lock heading 130 7.7 deg | 250 3.3 deg | orderings (half-peak/10deg) centred 2.28s/2.89s | tap 1.95s/2.05s | held 0.81s/0.85s
+  driftRefFloor 6.0         : S+lock heading 130 7.7 deg | 250 3.3 deg | orderings (half-peak/10deg) centred 2.29s/2.90s | tap 0.86s/0.93s | held 0.68s/0.71s
+  floor DELETED             : S+lock heading 130 3.9 deg | 250 1.0 deg | orderings centred 2.28s/2.89s | tap 2.80s/3.42s | held 0.81s/0.85s
+  (b) rotation the player did NOT ask for. BEFORE vs AFTER, 1 s, |heading| and |peak yaw|:
+    BEFORE 80 km/h STRAIGHT-LINE brake, steer 0: heading 0.000 deg | peak yaw 0.00 deg/s | drifting 0%
+    BEFORE 130 km/h STRAIGHT-LINE brake, steer 0: heading 0.000 deg | peak yaw 0.00 deg/s | drifting 0%
+    BEFORE 200 km/h STRAIGHT-LINE brake, steer 0: heading 0.000 deg | peak yaw 0.00 deg/s | drifting 0%
+    BEFORE 250 km/h STRAIGHT-LINE brake, steer 0: heading 0.000 deg | peak yaw 0.00 deg/s | drifting 0%
+    AFTER  80 km/h STRAIGHT-LINE brake, steer 0: heading 0.000 deg | peak yaw 0.00 deg/s | drifting 0%
+    AFTER  130 km/h STRAIGHT-LINE brake, steer 0: heading 0.000 deg | peak yaw 0.00 deg/s | drifting 0%
+    AFTER  200 km/h STRAIGHT-LINE brake, steer 0: heading 0.000 deg | peak yaw 0.00 deg/s | drifting 0%
+    AFTER  250 km/h STRAIGHT-LINE brake, steer 0: heading 0.000 deg | peak yaw 0.00 deg/s | drifting 0%
+  (c) a brake DAB held through a corner (0.5 s of load, then brake + lock for 2 s):
+    BEFORE 130 km/h: heading in 2 s -57.2 deg | peak |slip| 72.9 deg | worst wrong-way yaw -138 deg/s | -> 18 km/h
+    BEFORE 250 km/h: heading in 2 s -12.1 deg | peak |slip| 32.3 deg | worst wrong-way yaw -48 deg/s | -> 49 km/h
+    AFTER  130 km/h: heading in 2 s -68.4 deg | peak |slip| 73.1 deg | worst wrong-way yaw -138 deg/s | -> 17 km/h
+    AFTER  250 km/h: heading in 2 s -13.5 deg | peak |slip| 32.7 deg | worst wrong-way yaw -48 deg/s | -> 50 km/h

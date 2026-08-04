@@ -1,0 +1,39 @@
+== RENDER SIZE, verbatim from ctx.renderSize()
+  {"w":1280,"h":720,"cssW":1280,"cssH":720,"pixelRatio":1,"devicePixelRatio":1}
+
+== 1. TURN-IN FROM DEAD STRAIGHT, LIVE, SIGNED (+ = the direction the driver asked for)
+  100 km/h W+D (throttle+lock) 400 ms: heading +4.7 deg | peak yaw 34 deg/s | worst WRONG-WAY yaw 0 deg/s | peak |slip| 1.5 deg | drift state 0% | 98->103 km/h | contact false
+  100 km/h W+D (throttle+lock) 800 ms: heading +30.2 deg | peak yaw 41 deg/s | worst WRONG-WAY yaw 0 deg/s | peak |slip| 3.6 deg | drift state 0% | 98->120 km/h | contact false
+  100 km/h S+D (brake+lock)    400 ms: heading +15.8 deg | peak yaw 70 deg/s | worst WRONG-WAY yaw 0 deg/s | peak |slip| 8.5 deg | drift state 96% | 98->59 km/h | contact false
+  100 km/h S+D (brake+lock)    800 ms: heading +9.8 deg | peak yaw 62 deg/s | worst WRONG-WAY yaw -54 deg/s | peak |slip| 28.2 deg | drift state 98% | 98->21 km/h | contact false
+  130 km/h W+D (throttle+lock) 400 ms: heading +12.2 deg | peak yaw 35 deg/s | worst WRONG-WAY yaw 0 deg/s | peak |slip| 3.5 deg | drift state 0% | 127->138 km/h | contact false
+  130 km/h W+D (throttle+lock) 800 ms: heading +26.4 deg | peak yaw 35 deg/s | worst WRONG-WAY yaw 0 deg/s | peak |slip| 4.0 deg | drift state 0% | 128->148 km/h | contact false
+  130 km/h S+D (brake+lock)    400 ms: heading +12.2 deg | peak yaw 56 deg/s | worst WRONG-WAY yaw 0 deg/s | peak |slip| 8.6 deg | drift state 96% | 128->85 km/h | contact false
+  130 km/h S+D (brake+lock)    800 ms: heading +13.6 deg | peak yaw 54 deg/s | worst WRONG-WAY yaw -25 deg/s | peak |slip| 23.8 deg | drift state 98% | 127->47 km/h | contact false
+  200 km/h W+D (throttle+lock) 400 ms: heading +10.0 deg | peak yaw 30 deg/s | worst WRONG-WAY yaw 0 deg/s | peak |slip| 3.9 deg | drift state 0% | 196->202 km/h | contact false
+  200 km/h W+D (throttle+lock) 800 ms: heading +22.0 deg | peak yaw 30 deg/s | worst WRONG-WAY yaw 0 deg/s | peak |slip| 4.6 deg | drift state 0% | 196->203 km/h | contact false
+  200 km/h S+D (brake+lock)    400 ms: heading +6.4 deg | peak yaw 29 deg/s | worst WRONG-WAY yaw 0 deg/s | peak |slip| 6.2 deg | drift state 96% | 196->152 km/h | contact false
+  200 km/h S+D (brake+lock)    800 ms: heading +23.5 deg | peak yaw 69 deg/s | worst WRONG-WAY yaw 0 deg/s | peak |slip| 25.2 deg | drift state 98% | 196->107 km/h | contact false
+  250 km/h W+D (throttle+lock) 400 ms: heading +9.6 deg | peak yaw 28 deg/s | worst WRONG-WAY yaw 0 deg/s | peak |slip| 4.0 deg | drift state 0% | 245->245 km/h | contact false
+  250 km/h W+D (throttle+lock) 800 ms: heading +20.9 deg | peak yaw 28 deg/s | worst WRONG-WAY yaw 0 deg/s | peak |slip| 4.9 deg | drift state 0% | 245->242 km/h | contact false
+  250 km/h S+D (brake+lock)    400 ms: heading +5.3 deg | peak yaw 24 deg/s | worst WRONG-WAY yaw 0 deg/s | peak |slip| 5.7 deg | drift state 96% | 245->197 km/h | contact false
+  250 km/h S+D (brake+lock)    800 ms: heading +24.7 deg | peak yaw 77 deg/s | worst WRONG-WAY yaw 0 deg/s | peak |slip| 23.8 deg | drift state 98% | 245->147 km/h | contact false
+
+== 2. THE BOOST JOIN: physics.setEventSource(() => traffic.drainEvents())
+  (a) the game calls traffic.drainEvents() 75 times in 1.5 s -> the join IS made | events seen 0 {}
+  (b) road EMPTIED (setPool 0): 1000 m of held W in 13.5 s -> bar 0.0000 -> 0.0000 | samples drifting 0%
+  (b) normal traffic: 1000 m of held W in 13.5 s -> bar 0.0000 -> 0.0000 | samples drifting 0%
+
+== 3. THE WRECK JOIN: physics.drainWreck() -> crash.trigger()
+  (36 colliders in the live world)
+  0 deg off the bearing to the nearest facade, 250 km/h, throttle held: peak impact 0.96 | crash.active reached true | state.crashed reached true | 
+  45 deg off the bearing to the nearest facade, 250 km/h, throttle held: peak impact 0.92 | crash.active reached true | state.crashed reached true | 
+  NEGATIVE CONTROL, 5 s of clean highway: crash.active false | state.crashed false
+
+== 4. carRoot.rotation.y vs s.yaw through a deep e-brake slide
+  212 samples, peak |slipAngle| 25.5 deg
+  max |carRoot.rotation.y - s.yaw| = 0.0000 deg (at 0.0 deg of slip)
+  for scale: the removed term -s.slip*0.22 was worth 12.5 deg at this peak if state.slip had reached |1| (slipRef 0.45 rad = 25.8 deg)
+
+== CONSOLE / PAGE ERRORS ACROSS THE WHOLE SESSION
+  NONE
