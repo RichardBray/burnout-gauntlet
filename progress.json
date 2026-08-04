@@ -1,5 +1,5 @@
 {
-  "generated": "2026-08-04T01:13:37.757Z",
+  "generated": "2026-08-04T01:14:58.117Z",
   "waves": [
     "wave-k",
     "wave-l",
@@ -16,77 +16,85 @@
     {
       "piece": "perf",
       "goal": "holds 60 fps at 1280x720 real pixels",
-      "rounds": 1,
-      "verdict": "built, not yet judged",
-      "waves": "s* s",
+      "rounds": 2,
+      "verdict": "PARTIAL",
+      "waves": "s* s s* s",
       "building": false,
       "metrics": [
         {
-          "k": "cruise p50",
-          "v": "16.50 ms (60.6 fps) at 1280x720 @ ratio 1.0, 3 runs 16.33-16.65"
-        },
-        {
-          "k": "cruise p99",
-          "v": "46.73 ms at 1280x720 @ ratio 1.0 (was 119.07)"
-        },
-        {
-          "k": "city p50",
-          "v": "22.53 ms (44.4 fps) at 1280x720 @ ratio 1.0"
-        },
-        {
           "k": "night-wet p50",
-          "v": "49.95 ms (20.0 fps) at 1280x720 @ ratio 1.0 - worst scene, routed"
+          "v": "32.70 ms at 1280x720 ratio 1 dpr 1 (BEFORE 46.70, -30.0%, 3 runs 32.50-33.10)"
         },
         {
-          "k": "cruise mean",
-          "v": "17.16 ms (was 46.48) at 1280x720 @ ratio 1.0"
+          "k": "night-wet p99",
+          "v": "52.90 ms at 1280x720 ratio 1 (BEFORE 86.90, -39%)"
         },
         {
-          "k": "60 fps holds at resScale",
-          "v": "1.0 highway, ~0.55 city, never night-wet"
+          "k": "cruise p50",
+          "v": "16.10 ms at 1280x720 ratio 1 - inside the bar, but 55.2 frames/s and 33.5% over 16.7 ms"
+        },
+        {
+          "k": "corner",
+          "v": "13.00 ms p50, 79.5 frames/s, 3.5% over 16.7 ms - the only scenario that SUSTAINS 60 fps"
+        },
+        {
+          "k": "city / boost p50",
+          "v": "21.80 / 22.10 ms at 1280x720 ratio 1 - MISS, flat vs the true BEFORE"
+        },
+        {
+          "k": "point light cost",
+          "v": "2.2 ms each at night-wet 1280x720 (kill-control: 14 -> 10 lights = -8.9 ms)"
+        },
+        {
+          "k": "reflection gate 2 (the only pixel-moving change)",
+          "v": "0.00 ms p50, 0.00 ms p99, -18 to -31 ms on max"
+        },
+        {
+          "k": "first 700 ms of play",
+          "v": "HEAD 24-32 frames with a 174-300 ms hitch in 4/4 boots; BEFORE 42-43 in 3/4"
+        },
+        {
+          "k": "visual regression gate",
+          "v": "no scene worse; wet-night-asphalt maxDiff 87 on the car only, noise floor 3-6"
         }
       ],
-      "metricsFrom": "wave s builder"
+      "metricsFrom": "wave s critic"
     },
     {
       "piece": "handling",
       "goal": "feels like Burnout Paradise, matched to researched numbers",
-      "rounds": 1,
-      "verdict": "built, not yet judged",
-      "waves": "s* s",
-      "building": false,
+      "rounds": 3,
+      "verdict": "PARTIAL",
+      "waves": "s* s s* s s s*",
+      "building": true,
       "metrics": [
         {
-          "k": "p50",
-          "v": "26.4 ms (median of 3 runs, cruise, 1280x720 @ ratio 1.0, dpr 1, alone on the machine)"
+          "k": "chain drift, 6 beats at 130 km/h, LIVE real keys",
+          "v": "17.7 deg peak / 57% of samples drifting (critic measured 6.2 deg / 0%) FIXED"
         },
         {
-          "k": "p99",
-          "v": "110.8 ms (same run; night-wet p99 245-283 ms)"
+          "k": "chain per beat, headless, beats 3-6",
+          "v": "16.2 deg at 69% drifting (pre-repair 6.0-6.6 deg at 0%) FIXED"
         },
         {
-          "k": "top speed",
-          "v": "78.00 m/s = 174.5 mph (Burnout MaxSpeed band 177-201; mid-tier estimate 165-180)"
+          "k": "of that 16.2 deg, driftFlick supplies 7.5",
+          "v": "with driftFlick 0 the beats are 8.5-8.7 deg, i.e. under the critic's 10 deg bar"
         },
         {
-          "k": "0-100 mph boosting",
-          "v": "3.45 s (Burnout PUBLISHED 3.45-3.48)"
+          "k": "drift orderings, LIVE",
+          "v": "2.22 / 2.77 / 0.78 s centred / tapped / held (critic 2.22 / 2.72 / 0.80) HELD"
         },
         {
-          "k": "yaw at 40.2 m/s",
-          "v": "33.5 deg/s (Burnout MEASURED 28-38 player-used)"
+          "k": "turn-in from straight at 130 km/h, LIVE",
+          "v": "S+D sweeps 2.8 deg of heading in 400 ms vs 11.9 deg for W+D - NEW REGRESSION"
         },
         {
-          "k": "boost bar",
-          "v": "8.000 s (Burnout PUBLISHED exactly 8.0)"
+          "k": "power-on grip edge at 250 km/h, LIVE",
+          "v": "28-29 deg/s, peak slip 4.9 deg, 0% drifting - STILL NO EDGE, third round"
         },
         {
-          "k": "drift hold, steering centred",
-          "v": "0.63 s on the real slip angle (Burnout: self-sustaining)"
-        },
-        {
-          "k": "chain drift through the real keybinds",
-          "v": "0 % of samples in the drift state, peak 6 deg"
+          "k": "constants verified against git diff",
+          "v": "gripUse 0.95 -> 0.85, driftEnterRatio 1.0 -> 1.4, driftBreakRatio new 1.0, driftTapLinger new 0.35"
         }
       ],
       "metricsFrom": "wave s critic"
@@ -94,42 +102,46 @@
     {
       "piece": "traffic",
       "goal": "traffic that drives instead of a car park",
-      "rounds": 1,
-      "verdict": "built, not yet judged",
-      "waves": "s* s",
+      "rounds": 2,
+      "verdict": "PASS",
+      "waves": "s* s s* s",
       "building": false,
       "metrics": [
         {
-          "k": "standing vehicles",
-          "v": "1082 baked (944 kerb + 138 queue), re-derived from the sealed InstancedMesh"
+          "k": "junction latch",
+          "v": "7 phase flips in 22.8 s parked in the box, 0 cars frozen (was 0 flips, 15 frozen)"
         },
         {
-          "k": "live moving vehicles",
-          "v": "56, mean 56.0 min 55 max 56 over 76 s of driving at 1280x720 ratio 1"
+          "k": "junction kill-control",
+          "v": "19.05% stationary with the overtake wrapped out vs 1.47% with it live"
         },
         {
-          "k": "city speed p50",
-          "v": "44.0 km/h (desired 45-59), 5.77% stationary, 64008 vehicle-frames"
+          "k": "highway pop-in",
+          "v": "closest VISIBLE spawn 240.8 / 241.0 m, 0 inside 240 m in 2x 40 s (was 62.9 m, 26 inside 120 m)"
         },
         {
-          "k": "highway speed p50",
-          "v": "84.3 km/h (desired 90-119), 0.00% stationary, 82399 vehicle-frames"
+          "k": "visible line-end retires",
+          "v": "0 in 141 s of driving across 5 runs (was 3 in 40 s)"
         },
         {
-          "k": "body-on-body overlap",
-          "v": "0.000 m over ~340k vehicle-frames, 8 scenarios"
+          "k": "wrong-way hero",
+          "v": "cars shy 3.000 m and clear him by +0.36 m (was 0.000 m and -0.95 m, driven through)"
         },
         {
-          "k": "on screen per frame",
-          "v": "22.7 city / 28.6 wet-night / 18.8 highway (in frustum, unoccluded, <260 m)"
+          "k": "boost events",
+          "v": "6.85 and 7.20 per km of highway, clearance 1.50-2.61 m verified independently"
         },
         {
-          "k": "highway pop-in inside 120 m",
-          "v": "26 in 40 s (traffic.js:62 SPAWN_MIN 62 m)"
+          "k": "event controls",
+          "v": "0 events over 1.605 km alone and 0 over 1.635 km passing 30 cars 11.09 m clear"
         },
         {
-          "k": "traffic draw-call cost",
-          "v": "13.0/frame daylight, 32.0/frame night (paused interleaved A/B x3)"
+          "k": "live vehicles",
+          "v": "30 of 30 moving, 908-1122 m each per 40 s, 0.000 m overlap over ~340k vehicle-frames"
+        },
+        {
+          "k": "on screen (260 m, frustum, unoccluded)",
+          "v": "8.0 city / 6.5 highway, was 22.7 / 18.8"
         }
       ],
       "metricsFrom": "wave s critic"
@@ -137,41 +149,37 @@
     {
       "piece": "menu",
       "goal": "start + Esc pause menu, scene knobs, discoverable controls",
-      "rounds": 1,
-      "verdict": "built, not yet judged",
-      "waves": "s* s",
+      "rounds": 2,
+      "verdict": "PASS",
+      "waves": "s* s* s s",
       "building": false,
       "metrics": [
         {
-          "k": "menu res readout vs gl.drawingBuffer",
-          "v": "exact at dpr 1 AND dpr 2 (1280x720 @1.00, 640x360 @0.50)"
+          "k": "destination-connecting nodes in the whole page",
+          "v": "2, on 2 different AudioContexts (0 before the gesture)"
         },
         {
-          "k": "bindings listed and verified working",
-          "v": "9 of 9 (SPACE mislabelled, see D3)"
+          "k": "independent cross-check",
+          "v": "decoded MP3 -10.81 dBFS + 20log10(0.50) = -16.83 predicted vs -19.22 probed (2.39 dB)"
         },
         {
-          "k": "unlisted working bindings found",
-          "v": "0 of 16 keys probed"
+          "k": "control list vs main.js handlers",
+          "v": "9 of 9 listed and pressed, 0 of 23 unlisted keys do anything"
         },
         {
-          "k": "pause freeze",
-          "v": "pos/speed byte-identical over 2.5 s, 42 rAF frames still drawn"
+          "k": "SPACE label check, real keys, 34 m/s, 1.000 s",
+          "v": "dv -4.963 -> -11.228 m/s, dyaw 0.7202 -> 0.8544 rad, drifting false -> true"
         },
         {
-          "k": "resume jolt",
-          "v": "max 1.1621 m in one frame, dt clamp 0.05 holds at a 127 ms frame"
+          "k": "inter-track loudness, whole-file RMS",
+          "v": "spread 0.93 dB (NOT the 8 dB the builder reported - that is stormy-weather's quiet intro)"
         },
         {
-          "k": "handbrake kill-control, physics rewrite in tree",
-          "v": "coast dv -1.144 vs SPACE dv -2.442 m/s over 1.000 s from 34.2 m/s"
+          "k": "new defect found in an owned file",
+          "v": "a swallowed keyup steers the car forever (steer 0.0000 -> 1.0000, keyboard idle)"
         },
         {
-          "k": "handbrake kill-control, HEAD 0bdb9df physics",
-          "v": "coast dv -14.345 vs SPACE dv -14.178 (it did not brake at all)"
-        },
-        {
-          "k": "console/page errors across 12 playwright runs",
+          "k": "console/page errors across 14 playwright boots",
           "v": "0"
         }
       ],

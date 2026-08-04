@@ -83,24 +83,69 @@ const waves = readdirSync(join(root, 'verdicts'))
   .filter(d => /^wave-[a-z]$/.test(d))
   .sort(); // wave-k < wave-l < ... lexicographic is chronological here
 
+// ---- PLAYABILITY FILE NAMING, and why this normaliser has to exist -----------
+// The visual waves had exactly two filenames per piece, `<piece>.md` and
+// `<piece>-critic.md`, and the board keyed on them literally. The playability
+// rounds do not: they produce `handling-r2.md`, `handling-critic-r2.md`,
+// `handling-r2-verify.md`, `menu-music.md`, `traffic-critic-r2.md`. Every one of
+// those missed the literal key, so all six playability pieces read "not started"
+// or "built, not yet judged" while three of them had actually been judged — the
+// board reported **0 passing** with two PASSes on disk. That is this file's own
+// documented failure mode (see the header) happening a second time, so the fix is
+// a normaliser rather than a rename: verdict filenames are evidence and renaming
+// them breaks every citation in STATE.md and in the verdicts themselves.
+//
+//   handling-r2.md          -> piece `handling`,  builder
+//   handling-critic-r2.md   -> piece `handling`,  critic
+//   handling-r2-verify.md   -> piece `handling`,  critic  (a verify pass IS a critic)
+//   menu-music.md           -> piece `menu`               (the music work landed in `menu`)
+//   perf-r3.md              -> piece `perf`,      builder
+const PLAY_ALIAS = { 'menu-music': 'menu', 'menu-music-critic': 'menu-critic' };
+function normalisePiece(name) {
+  let n = name;
+  // A verify pass is a critic round; fold it into the critic name before the
+  // round suffix comes off, so `-r2-verify` and `-critic-r2` land in one place.
+  n = n.replace(/-r\d+-verify$/, '-critic').replace(/-verify$/, '-critic');
+  n = n.replace(/-r\d+$/, '');                    // handling-r2 -> handling
+  n = n.replace(/-critic-r\d+$/, '-critic');      // belt and braces if order differs
+  return PLAY_ALIAS[n] ?? n;
+}
+
 const pieces = {};
 for (const wave of waves) {
   const letter = wave.slice(-1);
   for (const f of readdirSync(join(root, 'verdicts', wave))) {
     if (!f.endsWith('.md')) continue;
-    const piece = f.slice(0, -3);
+    const piece = normalisePiece(f.slice(0, -3));
     const body = readFileSync(join(root, 'verdicts', wave, f), 'utf8');
     // Critic files carry `VERDICT: <call>`; builder files do not. That single
     // field is what distinguishes a judged round from a built one.
     // Critics write the verdict with varying emphasis (`**real wins**`, `real wins`).
     // Strip the markdown so the board's pill styling and its /real wins/ test both
     // see one canonical form.
-    const verdict = body.match(/^VERDICT:\s*(.+)$/m)?.[1].replace(/[*_`]/g, '').trim() ?? null;
+    let verdict = body.match(/^VERDICT:\s*(.+)$/m)?.[1].replace(/[*_`]/g, '').trim() ?? null;
+    // A playability critic writes a prose `## N. VERDICT` section, not the visual
+    // era's single `VERDICT:` line, so the line test alone classified all of them as
+    // builders. For these pieces the FILENAME is the reliable signal that a round was
+    // judged, and the call is the first PASS / PARTIAL / FAIL token in the file.
+    // FAIL and PARTIAL are checked before PASS deliberately: a verdict that says
+    // "passes on numbers, FAILS on feel" is a FAIL, and taking the first token
+    // positionally would have called round 1's handling a PASS.
+    if (!verdict && /(critic|verify)/.test(f)) {
+      const sect = body.match(/^#+ *(?:[0-9]+\.? *)?(?:FINAL )?VERDICT\b[\s\S]{0,4000}/mi)?.[0] ?? body;
+      const hit = sect.match(/\b(FAIL|PARTIAL|PASS)\b/) ?? body.match(/\b(FAIL|PARTIAL|PASS)\b/);
+      verdict = hit ? hit[1] : 'judged, call not stated';
+    }
     const blind = body.match(/^BLIND CALL:\s*([\s\S]+?)(?:\n\n|\nVERDICT:)/m)?.[1]
       .replace(/\s+/g, ' ').trim() ?? null;
+    // The round number, so that within one wave `perf-critic-r2.md` is newer than
+    // `perf-critic.md`. readdir order is alphabetical and '-' sorts before '.', so
+    // without this the UNSUFFIXED round-1 file sorted last and its verdict won —
+    // which had round 1's incomplete perf audit overriding round 2's finished one.
+    const round = +(f.match(/-r(\d+)/)?.[1] ?? 1);
     (pieces[piece] ??= []).push({
-      wave: letter, kind: verdict ? 'critic' : 'builder', verdict, blind,
-      metrics: metricsOf(body),
+      wave: letter, round, kind: (verdict || /(critic|verify)/.test(f)) ? 'critic' : 'builder',
+      verdict, blind, metrics: metricsOf(body),
     });
   }
 }
@@ -142,9 +187,11 @@ const board = Object.keys(SCENE).map(piece => {
 const playBoard = Object.entries(PLAY).map(([piece, goal]) => {
   const built = (pieces[piece] ?? []).map(h => ({ ...h, kind: 'builder' }));
   const judged = (pieces[`${piece}-critic`] ?? []).map(h => ({ ...h, kind: 'critic' }));
-  const hist = [...built, ...judged].sort((a, b) =>
-    a.wave === b.wave ? (a.kind === 'builder' ? -1 : 1) : (a.wave < b.wave ? -1 : 1));
-  const last = judged.at(-1);
+  const ord = (h) => [h.wave, h.round ?? 1, h.kind === 'builder' ? 0 : 1];
+  const cmp = (a, b) => { const x = ord(a), y = ord(b);
+    return x[0] < y[0] ? -1 : x[0] > y[0] ? 1 : x[1] - y[1] || x[2] - y[2]; };
+  const hist = [...built, ...judged].sort(cmp);
+  const last = [...judged].sort(cmp).at(-1);
   const withMetrics = [...hist].reverse().find(h => h.metrics);
   return {
     piece, goal,
