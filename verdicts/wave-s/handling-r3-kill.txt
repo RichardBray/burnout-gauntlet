@@ -1,0 +1,144 @@
+== 0. THE TWO MODULES UNDER TEST
+  BEFORE (68c093b): gripUse 0.85 driftFlick 0.18 driftBreakRatio 1.0 powerYawGain ABSENT driftRefFloor ABSENT
+  AFTER  (worktree): gripUse 0.85 driftFlick 0.18 driftBreakRatio 1.0 powerYawGain ABSENT driftRefFloor 2.0
+
+== 1. THE CHAIN, per beat, and the free-energy column
+  BEFORE : 8.9deg/100% | 20.6deg/69% | 16.2deg/69% | 16.2deg/69% | 16.2deg/69% | 16.2deg/69% | peak|vLat| 11.55 | max 1-tick GAIN 0.29 km/h | peak accelG 31.0 | final 135 km/h
+  AFTER  : 14.5deg/100% | 23.7deg/69% | 14.9deg/69% | 14.9deg/69% | 14.8deg/69% | 14.8deg/69% | peak|vLat| 12.63 | max 1-tick GAIN 0.29 km/h | peak accelG 31.2 | final 137 km/h
+  BEFORE 100: 9.9deg/100% | 21.5deg/69% | 15.5deg/69% | 15.6deg/69% | 15.8deg/69% | 15.8deg/69% | peak|vLat| 9.37 | max 1-tick GAIN 0.30 km/h | peak accelG 29.4 | final 123 km/h
+  AFTER  100: 14.6deg/100% | 24.9deg/69% | 15.4deg/69% | 15.1deg/69% | 15.0deg/69% | 15.0deg/69% | peak|vLat| 10.28 | max 1-tick GAIN 0.30 km/h | peak accelG 29.3 | final 122 km/h
+  BEFORE 150: 8.4deg/100% | 20.6deg/69% | 16.7deg/69% | 16.7deg/69% | 16.6deg/69% | 16.6deg/69% | peak|vLat| 13.19 | max 1-tick GAIN 0.28 km/h | peak accelG 32.4 | final 140 km/h
+  AFTER  150: 13.9deg/100% | 22.8deg/69% | 14.5deg/69% | 14.6deg/69% | 14.6deg/69% | 14.6deg/69% | peak|vLat| 13.92 | max 1-tick GAIN 0.28 km/h | peak accelG 32.4 | final 147 km/h
+
+== 2. THE FLICK. Rotation vs injection, and the verify pass's driftFlick=0 baseline
+  AFTER, driftFlick 0 : 14.5deg/100% | 16.8deg/69% | 6.4deg/69% | 6.4deg/69% | 6.4deg/69% | 6.4deg/69% | peak|vLat| 8.89 | max 1-tick GAIN 0.29 km/h | peak accelG 31.2 | final 133 km/h
+  BEFORE, driftFlick 0: 8.9deg/100% | 13.5deg/69% | 8.5deg/69% | 8.6deg/69% | 8.7deg/69% | 8.7deg/69% | peak|vLat| 7.40 | max 1-tick GAIN 0.29 km/h | peak accelG 31.0 | final 136 km/h
+
+  THE FREE ENERGY, MEASURED AT THE LINE ITSELF. A metered copy of each module reports the
+  GROUND speed hypot(speed, vLat) immediately before and immediately after the flick and sums
+  the difference. A momentum redirection makes zero; an injection makes some every beat.
+  BEFORE (injection): ground speed CREATED by the flick over 6 beats = 6.2173 m/s total, biggest single application 0.0409 m/s
+  AFTER  (rotation) : ground speed CREATED by the flick over 6 beats = 0.0000 m/s total, biggest single application 0.0000 m/s
+
+== 3. TURN-IN FROM DEAD STRAIGHT: throttle+lock vs brake+lock (verify finding B)
+  100 km/h 400 ms  W+D  BEFORE heading 12.6 deg | peak yaw 41 | worst WRONG-WAY yaw 0 | peak slip 2.4 deg | drift 0%
+  100 km/h 400 ms  W+D  AFTER  heading 12.6 deg | peak yaw 41 | worst WRONG-WAY yaw 0 | peak slip 2.4 deg | drift 0%
+  100 km/h 400 ms  S+D  BEFORE heading 7.2 deg | peak yaw 39 | worst WRONG-WAY yaw 0 | peak slip 4.6 deg | drift 98%
+  100 km/h 400 ms  S+D  AFTER  heading 11.3 deg | peak yaw 64 | worst WRONG-WAY yaw 0 | peak slip 9.7 deg | drift 98%
+  100 km/h 800 ms  W+D  BEFORE heading 28.4 deg | peak yaw 41 | worst WRONG-WAY yaw 0 | peak slip 3.1 deg | drift 0%
+  100 km/h 800 ms  W+D  AFTER  heading 28.4 deg | peak yaw 41 | worst WRONG-WAY yaw 0 | peak slip 3.1 deg | drift 0%
+  100 km/h 800 ms  S+D  BEFORE heading 10.3 deg | peak yaw 40 | worst WRONG-WAY yaw -33 | peak slip 19.8 deg | drift 99%
+  100 km/h 800 ms  S+D  AFTER  heading 12.0 deg | peak yaw 64 | worst WRONG-WAY yaw -56 | peak slip 30.2 deg | drift 99%
+  130 km/h 400 ms  W+D  BEFORE heading 10.8 deg | peak yaw 35 | worst WRONG-WAY yaw 0 | peak slip 2.9 deg | drift 0%
+  130 km/h 400 ms  W+D  AFTER  heading 10.8 deg | peak yaw 35 | worst WRONG-WAY yaw 0 | peak slip 2.9 deg | drift 0%
+  130 km/h 400 ms  S+D  BEFORE heading 0.4 deg | peak yaw 12 | worst WRONG-WAY yaw -3 | peak slip 1.0 deg | drift 98%
+  130 km/h 400 ms  S+D  AFTER  heading 7.7 deg | peak yaw 51 | worst WRONG-WAY yaw 0 | peak slip 7.7 deg | drift 98%
+  130 km/h 800 ms  W+D  BEFORE heading 24.6 deg | peak yaw 35 | worst WRONG-WAY yaw 0 | peak slip 3.7 deg | drift 0%
+  130 km/h 800 ms  W+D  AFTER  heading 24.6 deg | peak yaw 35 | worst WRONG-WAY yaw 0 | peak slip 3.7 deg | drift 0%
+  130 km/h 800 ms  S+D  BEFORE heading 11.8 deg | peak yaw 40 | worst WRONG-WAY yaw -3 | peak slip 12.6 deg | drift 99%
+  130 km/h 800 ms  S+D  AFTER  heading 15.7 deg | peak yaw 56 | worst WRONG-WAY yaw -22 | peak slip 24.9 deg | drift 99%
+  200 km/h 400 ms  W+D  BEFORE heading 9.0 deg | peak yaw 29 | worst WRONG-WAY yaw 0 | peak slip 3.5 deg | drift 0%
+  200 km/h 400 ms  W+D  AFTER  heading 9.0 deg | peak yaw 29 | worst WRONG-WAY yaw 0 | peak slip 3.5 deg | drift 0%
+  200 km/h 400 ms  S+D  BEFORE heading -9.3 deg | peak yaw 1 | worst WRONG-WAY yaw -52 | peak slip 0.1 deg | drift 98%
+  200 km/h 400 ms  S+D  AFTER  heading 4.1 deg | peak yaw 23 | worst WRONG-WAY yaw 0 | peak slip 6.2 deg | drift 98%
+  200 km/h 800 ms  W+D  BEFORE heading 20.8 deg | peak yaw 29 | worst WRONG-WAY yaw 0 | peak slip 4.5 deg | drift 0%
+  200 km/h 800 ms  W+D  AFTER  heading 20.8 deg | peak yaw 29 | worst WRONG-WAY yaw 0 | peak slip 4.5 deg | drift 0%
+  200 km/h 800 ms  S+D  BEFORE heading -32.8 deg | peak yaw 1 | worst WRONG-WAY yaw -77 | peak slip 0.1 deg | drift 99%
+  200 km/h 800 ms  S+D  AFTER  heading 22.3 deg | peak yaw 71 | worst WRONG-WAY yaw 0 | peak slip 25.2 deg | drift 99%
+
+== 4. THE POWER-ON EDGE, held lock + full throttle, 6 s, at four speeds
+  BEFORE 100 km/h: yaw 40 36 34 33 32 31 31 30 30 30 deg/s | peak yaw 41 | peak slip 4.5 deg | drifting 0% | final 199 km/h
+  AFTER  100 km/h: yaw 40 36 34 33 32 31 31 30 30 30 deg/s | peak yaw 41 | peak slip 4.5 deg | drifting 0% | final 199 km/h
+  BEFORE 130 km/h: yaw 35 33 32 31 31 30 30 30 30 29 deg/s | peak yaw 35 | peak slip 4.6 deg | drifting 0% | final 205 km/h
+  AFTER  130 km/h: yaw 35 33 32 31 31 30 30 30 30 29 deg/s | peak yaw 35 | peak slip 4.6 deg | drifting 0% | final 205 km/h
+  BEFORE 200 km/h: yaw 29 29 29 29 29 29 29 29 29 29 deg/s | peak yaw 29 | peak slip 4.7 deg | drifting 0% | final 215 km/h
+  AFTER  200 km/h: yaw 29 29 29 29 29 29 29 29 29 29 deg/s | peak yaw 29 | peak slip 4.7 deg | drifting 0% | final 215 km/h
+  BEFORE 250 km/h: yaw 28 28 28 28 28 28 29 29 29 29 deg/s | peak yaw 29 | peak slip 5.0 deg | drifting 0% | final 223 km/h
+  AFTER  250 km/h: yaw 28 28 28 28 28 28 29 29 29 29 deg/s | peak yaw 29 | peak slip 5.0 deg | drifting 0% | final 223 km/h
+
+== 5. REGRESSION GATES: the orderings, the e-brake, the wall, the single tap
+  orderings BEFORE: entry 22.8 deg | centred 2.37 s | tap 2.98 s | held 0.83 s | 1:HIT 2:HIT 3:HIT
+  orderings AFTER : entry 22.8 deg | centred 2.37 s | tap 2.67 s | held 0.82 s | 1:HIT 2:HIT 3:HIT
+  e-brake BEFORE  80: -26%/-70%/-93% | slide 32 deg | yaw 105 deg/s | faster-than-entry false
+  e-brake AFTER   80: -26%/-70%/-93% | slide 32 deg | yaw 105 deg/s | faster-than-entry false
+  e-brake BEFORE 130: -20%/-51%/-81% | slide 34 deg | yaw 63 deg/s | faster-than-entry false
+  e-brake AFTER  130: -20%/-51%/-81% | slide 34 deg | yaw 63 deg/s | faster-than-entry false
+  e-brake BEFORE 200: -19%/-45%/-67% | slide 35 deg | yaw 59 deg/s | faster-than-entry false
+  e-brake AFTER  200: -19%/-45%/-67% | slide 35 deg | yaw 59 deg/s | faster-than-entry false
+  e-brake BEFORE 250: -20%/-44%/-63% | slide 35 deg | yaw 60 deg/s | faster-than-entry false
+  e-brake AFTER  250: -20%/-44%/-63% | slide 35 deg | yaw 60 deg/s | faster-than-entry false
+  wall BEFORE: 10deg 3% | 20deg 7% | 45deg 22% | 90deg 0%
+  wall AFTER : 10deg 3% | 20deg 7% | 45deg 22% | 90deg 0%
+  tap BEFORE: 100: armed Y peak 9.5 held 2.08s gain 0.20 | 130: armed Y peak 8.4 held 1.70s gain 0.18 | 150: armed Y peak 7.9 held 1.51s gain 0.16 | 200: armed Y peak 7.4 held 1.80s gain 0.08 | 250: armed Y peak 7.8 held 2.33s gain 0.01
+  tap AFTER : 100: armed Y peak 14.4 held 2.70s gain 0.18 | 130: armed Y peak 14.2 held 2.70s gain 0.17 | 150: armed Y peak 13.5 held 2.60s gain 0.15 | 200: armed Y peak 12.8 held 2.70s gain 0.08 | 250: armed Y peak 12.9 held 2.70s gain 0.04
+
+== 6. STABILITY: does anything spin? full lock, full throttle, 10 s, and lift-off at full lock
+  10 s throttle BEFORE  60 km/h: yaw 52 44 39 37 35 33 32 31 31 30 30 30 30 29 29 29 deg/s | peak yaw 58 | peak slip 4.6 deg | drifting 0% | final 209 km/h
+  10 s throttle AFTER   60 km/h: yaw 52 44 39 37 35 33 32 31 31 30 30 30 30 29 29 29 deg/s | peak yaw 58 | peak slip 4.6 deg | drifting 0% | final 209 km/h
+  10 s throttle BEFORE 130 km/h: yaw 35 33 32 31 31 30 30 30 30 29 29 29 29 29 29 29 deg/s | peak yaw 35 | peak slip 4.7 deg | drifting 0% | final 213 km/h
+  10 s throttle AFTER  130 km/h: yaw 35 33 32 31 31 30 30 30 30 29 29 29 29 29 29 29 deg/s | peak yaw 35 | peak slip 4.7 deg | drifting 0% | final 213 km/h
+  10 s throttle BEFORE 200 km/h: yaw 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 deg/s | peak yaw 29 | peak slip 4.7 deg | drifting 0% | final 216 km/h
+  10 s throttle AFTER  200 km/h: yaw 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 deg/s | peak yaw 29 | peak slip 4.7 deg | drifting 0% | final 216 km/h
+  10 s throttle BEFORE 250 km/h: yaw 28 28 28 28 28 28 29 29 29 29 29 29 29 29 29 29 deg/s | peak yaw 29 | peak slip 5.0 deg | drifting 0% | final 218 km/h
+  10 s throttle AFTER  250 km/h: yaw 28 28 28 28 28 28 29 29 29 29 29 29 29 29 29 29 deg/s | peak yaw 29 | peak slip 5.0 deg | drifting 0% | final 218 km/h
+  10 s throttle BEFORE 280 km/h: yaw 28 28 28 28 28 28 28 28 28 29 29 29 29 29 29 29 deg/s | peak yaw 29 | peak slip 5.1 deg | drifting 0% | final 219 km/h
+  10 s throttle AFTER  280 km/h: yaw 28 28 28 28 28 28 28 28 28 29 29 29 29 29 29 29 deg/s | peak yaw 29 | peak slip 5.1 deg | drifting 0% | final 219 km/h
+  lift-off BEFORE 145 km/h: peak slip 4.8 deg | peak yaw 76 deg/s | final 51 km/h
+  lift-off BEFORE 250 km/h: peak slip 5.6 deg | peak yaw 45 deg/s | final 98 km/h
+  lift-off AFTER  145 km/h: peak slip 4.8 deg | peak yaw 76 deg/s | final 51 km/h
+  lift-off AFTER  250 km/h: peak slip 5.6 deg | peak yaw 45 deg/s | final 98 km/h
+
+== 7. THE TRAIL-BRAKE FIX, ITS TWO HALVES DELETED ONE AT A TIME
+  BEFORE (68c093b)   S+D 400 ms  100: 7.2 deg | peak yaw 39 | worst WRONG-WAY yaw 0  130: 0.4 deg | peak yaw 12 | worst WRONG-WAY yaw -3  200: -9.3 deg | peak yaw 1 | worst WRONG-WAY yaw -52  250: -14.2 deg | peak yaw 1 | worst WRONG-WAY yaw -92
+  AFTER (both)       S+D 400 ms  100: 11.3 deg | peak yaw 64 | worst WRONG-WAY yaw 0  130: 7.7 deg | peak yaw 51 | worst WRONG-WAY yaw 0  200: 4.1 deg | peak yaw 23 | worst WRONG-WAY yaw 0  250: 3.3 deg | peak yaw 18 | worst WRONG-WAY yaw 0
+  ref floor deleted  S+D 400 ms  100: 7.4 deg | peak yaw 39 | worst WRONG-WAY yaw 0  130: 3.9 deg | peak yaw 27 | worst WRONG-WAY yaw 0  200: 1.4 deg | peak yaw 9 | worst WRONG-WAY yaw 0  250: 1.0 deg | peak yaw 6 | worst WRONG-WAY yaw 0
+  pro-rot gate del.  S+D 400 ms  100: 10.4 deg | peak yaw 64 | worst WRONG-WAY yaw 0  130: 2.8 deg | peak yaw 27 | worst WRONG-WAY yaw -0  200: -7.3 deg | peak yaw 1 | worst WRONG-WAY yaw -38  250: -12.5 deg | peak yaw 1 | worst WRONG-WAY yaw -83
+  both deleted       S+D 400 ms  100: 7.2 deg | peak yaw 39 | worst WRONG-WAY yaw 0  130: 0.4 deg | peak yaw 12 | worst WRONG-WAY yaw -3  200: -9.3 deg | peak yaw 1 | worst WRONG-WAY yaw -52  250: -14.2 deg | peak yaw 1 | worst WRONG-WAY yaw -92
+  (W+D 400 ms, the thing brake+lock must not lose to: 100: 12.6 deg | peak yaw 41 | worst WRONG-WAY yaw 0  130: 10.8 deg | peak yaw 35 | worst WRONG-WAY yaw 0  200: 9.0 deg | peak yaw 29 | worst WRONG-WAY yaw 0  250: 8.6 deg | peak yaw 28 | worst WRONG-WAY yaw 0)
+
+  and the same five modules on the chain and the orderings:
+  BEFORE (68c093b)   entry 22.8 deg | centred 2.37 s | tap 2.98 s | held 0.83 s | 1:HIT 2:HIT 3:HIT
+  AFTER (both)       entry 22.8 deg | centred 2.37 s | tap 2.67 s | held 0.82 s | 1:HIT 2:HIT 3:HIT
+  ref floor deleted  entry 22.8 deg | centred 2.37 s | tap 2.92 s | held 0.82 s | 1:HIT 2:HIT 3:HIT
+  pro-rot gate del.  entry 22.8 deg | centred 2.37 s | tap 2.67 s | held 0.82 s | 1:HIT 2:HIT 3:HIT
+  both deleted       entry 22.8 deg | centred 2.37 s | tap 2.92 s | held 0.82 s | 1:HIT 2:HIT 3:HIT
+  BEFORE (68c093b)   chain 8.9deg/100% | 20.6deg/69% | 16.2deg/69% | 16.2deg/69% | 16.2deg/69% | 16.2deg/69% | peak|vLat| 11.55 | max 1-tick GAIN 0.29 km/h | peak accelG 31.0 | final 135 km/h
+  AFTER (both)       chain 14.5deg/100% | 23.7deg/69% | 14.9deg/69% | 14.9deg/69% | 14.8deg/69% | 14.8deg/69% | peak|vLat| 12.63 | max 1-tick GAIN 0.29 km/h | peak accelG 31.2 | final 137 km/h
+  ref floor deleted  chain 11.1deg/100% | 20.8deg/69% | 14.4deg/69% | 14.4deg/69% | 14.4deg/69% | 14.4deg/69% | peak|vLat| 11.45 | max 1-tick GAIN 0.29 km/h | peak accelG 31.0 | final 141 km/h
+  pro-rot gate del.  chain 11.8deg/100% | 22.8deg/69% | 16.2deg/69% | 16.3deg/69% | 16.4deg/69% | 16.4deg/69% | peak|vLat| 12.45 | max 1-tick GAIN 0.29 km/h | peak accelG 31.0 | final 132 km/h
+  both deleted       chain 8.9deg/100% | 20.4deg/69% | 16.0deg/69% | 16.1deg/69% | 16.1deg/69% | 16.1deg/69% | peak|vLat| 11.41 | max 1-tick GAIN 0.29 km/h | peak accelG 31.0 | final 135 km/h
+
+  driftRefFloor swept, S+D 400 ms from dead straight:
+    driftRefFloor 1.2: 100: 11.2 deg | peak yaw 60 | worst WRONG-WAY yaw 0  130: 7.7 deg | peak yaw 50 | worst WRONG-WAY yaw 0  200: 4.1 deg | peak yaw 23 | worst WRONG-WAY yaw 0  250: 3.3 deg | peak yaw 18 | worst WRONG-WAY yaw 0 || entry 22.8 deg | centred 2.37 s | tap 2.92 s | held 0.82 s | 1:HIT 2:HIT 3:HIT
+    driftRefFloor 1.5: 100: 11.2 deg | peak yaw 62 | worst WRONG-WAY yaw 0  130: 7.7 deg | peak yaw 51 | worst WRONG-WAY yaw 0  200: 4.1 deg | peak yaw 23 | worst WRONG-WAY yaw 0  250: 3.3 deg | peak yaw 18 | worst WRONG-WAY yaw 0 || entry 22.8 deg | centred 2.37 s | tap 2.92 s | held 0.82 s | 1:HIT 2:HIT 3:HIT
+    driftRefFloor 2.0: 100: 11.3 deg | peak yaw 64 | worst WRONG-WAY yaw 0  130: 7.7 deg | peak yaw 51 | worst WRONG-WAY yaw 0  200: 4.1 deg | peak yaw 23 | worst WRONG-WAY yaw 0  250: 3.3 deg | peak yaw 18 | worst WRONG-WAY yaw 0 || entry 22.8 deg | centred 2.37 s | tap 2.67 s | held 0.82 s | 1:HIT 2:HIT 3:HIT
+    driftRefFloor 3.0: 100: 11.3 deg | peak yaw 65 | worst WRONG-WAY yaw 0  130: 7.7 deg | peak yaw 51 | worst WRONG-WAY yaw 0  200: 4.1 deg | peak yaw 23 | worst WRONG-WAY yaw 0  250: 3.3 deg | peak yaw 18 | worst WRONG-WAY yaw 0 || entry 22.8 deg | centred 2.37 s | tap 1.89 s | held 0.82 s | 1:HIT 2:MISS 3:HIT
+    driftRefFloor 6.0: 100: 11.3 deg | peak yaw 65 | worst WRONG-WAY yaw 0  130: 7.7 deg | peak yaw 51 | worst WRONG-WAY yaw 0  200: 4.1 deg | peak yaw 23 | worst WRONG-WAY yaw 0  250: 3.3 deg | peak yaw 18 | worst WRONG-WAY yaw 0 || entry 22.8 deg | centred 2.38 s | tap 0.84 s | held 0.67 s | 1:HIT 2:MISS 3:HIT
+
+== 8. THE POWER-ON EDGE. Why the rear axle never runs out on throttle.
+  Steady state after 6 s of full lock. latRatio = the rear axle's share of the corner the
+  DRIVER asks for, over what the rear tyre can make. It has to reach 1.0 for the tail to go.
+  full throttle 100 km/h: latRatio 0.782 (demand 19.6 kN / capacity 25.0 kN) | rear circle spent by DRIVE 34% | rear axle LOAD 116% of undisturbed | slip 4.5 deg | ground 199 km/h
+  full throttle 130 km/h: latRatio 0.783 (demand 19.9 kN / capacity 25.4 kN) | rear circle spent by DRIVE 33% | rear axle LOAD 115% of undisturbed | slip 4.6 deg | ground 205 km/h
+  full throttle 200 km/h: latRatio 0.785 (demand 20.6 kN / capacity 26.2 kN) | rear circle spent by DRIVE 31% | rear axle LOAD 114% of undisturbed | slip 4.7 deg | ground 215 km/h
+  full throttle 250 km/h: latRatio 0.787 (demand 21.1 kN / capacity 26.8 kN) | rear circle spent by DRIVE 29% | rear axle LOAD 113% of undisturbed | slip 4.8 deg | ground 223 km/h
+  coasting      100 km/h: latRatio 0.436 (demand 6.9 kN / capacity 15.8 kN) | rear circle spent by DRIVE 0% | rear axle LOAD 100% of undisturbed | slip -4.1 deg | ground 39 km/h
+  coasting      130 km/h: latRatio 0.628 (demand 10.0 kN / capacity 15.9 kN) | rear circle spent by DRIVE 0% | rear axle LOAD 99% of undisturbed | slip -2.6 deg | ground 47 km/h
+  coasting      200 km/h: latRatio 0.859 (demand 14.1 kN / capacity 16.4 kN) | rear circle spent by DRIVE 0% | rear axle LOAD 99% of undisturbed | slip 2.4 deg | ground 75 km/h
+  coasting      250 km/h: latRatio 0.859 (demand 14.8 kN / capacity 17.2 kN) | rear circle spent by DRIVE 0% | rear axle LOAD 99% of undisturbed | slip 4.0 deg | ground 98 km/h
+
+  THE NINE KILL-CONTROLS. Each deletes or reverses one nominated cause. peak slip / peak yaw /
+  % of samples in the drift state, over 6 s of full lock and full throttle.
+  baseline (shipped)           100: 4.5deg/41(deg/s)/0%/ratio 0.78  130: 4.6deg/35(deg/s)/0%/ratio 0.78  250: 5.0deg/29(deg/s)/0%/ratio 0.79
+  1 spinDamp ceiling off       100: 4.5deg/41(deg/s)/0%/ratio 0.78  130: 4.6deg/35(deg/s)/0%/ratio 0.78  250: 5.0deg/29(deg/s)/0%/ratio 0.79
+  2 stabilityAssist 2.6 -> 0   100: 4.5deg/41(deg/s)/0%/ratio 0.78  130: 4.6deg/35(deg/s)/0%/ratio 0.78  250: 5.0deg/29(deg/s)/0%/ratio 0.79
+  3 both 1 and 2               100: 4.5deg/41(deg/s)/0%/ratio 0.78  130: 4.6deg/35(deg/s)/0%/ratio 0.78  250: 5.0deg/29(deg/s)/0%/ratio 0.79
+  4 steerServo 0.45 -> 0       100: 4.5deg/42(deg/s)/0%/ratio 0.78  130: 4.6deg/37(deg/s)/0%/ratio 0.78  250: 5.0deg/30(deg/s)/0%/ratio 0.79
+  5 driveSplitRear 0.65->0.80  100: 4.5deg/41(deg/s)/0%/ratio 0.86  130: 4.6deg/35(deg/s)/0%/ratio 0.85  250: 5.0deg/29(deg/s)/0%/ratio 0.81
+  6 driveSplitRear 0.65->1.00  100: 6.2deg/41(deg/s)/0%/ratio 1.09  130: 4.6deg/35(deg/s)/0%/ratio 1.01  250: 5.0deg/29(deg/s)/0%/ratio 0.84
+  7 intent gate takes throttle 100: 4.5deg/41(deg/s)/0%/ratio 0.78  130: 4.6deg/35(deg/s)/0%/ratio 0.78  250: 5.0deg/29(deg/s)/0%/ratio 0.79
+  8 load transfer OFF          100: 88.0deg/97(deg/s)/0%/ratio 2.97  130: 5.3deg/34(deg/s)/0%/ratio 1.06  250: 5.5deg/29(deg/s)/0%/ratio 0.90
+  9 downforce 0.95 -> 0        100: 4.5deg/36(deg/s)/0%/ratio 0.80  130: 4.6deg/29(deg/s)/0%/ratio 0.80  250: 4.8deg/17(deg/s)/0%/ratio 0.78
+  10 6 AND 7 together          100: 4.5deg/40(deg/s)/42%/ratio 1.09  130: 4.6deg/35(deg/s)/19%/ratio 1.02  250: 5.0deg/29(deg/s)/0%/ratio 0.84
+  11 delta = mechanical lock   100: 3.8deg/45(deg/s)/0%/ratio 0.79  130: 3.9deg/44(deg/s)/0%/ratio 0.79  250: 5.5deg/60(deg/s)/0%/ratio 0.80
+  (control) gripUse 0.85->1.30 100: 4.5deg/57(deg/s)/0%/ratio 1.21  130: 4.6deg/51(deg/s)/0%/ratio 1.20  250: 6.4deg/43(deg/s)/0%/ratio 1.22

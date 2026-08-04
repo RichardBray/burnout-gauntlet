@@ -1,0 +1,41 @@
+== RENDER SIZE, verbatim from ctx.renderSize()
+  {"w":1280,"h":720,"cssW":1280,"cssH":720,"pixelRatio":1,"devicePixelRatio":1}
+
+== TRAIL BRAKE, live, real keys: heading swept in the window AFTER 0.5 s of W+D load
+  100 km/h W+D held       +400 ms: heading 17.6 deg | peak yaw 41 deg/s | worst WRONG-WAY yaw 0 | peak slip 3.5 deg | drift state 0% | 104->114 km/h | contact false
+  100 km/h W+D held       +800 ms: heading 32.2 deg | peak yaw 41 deg/s | worst WRONG-WAY yaw 0 | peak slip 3.8 deg | drift state 0% | 113->133 km/h | contact false
+  100 km/h W+D then S+D   +400 ms: heading 15.1 deg | peak yaw 47 deg/s | worst WRONG-WAY yaw 0 | peak slip 18.4 deg | drift state 96% | 113->70 km/h | contact false
+  100 km/h W+D then S+D   +800 ms: heading 3.8 deg | peak yaw 47 deg/s | worst WRONG-WAY yaw -46 | peak slip 25.6 deg | drift state 98% | 113->33 km/h | contact false
+  130 km/h W+D held       +400 ms: heading 15.0 deg | peak yaw 35 deg/s | worst WRONG-WAY yaw 0 | peak slip 4.1 deg | drift state 0% | 142->150 km/h | contact false
+  130 km/h W+D held       +800 ms: heading 29.1 deg | peak yaw 35 deg/s | worst WRONG-WAY yaw 0 | peak slip 4.2 deg | drift state 0% | 142->159 km/h | contact false
+  130 km/h W+D then S+D   +400 ms: heading 18.2 deg | peak yaw 59 deg/s | worst WRONG-WAY yaw 0 | peak slip 18.8 deg | drift state 96% | 142->97 km/h | contact false
+  130 km/h W+D then S+D   +800 ms: heading 13.3 deg | peak yaw 59 deg/s | worst WRONG-WAY yaw -32 | peak slip 29.0 deg | drift state 98% | 141->59 km/h | contact false
+  200 km/h W+D held       +400 ms: heading 13.8 deg | peak yaw 30 deg/s | worst WRONG-WAY yaw 0 | peak slip 4.7 deg | drift state 0% | 203->204 km/h | contact false
+  200 km/h W+D held       +800 ms: heading 24.8 deg | peak yaw 30 deg/s | worst WRONG-WAY yaw 0 | peak slip 4.8 deg | drift state 0% | 203->205 km/h | contact false
+  200 km/h W+D then S+D   +400 ms: heading 17.2 deg | peak yaw 72 deg/s | worst WRONG-WAY yaw 0 | peak slip 17.5 deg | drift state 95% | 203->155 km/h | contact false
+  200 km/h W+D then S+D   +800 ms: heading 22.0 deg | peak yaw 78 deg/s | worst WRONG-WAY yaw -13 | peak slip 30.6 deg | drift state 98% | 203->113 km/h | contact false
+  250 km/h W+D held       +400 ms: heading 12.5 deg | peak yaw 28 deg/s | worst WRONG-WAY yaw 0 | peak slip 5.0 deg | drift state 0% | 246->242 km/h | contact false
+  250 km/h W+D held       +800 ms: heading 23.7 deg | peak yaw 28 deg/s | worst WRONG-WAY yaw 0 | peak slip 5.0 deg | drift state 0% | 246->238 km/h | contact false
+  250 km/h W+D then S+D   +400 ms: heading 19.4 deg | peak yaw 85 deg/s | worst WRONG-WAY yaw 0 | peak slip 20.4 deg | drift state 96% | 246->190 km/h | contact false
+  250 km/h W+D then S+D   +800 ms: heading 25.4 deg | peak yaw 83 deg/s | worst WRONG-WAY yaw -7 | peak slip 31.6 deg | drift state 98% | 246->148 km/h | contact false
+
+== TURN-IN FROM DEAD STRAIGHT, live: brake and lock pressed together vs throttle and lock
+  100 km/h W+D     400 ms: heading 13.9 deg | peak yaw 41 deg/s | worst WRONG-WAY yaw 0 | peak slip 3.0 deg | drift state 0% | 98->109 km/h | contact false
+  100 km/h W+D     800 ms: heading 30.2 deg | peak yaw 41 deg/s | worst WRONG-WAY yaw 0 | peak slip 3.6 deg | drift state 0% | 98->120 km/h | contact false
+  100 km/h S+D     400 ms: heading 11.0 deg | peak yaw 57 deg/s | worst WRONG-WAY yaw 0 | peak slip 5.3 deg | drift state 96% | 98->58 km/h | contact false
+  100 km/h S+D     800 ms: heading 10.0 deg | peak yaw 39 deg/s | worst WRONG-WAY yaw -35 | peak slip 20.1 deg | drift state 98% | 98->21 km/h | contact false
+  130 km/h W+D     400 ms: heading 12.3 deg | peak yaw 35 deg/s | worst WRONG-WAY yaw 0 | peak slip 3.5 deg | drift state 0% | 128->138 km/h | contact false
+  130 km/h W+D     800 ms: heading 26.7 deg | peak yaw 35 deg/s | worst WRONG-WAY yaw 0 | peak slip 4.1 deg | drift state 0% | 127->148 km/h | contact false
+  130 km/h S+D     400 ms: heading 2.9 deg | peak yaw 27 deg/s | worst WRONG-WAY yaw -1 | peak slip 1.9 deg | drift state 96% | 127->86 km/h | contact false
+  130 km/h S+D     800 ms: heading 14.1 deg | peak yaw 39 deg/s | worst WRONG-WAY yaw -1 | peak slip 14.2 deg | drift state 98% | 128->47 km/h | contact false
+  200 km/h W+D     400 ms: heading 10.1 deg | peak yaw 29 deg/s | worst WRONG-WAY yaw 0 | peak slip 3.9 deg | drift state 0% | 196->201 km/h | contact false
+  200 km/h W+D     800 ms: heading 21.5 deg | peak yaw 30 deg/s | worst WRONG-WAY yaw 0 | peak slip 4.7 deg | drift state 0% | 196->203 km/h | contact false
+  200 km/h S+D     400 ms: heading -8.1 deg | peak yaw 1 deg/s | worst WRONG-WAY yaw -36 | peak slip 0.5 deg | drift state 96% | 196->152 km/h | contact false
+  200 km/h S+D     800 ms: heading -31.8 deg | peak yaw 1 deg/s | worst WRONG-WAY yaw -70 | peak slip 0.6 deg | drift state 98% | 196->105 km/h | contact false
+  250 km/h W+D     400 ms: heading 9.8 deg | peak yaw 28 deg/s | worst WRONG-WAY yaw 0 | peak slip 4.1 deg | drift state 0% | 245->245 km/h | contact false
+  250 km/h W+D     800 ms: heading 20.4 deg | peak yaw 28 deg/s | worst WRONG-WAY yaw 0 | peak slip 4.9 deg | drift state 0% | 245->242 km/h | contact false
+  250 km/h S+D     400 ms: heading -14.9 deg | peak yaw 1 deg/s | worst WRONG-WAY yaw -77 | peak slip 0.5 deg | drift state 96% | 245->194 km/h | contact false
+  250 km/h S+D     800 ms: heading -41.8 deg | peak yaw 1 deg/s | worst WRONG-WAY yaw -96 | peak slip 0.6 deg | drift state 98% | 245->146 km/h | contact false
+
+== CONSOLE / PAGE ERRORS
+  NONE

@@ -1,0 +1,122 @@
+== RENDER SIZE, verbatim from ctx.renderSize()
+  {"w":1280,"h":720,"cssW":1280,"cssH":720,"pixelRatio":1,"devicePixelRatio":1}
+
+== 1. SIGN INVARIANT (automatic FAIL if broken) + BODY ROLL, from world matrices
+  D: displacement . screen-right 51.5 m -> went RIGHT PASS
+     lean 1.120  up.carLeft 0.11734 -> banks AWAY FROM the turn centre PASS
+     body roll: mid 3.36 deg, peak 6.49 deg (round 1: 3.31 deg)
+  A: displacement . screen-right -77.9 m -> went LEFT PASS
+     lean -1.128  up.carLeft -0.11814 -> banks AWAY FROM the turn centre PASS
+     body roll: mid 3.68 deg, peak 6.98 deg (round 1: 3.31 deg)
+
+== 2. THE THREE ORDERINGS, real keys, UNCLAMPED slipAngle, entry = W+A+Space 0.9 s at 145 km/h
+  entry peak 25.5 / 25.5 / 25.1 deg (the three entries must match for the comparison to mean anything)
+  A centred         half-peak 2.22 s | >10 deg 2.85 s | drifting 86% | 118->160 km/h | contact false
+      26 25 23 21 20 18 17 15 14 13 11 10 9 8 7 5 2 0 0
+  B 0.15 s tap ctr  half-peak 2.68 s | >10 deg 3.25 s | drifting 79% | 118->155 km/h | contact false
+      26 30 27 25 23 21 19 18 16 15 14 12 11 10 6 1 0 0 0
+  C HELD counter    half-peak 0.77 s | >10 deg 0.82 s | drifting 21% | 119->187 km/h | contact false
+      25 31 26 15 -1 -3 -3 -4 -4 -4 -4 -4 -4 -4 -4 -4 -4
+  ORDERING 1, persists centred:  2.22 s (round 1: 0.63 s; target >= 2.0 s)
+  ORDERING 2, tap LENGTHENS:     2.68 vs 2.22 HIT   [10 deg bar: 3.25 vs 2.85 HIT]
+  ORDERING 3, held ENDS it:      0.77 vs 2.22 HIT   [10 deg bar: 0.82 vs 2.85 HIT]
+  free-energy check, biggest one-frame GROUND-SPEED gain after entry:
+      centred +0.59 km/h in one frame at t=5.36 s, peak accelG 8.9 m/s^2
+      tap     +1.06 km/h in one frame at t=1.03 s, peak accelG 17.7 m/s^2
+      held    +0.89 km/h in one frame at t=1.03 s, peak accelG 16.6 m/s^2
+
+== 3. CHAIN DRIFT: six beats of "tap brake, turn" through the real keys and the frozen 0.6 cap
+  130 km/h: peak slipAngle 14.8 deg (round 1: 6 deg) | drift-state samples 56% (round 1: 0%) | 128->170 km/h | contact false
+   slip trace: -0 -0 -0 1 2 3 3 3 3 7 14 7 -1 -3 -3 -7 -14 -7 1 3 3 7 14 7 -1 -3 -3 -7 -14 -7 1 3 3 7 14 7 -0 -3 -4 -4 -2 -1 -0 -0
+
+== 4. ONE 200 ms BRAKE TAP after 0.5 s of load, at 100 / 130 / 150 km/h (brief target 2)
+  100 km/h: armed true at t=0.53 s, held 2.53 s (1.0 s beat) | peak slip 13.8 deg | contact false
+   3 10D 14D 14D 13D 12D 11D 11D 10D 9D 8D 7D 6D 5D 5D 4D
+  130 km/h: armed true at t=0.53 s, held 2.54 s (1.0 s beat) | peak slip 13.9 deg | contact false
+   3 10D 13D 14D 14D 13D 12D 11D 10D 9D 8D 7D 6D 5D 5D 4D
+  150 km/h: armed true at t=0.53 s, held 2.48 s (1.0 s beat) | peak slip 13.3 deg | contact false
+   4 10D 13D 13D 13D 12D 11D 10D 9D 8D 7D 6D 5D 5D 4D 4D
+
+== 5. THE E-BRAKE: monotone in hold time? never accelerates? does it ROTATE the car?
+  (all figures are ground speed = hypot(speed, vLat), i.e. how fast the car is really going)
+  80 km/h: 1s -27% | 2s -70% | 3s -93%  monotone-down YES  ever faster than entry: no
+     slide depth 27/32/32 deg | peak yaw 77/77/105 deg/s vs 48 without | heading in 2 s 113 vs 81 deg without | contact false
+  130 km/h: 1s -20% | 2s -51% | 3s -81%  monotone-down YES  ever faster than entry: no
+     slide depth 27/34/34 deg | peak yaw 63/63/66 deg/s vs 35 without | heading in 2 s 76 vs 66 deg without | contact false
+  200 km/h: 1s -19% | 2s -44% | 3s -67%  monotone-down YES  ever faster than entry: no
+     slide depth 28/35/35 deg | peak yaw 59/59/59 deg/s vs 30 without | heading in 2 s 65 vs 58 deg without | contact false
+  250 km/h: 1s -20% | 2s -43% | 3s -63%  monotone-down YES  ever faster than entry: no
+     slide depth 28/35/35 deg | peak yaw 60/60/60 deg/s vs 28 without | heading in 2 s 63 vs 55 deg without | contact false
+
+== 6. IS THERE A GRIP EDGE? six seconds of held lock at 250 km/h (round 1: dead-flat 28-29 deg/s)
+  throttle held: yaw 28-29 deg/s | peak slipAngle 4.9 deg | drifting 0% | 245->222 km/h | contact false
+   yaw trace: 28 28 28 28 28 28 28 28 29 29 29 29 29 29 29 29
+  lift off: yaw 29-47 deg/s | peak slipAngle 5.6 deg | drifting 0% | 245->95 km/h | contact false
+   yaw trace: 29 29 30 30 31 32 33 34 35 36 37 39 40 42 44 46
+
+== 7. THE CHASE RIG. Does it rotate FURTHER than the car, as the user reported?
+  Three bearings, all from the live page: the physics yaw, the DRAWN nose (carRoot.rotation.y,
+  which is what the player actually sees) and the rig azimuth (camera->car bearing).
+  226 samples with |slip| > 4.6 deg; peak slipAngle 33 deg
+  rig LEADS the physics heading (wrong side) in 0 / 226 samples; max |rig - yaw| 11.8 deg
+  max |rig - DRAWN nose| 11.8 deg  <- this is the readable lag on screen, and main.js:320 already rotates the drawn nose into the slide by s.slip*0.22
+  sample (t, slipAngle, rig-yaw, rig-drawnNose), all deg:
+    0.30  slip 4.8  rig-yaw -7.7  rig-drawn -7.7
+    0.51  slip 12.5  rig-yaw -8.8  rig-drawn -8.8
+    0.71  slip 20.5  rig-yaw -10.8  rig-drawn -10.8
+    0.91  slip 26.2  rig-yaw -11.5  rig-drawn -11.5
+    1.11  slip 29.7  rig-yaw -11.4  rig-drawn -11.4
+    1.31  slip 31.9  rig-yaw -11.0  rig-drawn -11.0
+    1.51  slip 33.2  rig-yaw -10.7  rig-drawn -10.7
+    1.71  slip 30.8  rig-yaw -10.8  rig-drawn -10.8
+    1.91  slip 28.8  rig-yaw -11.2  rig-drawn -11.2
+    2.11  slip 27.0  rig-yaw -11.6  rig-drawn -11.6
+    2.31  slip 25.2  rig-yaw -11.8  rig-drawn -11.8
+    2.51  slip 23.6  rig-yaw -11.8  rig-drawn -11.8
+    2.71  slip 22.1  rig-yaw -11.6  rig-drawn -11.6
+    2.92  slip 20.8  rig-yaw -11.4  rig-drawn -11.4
+    3.11  slip 19.5  rig-yaw -11.2  rig-drawn -11.2
+    3.31  slip 18.3  rig-yaw -11.0  rig-drawn -11.0
+    3.51  slip 17.0  rig-yaw -10.7  rig-drawn -10.7
+    3.71  slip 15.9  rig-yaw -10.5  rig-drawn -10.5
+    3.91  slip 14.8  rig-yaw -10.3  rig-drawn -10.3
+  ORDERING HOLDS: the rig never leads the car.
+
+== 8. BOOST ECONOMY. (a) is there still a passive refill? (b) does an event actually pay?
+  (a) 20 s of held W from an EMPTY bar at 250 km/h: bar 0.0000 -> 0.5055 (round 1: a full bar in 28.6 s, so 20 s should have bought 0.70)
+  (a2) 4 s including a 2 s e-brake slide: bar 0.0000 -> 0.3293 (boostEarnDrift 0.10/s at full angle), drifting 99%
+  (b) setEventSource exists. 20 nearMiss events at intensity 1.0 (boostPerNearMiss 0.060): bar 0.0000 -> 1.0000, state.eventEarn 0.958
+  (b2) malformed payload (null, unknown type, missing amount, a string, a valid check): no throw, bar reached 1.0000 (only the 'check' should pay)
+  (b3) is the join made in the shipped build? traffic.drainEvents() EXISTS, but nothing calls physics.setEventSource() -> UNJOINED
+
+== 9. ONE WALL. Drive into a downtown facade at a shallow angle and at a square one.
+  (36 colliders in the live world)
+  10 deg from the face: normal closing speed 11.7 m/s (hitNormalSpeed is 34, grazeNormalSpeed 2.5 -> severity 0.29 predicted)
+     243 -> 186 km/h (77% kept, impact 0.11), and 3.7 s later 13 km/h
+     state.crashed true; wrecks published (drained every frame, as the routed main.js join will): 0
+  20 deg from the face: never reached a wall (approach geometry missed; ignore)
+  45 deg from the face: normal closing speed 47.5 m/s (hitNormalSpeed is 34, grazeNormalSpeed 2.5 -> severity 1.00 predicted)
+     242 -> 60 km/h (25% kept, impact 0.97), and 3.4 s later 60 km/h
+     state.crashed true; wrecks published (drained every frame, as the routed main.js join will): 0
+  90 deg from the face: never reached a wall (approach geometry missed; ignore)
+
+== 10. THE CHAIN, PER BEAT. Which beat does the builder's 15 deg / 21% actually come from?
+  builder: 0.6 s load then [tap 200, drive 800] x6
+    WHOLE RUN: peak 24.2 deg | drifting 62% | 127->152 km/h | contact false
+    beat 1: peak 15.4 deg, drifting 98%
+    beat 2: peak 24.2 deg, drifting 71%
+    beat 3: peak 15.6 deg, drifting 70%
+    beat 4: peak 15.0 deg, drifting 68%
+    beat 5: peak 15.5 deg, drifting 70%
+    beat 6: peak 14.9 deg, drifting 68%
+  per-beat: [turn 500, tap 200, drive 300] x6
+    WHOLE RUN: peak 27.9 deg | drifting 64% | 128->37 km/h | contact false
+    beat 1: peak 16.0 deg, drifting 50%
+    beat 2: peak 27.9 deg, drifting 100%
+    beat 3: peak 15.4 deg, drifting 68%
+    beat 4: peak 21.0 deg, drifting 100%
+    beat 5: peak 6.6 deg, drifting 68%
+    beat 6: peak 6.4 deg, drifting 38%
+
+== CONSOLE / PAGE ERRORS ACROSS THE WHOLE SESSION
+  NONE
