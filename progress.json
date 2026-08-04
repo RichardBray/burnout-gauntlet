@@ -1,5 +1,5 @@
 {
-  "generated": "2026-08-04T04:29:33.513Z",
+  "generated": "2026-08-04T05:17:37.088Z",
   "waves": [
     "wave-k",
     "wave-l",
@@ -18,43 +18,35 @@
       "goal": "holds 60 fps at 1280x720 real pixels",
       "rounds": 3,
       "verdict": "PARTIAL",
-      "waves": "s* s s* s s* s",
-      "building": false,
+      "waves": "s* s s* s s* s s*",
+      "building": true,
       "metrics": [
         {
-          "k": "corner",
-          "v": "12.90 ms p50, 81.2 delivered fps, 3.1% over 16.7 ms at 1280x720 ratio 1 dpr 1 - the only scenario that SUSTAINS 60 fps"
-        },
-        {
           "k": "cruise",
-          "v": "15.90 ms p50 but 60.0 fps and 23.3% of frames over 16.7 ms at 1280x720 ratio 1 - NOT sustained"
+          "v": "15.90 ms p50, 58.4 delivered fps, 25.1% of frames over 16.7 ms at 1280x720 ratio 1 dpr 1 - UNCHANGED, still NOT sustained"
         },
         {
-          "k": "city / boost / night-wet",
-          "v": "21.20 / 23.20 / 27.00 ms p50 = 44.9 / 43.0 / 36.6 fps at 1280x720 ratio 1"
+          "k": "THE HUD IS NOT A COMPOSITING COST",
+          "v": "a full-screen 2-D canvas layer that is not redrawn costs 0.00 ms (13.40 vs 13.40 with no HUD, cruise)"
         },
         {
-          "k": "night-wet",
-          "v": "33.30 -> 27.00 ms (-18.9%), and --kill shadow-4096 returns it to 33.30 - the whole win is night's 1024 shadow map"
+          "k": "the HUD's whole cost is its REDRAW",
+          "v": "2.50 ms on cruise (15.90 -> 13.40 with draw stopped) and 2.20 in the city (20.40 -> 18.20)"
         },
         {
-          "k": "Retina (dpr 2, GL buffer still 1280x720 ratio 1)",
-          "v": "corner 15.90 -> 12.80 ms, 57.9 -> 81.3 fps - corner passes the bar there for the first time"
+          "k": "in-frame composite is LOSSLESS",
+          "v": "hud-overlay maxDiff 1, 0.0000% of px over 2/255, read at 3x on type and blur"
         },
         {
-          "k": "cold-boot hitch",
-          "v": "0 of 11 boots on HEAD, 9 of 9 on the parent (170-325 ms); cause is audio.start() on the first keydown, killed 4/4"
+          "k": "visual gate",
+          "v": "7 presets BEFORE vs AFTER default all at or inside a noise floor I measured first (hud-overlay 2 against its own floor of 2)"
         },
         {
-          "k": "HUD cost on HEAD at dpr 1",
-          "v": "2.40 ms on cruise (15.90 -> 13.50, 23.3% -> 3.0% long) and 3.40 ms in the city - the next action"
-        },
-        {
-          "k": "visual regression gate",
-          "v": "6 presets inside my own noise floor; wet-night-asphalt maxDiff 37 / 0.75% of px, read at 3x, not worse"
+          "k": "behaviour",
+          "v": "resize, res slider while paused (D1), scene change and crash all match the DOM control on screen; 11 boot configurations, 0 errors"
         }
       ],
-      "metricsFrom": "wave s critic"
+      "metricsFrom": "wave s builder"
     },
     {
       "piece": "handling",

@@ -2,10 +2,12 @@
 // bottom-left, a rolling speedometer, a rotating street minimap bottom-right,
 // centre-screen event banners and a crash/damage state.
 //
-// API: createHud(container, {layout}) -> hud
+// API: createHud(container, {layout, maxPixelRatio, attached}) -> hud
 //   hud.canvas                       the overlay canvas (device-resolution)
 //   hud.resize(w, h)                 CSS pixels; internally scaled by devicePixelRatio
 //   hud.setVisible(bool) / hud.visible
+//   hud.setAttached(bool) / hud.attached    is this canvas a DOM compositing layer?
+//   hud.generation                   bumped by every draw(); an uploader's dirty flag
 //   hud.update(dt, state)            state = {speed, boost, boosting, rpm01, gear,
 //                                             pos, yaw, crashed, damage, chain}
 //   hud.snap(state)                  deterministic single frame, no smoothing lag
@@ -85,12 +87,45 @@ const easeOutBack = (t) => {
   return 1 + u * u * ((c + 1) * u + c);
 };
 
-export function createHud(container, { layout, maxPixelRatio = 1 } = {}) {
+export function createHud(container, { layout, maxPixelRatio = 1, attached = true } = {}) {
   const canvas = document.createElement('canvas');
   const ctx = canvas.getContext('2d');
-  container.appendChild(canvas);
+
+  // ---- WHETHER THIS CANVAS IS A DOM LAYER, AND WHY THAT TURNED OUT NOT TO MATTER ------------
+  //
+  // `attached: false` keeps this canvas OUT of the document, so it is not a compositing layer;
+  // main.js then mirrors it into a texture and composites it inside the WebGL frame (`#hudgl=1`).
+  // That route was built because two rounds of profiling concluded the HUD's 2.20-2.50 ms was the
+  // browser compositing a second full-screen layer every frame. **It is not, and the measurement
+  // is in main.js beside the code: a full-screen 2-D canvas that is in the document but is not
+  // REDRAWN costs 0.00 ms.** The whole cost is the redraw, both routes pay it, and the in-frame
+  // route pays 0.70-1.40 ms more because it uploads the canvas itself. So the DOM layer is still
+  // the default and this option exists measured rather than argued.
+  //
+  // Either way nothing about the DRAWING changes. This is a lot of tuned canvas code with a real
+  // reference plate behind it, so the 2-D canvas stays the authoring surface and only its route
+  // to the screen moves; that is what keeps the option lossless.
+  //
+  // `setAttached()` is live at runtime because the choice is not static: main.js falls back to the
+  // DOM layer whenever the HUD's backing store and the drawing buffer differ in size (resScale
+  // below 1, or `#hudres=2`), because compositing in-frame at a lower resolution than the window
+  // would soften the HUD, which main.js has an explicit recorded decision against.
+  let inDom = false;
+  function setAttached(v) {
+    const want = !!v;
+    if (want === inDom) return;
+    inDom = want;
+    if (want) container.appendChild(canvas);
+    else canvas.remove();
+  }
+  setAttached(attached);
 
   let W = 1920, H = 1080, S = 1, dpr = 1, visible = true;
+
+  // Bumped by every completed draw(). A consumer that uploads this canvas to the GPU uses it to
+  // upload ONLY when the pixels actually changed — which is what makes the paused path, where
+  // nothing redraws, cost nothing at all.
+  let gen = 0;
 
   // eased display values
   let shownSpeed = 0;      // km/h
@@ -156,6 +191,12 @@ export function createHud(container, { layout, maxPixelRatio = 1 } = {}) {
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     S = Math.max(0.45, Math.min(W / 1920, H / 1080));
     barGeo = null;
+    // Assigning canvas.width CLEARS the canvas, so a resize is a content change even though no
+    // draw() ran, and the size of the GPU-side texture has changed underneath its consumer. Bump
+    // the generation so an uploader re-uploads at the new size instead of stretching a stale
+    // frame across the new one. (This is the same mechanism as menu.js's D1: a resize blanks the
+    // HUD, and it is the caller's job to repaint it.)
+    gen++;
   }
   resize(container.clientWidth || 1920, container.clientHeight || 1080);
 
@@ -2692,6 +2733,7 @@ export function createHud(container, { layout, maxPixelRatio = 1 } = {}) {
     drawBoost(s);
     drawSpeedo(s);
     drawBanner();
+    gen++;
   }
 
   function advance(dt, s) {
@@ -2734,6 +2776,15 @@ export function createHud(container, { layout, maxPixelRatio = 1 } = {}) {
     resize,
     setVisible(v) { visible = !!v; canvas.style.display = v ? 'block' : 'none'; },
     get visible() { return visible; },
+    /** Put this canvas in the document (a DOM compositing layer) or take it out. See above. */
+    setAttached,
+    get attached() { return inDom; },
+    /**
+     * Increments once per completed draw(), and once per resize() because that clears the
+     * canvas. A consumer that mirrors this canvas into a GPU texture uploads only when this
+     * number moves.
+     */
+    get generation() { return gen; },
 
     banner(text, secs = 2) {
       bannerText = text || '';

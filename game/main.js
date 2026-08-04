@@ -180,7 +180,14 @@ export async function boot() {
   // which is what the 3-D buffer is too; `#hudres=2` restores the Retina-supersampled HUD and
   // costs 4.0 ms/frame in the city. The measurement and the kill-control are in hud.js's resize().
   const hudRes = Math.max(1, Math.min(3, parseFloat(params.hudres) || 1));
-  const hud = createHud(document.getElementById('hud'), { layout: world.LAYOUT, maxPixelRatio: hudRes });
+  // `#hudgl=1` composites the HUD inside the WebGL frame instead of letting the browser composite
+  // it as a second DOM layer. IT IS OFF BY DEFAULT BECAUSE IT IS SLOWER: measured 0.70 ms slower
+  // on cruise and 1.40 ms slower in the city. The full measurement, and the refutation of the
+  // reason it was built, are at "THE HUD LAYER" below, next to the code.
+  const hudGl = params.hudgl === '1' || params.hudgl === true;
+  const hud = createHud(document.getElementById('hud'), {
+    layout: world.LAYOUT, maxPixelRatio: hudRes, attached: !hudGl,
+  });
   const audio = createAudio({ enabled: !shotMode });
   const music = shotMode ? createMusic() : getMusic();
   const traffic = createTraffic(scene, {
@@ -247,6 +254,164 @@ export async function boot() {
     fxaa.material.uniforms.resolution.value.set(1 / rtW, 1 / rtH);
   }
 
+  // ==========================================================================
+  // THE HUD LAYER — BUILT TO SAVE 2.40 ms, MEASURED AT 0.70 ms SLOWER, SHIPPED OFF BY DEFAULT
+  // ==========================================================================
+  //
+  // WHAT THIS WAS FOR. perf-critic-r3 section 8 and perf-r3 routed item 1 both concluded that the
+  // HUD's 2.20-2.50 ms was "the browser compositing a full-screen 2-D canvas layer over the WebGL
+  // canvas every single frame", of which only ~0.40 ms was the redraw, and named drawing the HUD
+  // inside the WebGL frame as the single next action and the last win big enough to close a
+  // scenario. This is that change, and it is off by default because the premise is wrong.
+  //
+  // THE REFUTATION, by kill-control, 3 runs per cell, 1280x720, pixelRatio 1, dpr 1, resScale 1,
+  // gl.drawingBufferWidth/Height read off the driver at the end of every window
+  // (verdicts/wave-s/perf-r4.md section 2), as p50 / delivered fps / % of frames over 16.7 ms:
+  //
+  //                                            cruise                     city
+  //   DOM layer, HUD live (the default)   15.90 / 58.2 / 22.4%     20.40 / 47.0 / 93.9%
+  //   IN-FRAME, HUD live (#hudgl=1)       16.70 / 50.1 / 49.9%     21.80 / 44.3 / 80.1%
+  //   DOM layer present but NOT REDRAWN   13.40 / 75.4 /  2.7%     18.20 / 50.5 / 70.6%
+  //   in-frame, not redrawn (no upload)   13.50 / 74.8 /  2.8%       —
+  //   no HUD at all                       13.40 / 75.4 /  2.6%     18.30 / 49.9 / 74.3%
+  //
+  // Read the last two rows together: **a full-screen 2-D canvas that is IN the document but does
+  // not change costs 0.00 ms** — 13.40 against 13.40 with no HUD at all, and 18.20 against 18.30
+  // in the city. There was never a standing per-frame layer cost to remove. The whole 2.20-2.50 ms
+  // is the REDRAW, i.e. what it costs to change 921,600 canvas pixels and get them onto the
+  // screen, and both routes have to pay it. Compositing in-frame pays it as an explicit
+  // texImage2D of the whole canvas, and that is 0.70 ms (cruise) to 1.40 ms (city) MORE than what
+  // the compositor does with the same changed layer.
+  //
+  // Only 0.95 ms of that 2.20 is main-thread CPU inside draw() (`tools/_hudprof.mjs`, per widget:
+  // boost 0.38, street plate 0.25, speedo 0.15, minimap 0.12); the remaining ~1.3 ms is canvas
+  // rasterisation and transport, off the CPU bracket. That is also why perf-r3's 30 Hz experiment
+  // saved only 0.40 ms of 2.10 and looked non-linear — halving the redraw RATE does not halve a
+  // cost that is partly a per-frame dependency on the canvas's raster completing.
+  //
+  // WHY IT IS KEPT AT ALL, rather than reverted. It is measured, gated and lossless (the
+  // `hud-overlay` preset is byte-identical through it), so the next round can re-derive the
+  // number in one boot instead of rebuilding the mechanism, and it is the path to take if the
+  // HUD's redraw is ever made cheap enough that the upload dominates, or on a platform whose
+  // compositor is worse than Metal's. The default is UNCHANGED: with `hudgl` false the HUD canvas
+  // is appended to `#hud` exactly as before, `drawHudLayer()` returns on its first line, and
+  // `renderFrame()` is `composer.render()` and nothing else.
+  //
+  // WHY THIS IS DRAWN AFTER `composer.render()` AND NOT AS ANOTHER COMPOSER PASS. A pass appended
+  // to the chain would take `renderToScreen` off FXAA, so FXAA would render into a target and the
+  // HUD pass would have to blit that whole target to the screen — a full-screen texture read and
+  // write bought for nothing. Rendering the quad straight onto the default framebuffer with
+  // `autoClear` off blends over the image that is already there, which is exactly what the
+  // browser's compositor was doing, at one quad instead of one layer.
+  //
+  // WHY THIS POSITION IS THE ONLY CORRECT ONE FOR COLOUR. The output pass owns the tonemap and
+  // the sRGB transform (see the renderer note at the top of this file) and the composer works in
+  // HalfFloat linear. The HUD is authored in sRGB, in a 2-D canvas, and MUST NOT be tone mapped.
+  // After the output pass and after FXAA there is nothing left to apply, and the material below
+  // is a raw ShaderMaterial that writes the sampled texel unchanged — no colour-space chunk, no
+  // tonemapping chunk, `colorSpace = NoColorSpace` so there is no hardware sRGB decode on the
+  // sampler either. Nearest filtering on a texture whose size equals the drawing buffer's makes
+  // the sample land on exactly one texel, so the byte that reaches the framebuffer is the byte
+  // the 2-D canvas wrote. NormalBlending with a non-premultiplied source is
+  // `src.rgb * a + dst.rgb * (1 - a)` — the same arithmetic, in the same sRGB byte space, that
+  // the DOM compositor was doing. That is why this is lossless rather than merely close, and
+  // the `hud-overlay` preset is the gate that proves it.
+  //
+  // THE FALLBACK RULE, AND IT PROTECTS A RECORDED DECISION. Compositing in-frame means the HUD is
+  // rasterised into the drawing buffer, so it inherits the buffer's resolution. main.js's
+  // recorded decision (see resize() below) is that dropping `resScale` must NOT soften the HUD.
+  // So the in-frame path is used only while the HUD's backing store and the drawing buffer are
+  // the SAME size; the moment they differ — `resScale` below 1, or `#hudres=2` asking for a
+  // supersampled overlay — `syncHudPath()` puts the canvas back in the document and the old
+  // behaviour returns exactly. That check is a size comparison rather than a guess about which
+  // knobs exist, so a future knob that changes either size is handled without being enumerated.
+  const hudTex = new THREE.Texture(hud.canvas);
+  hudTex.minFilter = THREE.NearestFilter;
+  hudTex.magFilter = THREE.NearestFilter;
+  hudTex.generateMipmaps = false;
+  hudTex.colorSpace = THREE.NoColorSpace;
+  const hudScene = new THREE.Scene();
+  const hudCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+  const hudQuad = new THREE.Mesh(
+    new THREE.PlaneGeometry(2, 2),
+    new THREE.ShaderMaterial({
+      uniforms: { tHud: { value: hudTex } },
+      vertexShader: `
+        varying vec2 vUv;
+        void main() { vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }`,
+      fragmentShader: `
+        uniform sampler2D tHud;
+        varying vec2 vUv;
+        void main() { gl_FragColor = texture2D(tHud, vUv); }`,
+      transparent: true, depthTest: false, depthWrite: false,
+    }));
+  hudQuad.frustumCulled = false;
+  hudScene.add(hudQuad);
+
+  const hudBuf = new THREE.Vector2();
+  let hudInFrame = false;
+  let hudGen = -1;
+  let hudTexW = 0, hudTexH = 0;
+
+  /**
+   * Decide, per frame, whether the HUD may be composited in-frame, and move the canvas in or out
+   * of the document when the answer changes. Cheap enough to run every frame (two integer
+   * comparisons; the DOM touch only happens on a change) and running it every frame is what makes
+   * the res slider, `#hudres`, a window resize and a scene change all self-heal without any of
+   * them having to know this code exists.
+   */
+  function syncHudPath() {
+    renderer.getDrawingBufferSize(hudBuf);
+    const fits = hudGl && hud.canvas.width === hudBuf.x && hud.canvas.height === hudBuf.y;
+    if (fits !== hudInFrame) {
+      hudInFrame = fits;
+      hud.setAttached(!fits);
+      hudGen = -1;           // force one upload on the way back in
+    }
+    return hudInFrame;
+  }
+
+  /** Composite the HUD over the frame that is already in the default framebuffer. */
+  function drawHudLayer() {
+    if (!syncHudPath() || !hud.visible) return;
+    // A CANVAS THAT CHANGED SIZE NEEDS A NEW GL TEXTURE, NOT A NEW UPLOAD, AND THIS IS A REAL BUG
+    // I SHIPPED FOR AN HOUR. `needsUpdate` re-uploads into the allocation three already made, so
+    // after a window resize a 1024x600 canvas was written into the top-left of a 1280x720 texture
+    // and the quad — which samples uv 0..1 — drew the fresh HUD at 80% scale in the corner with
+    // the PREVIOUS frame's HUD still showing in the margins. Two HUDs on screen at once, with two
+    // different street names on the two street plates, which is what gave it away.
+    // `dispose()` makes three delete and reallocate at the new size. It cannot be folded into the
+    // generation check: a resize bumps the generation too, and re-uploading is not the fix.
+    // Found by tools/_hudbehav.mjs, which screenshots the real page after a real resize; no still
+    // preset and no frame-time number could have seen it.
+    if (hud.canvas.width !== hudTexW || hud.canvas.height !== hudTexH) {
+      hudTex.dispose();
+      hudTexW = hud.canvas.width;
+      hudTexH = hud.canvas.height;
+      hudGen = -1;
+    }
+    // UPLOAD ONLY WHAT CHANGED. hud.generation moves on every draw() and on every resize() (which
+    // clears the canvas); while nothing redraws it — the paused path never calls tick() — this
+    // costs one integer comparison and no upload at all.
+    const g = hud.generation;
+    if (g !== hudGen) { hudGen = g; hudTex.needsUpdate = true; }
+    renderer.setRenderTarget(null);
+    const prevAutoClear = renderer.autoClear;
+    renderer.autoClear = false;
+    renderer.render(hudScene, hudCam);
+    renderer.autoClear = prevAutoClear;
+  }
+
+  /**
+   * THE frame. Every caller — the drive loop, the paused loop, the warm-up frames and the
+   * deterministic screenshot path — must go through this, because on the in-frame path the HUD is
+   * not in the composer chain and a bare `composer.render()` would drop it.
+   */
+  function renderFrame() {
+    composer.render();
+    drawHudLayer();
+  }
+
   function resize() {
     const w = window.innerWidth, h = window.innerHeight;
     camera.aspect = w / h;
@@ -294,6 +459,18 @@ export async function boot() {
       return { w: v.x, h: v.y, cssW: window.innerWidth, cssH: window.innerHeight,
         pixelRatio: renderer.getPixelRatio(), devicePixelRatio: window.devicePixelRatio || 1 };
     },
+    /**
+     * Which route the HUD is taking to the screen, for a harness or a critic that needs to
+     * assert it rather than infer it. `inFrame` true = one compositing layer, HUD drawn by
+     * drawHudLayer(); `attached` true = the HUD canvas is a DOM layer (the `#hudgl=0` path and
+     * the automatic fallback when the two sizes below differ).
+     */
+    hudPath: () => ({
+      hudgl: hudGl, inFrame: hudInFrame, attached: hud.attached,
+      hudCanvas: [hud.canvas.width, hud.canvas.height],
+      drawingBuffer: [hudBuf.x, hudBuf.y],
+      inDocument: !!(hud.canvas.parentNode),
+    }),
   };
 
   // ---- time of day / weather, as a single reversible operation --------------
@@ -587,9 +764,9 @@ export async function boot() {
     // and it makes the shot path MORE current than it was before the rate limit, not less.
     car.refreshEnv();
     // render a handful of identical frames so nothing is mid-upload
-    for (let i = 0; i < 4; i++) composer.render();
+    for (let i = 0; i < 4; i++) renderFrame();
     await new Promise((r) => requestAnimationFrame(r));
-    composer.render();
+    renderFrame();
     bootEl.classList.add('gone');
     bootEl.style.display = 'none';
     window.__ready = true;
@@ -758,7 +935,10 @@ export async function boot() {
     last = now;
     frameStats.push(dtRaw * 1000);
     renderer.shadowMap.needsUpdate = true;
-    if (paused) { composer.render(); requestAnimationFrame(frame); return; }
+    // The paused path composites the HUD too, and it must: menu.js repaints the paused HUD with
+    // hud.snap() (its D1 fix, the res slider used to leave it blank until resume) and on the
+    // in-frame path that repaint only reaches the screen through drawHudLayer().
+    if (paused) { renderFrame(); requestAnimationFrame(frame); return; }
     const dt = clamp(dtRaw, 0, 0.05);
 
     if (!crash.active) {
@@ -786,7 +966,7 @@ export async function boot() {
 
     car.setBrake(keys.KeyS || keys.ArrowDown ? 1 : 0);
     tick(dt);
-    composer.render();
+    renderFrame();
     requestAnimationFrame(frame);
   }
   // Compiling shaders is the last real cost and it is the one that used to stall on a
@@ -848,13 +1028,13 @@ export async function boot() {
   const warmBoostOn = boostFx.pass.enabled;
   boostFx.pass.uniforms.uAmount.value = 1;
   boostFx.pass.enabled = true;   // boost.js:1062 ships it disabled; a disabled pass is skipped
-  try { composer.render(); } catch { /* a warm frame must never be able to stop the boot */ }
+  try { renderFrame(); } catch { /* a warm frame must never be able to stop the boot */ }
   boostFx.pass.uniforms.uAmount.value = warmBoostAmt;
   boostFx.pass.enabled = warmBoostOn;
   for (const o of hidden) o.visible = false;
   // ...and one more frame in the SHIPPING visibility state, so the (cheaper) program and buffer
   // set the first real frame actually uses is resident too.
-  try { composer.render(); } catch { /* as above */ }
+  try { renderFrame(); } catch { /* as above */ }
   await stage('done', 'ready');
   if (bootBarEl) bootBarEl.style.width = '100%';
   await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
@@ -938,7 +1118,7 @@ export async function boot() {
     const p0 = renderer.info.programs.length;
     const w0 = performance.now();
     tick(0.001);
-    composer.render();
+    renderFrame();
     // A hard sync, at boot only, on purpose. This is the one place in the build where blocking
     // the main thread on the GPU is the correct behaviour.
     const gl = renderer.getContext();
