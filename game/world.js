@@ -2847,8 +2847,30 @@ export function createWorld(scene, { rng, roadKit }) {
   layoutContacts(null);
 
   // ---- dynamic point-light pool ----------------------------------------
-  const POOL = 14;
+  // POOL IS THE NUMBER OF REAL POINT LIGHTS IN THE FRAME AT NIGHT, AND IT IS A FRAME-TIME
+  // CONSTANT, NOT A DENSITY CONSTANT. See the long note in update() for the measurement: 14 lights
+  // cost 15.3 ms of a 45 ms night-wet frame at 1280x720, and the pool's slots were being handed
+  // out by distance alone, so lamps behind the camera held slots while lit signs in shot went
+  // dark. The slots are now filled frustum-first, and the size is set from the measured
+  // distribution of how many emitters are actually in shot at once, measured rather than guessed
+  // (`tools/_perfr2.mjs --mode lights`, 703 frames over 30 s of night driving at five places on
+  // the city path, verdicts/wave-s/perf-r2.md section 4):
+  //
+  //   emitters in shot   5     6     7     8     9    10    11
+  //   cumulative %    1.28 15.20 53.27 88.07 98.58 99.72 100.00
+  //
+  // So TEN slots hold every emitter that is in shot on 99.72% of frames, and the four lights this
+  // gives up were, on almost every frame, lighting something behind the camera. It is deliberately
+  // NOT the smallest number that is fast: 8 would buy a further 4 ms and would drop a lit emitter
+  // in shot on 12% of frames, and this wave may not make a scene look worse.
+  const POOL = 10;
   const pool = [];
+  // Scratch for the frustum gate in update(). One allocation, reused; update() runs every frame.
+  const _lightFrustum = new THREE.Frustum();
+  const _lightPV = new THREE.Matrix4();
+  const _lightSphere = new THREE.Sphere();
+  const lightStats = { frames: 0, considered: 0, inShot: 0, used: 0, maxInShot: 0, pool: POOL,
+    hist: new Array(41).fill(0) };
   for (let i = 0; i < POOL; i++) {
     const l = new THREE.PointLight(0xffc98a, 0, 46, 2);
     l.visible = false;
@@ -2869,9 +2891,12 @@ export function createWorld(scene, { rng, roadKit }) {
   const smears = new THREE.Group();
   smears.visible = false;
   group.add(smears);
-  for (const p of lampPositions) {
-    roadKit.addWetSmear(smears, p.x, p.z + 5, 0, 0xffc98a, 1.8, 16, 0.16);
-  }
+  // Every street-lamp smear is the same colour, the same size and the same intensity, so all 288
+  // of them are ONE instanced draw instead of 288 meshes with 288 cloned geometries and 288
+  // materials. Additive + depthWrite:false makes that pixel-identical; see addWetSmearBatch.
+  // The 69 neon smears keep their own meshes: each has its own colour and length.
+  roadKit.addWetSmearBatch(smears,
+    lampPositions.map((p) => ({ x: p.x, z: p.z + 5 })), 0xffc98a, 1.8, 16, 0.16);
   for (const n of neons) {
     if (n.y > 14) continue;
     roadKit.addWetSmear(smears, n.x, n.z, 0, n.color, 2.6, 20 + n.y, 0.12);
@@ -3038,6 +3063,17 @@ export function createWorld(scene, { rng, roadKit }) {
     carKit, parkedCounts: parkCounts,
     /** What the spatial chunking pass did, so a harness can assert it actually ran. */
     chunkStats,
+    // ---- OBJECTS THE SSAO NORMAL/DEPTH PREPASS MUST NOT SEE -------------------------------
+    // Ambient occlusion is a property of SURFACES. These two are additive glow quads lying a few
+    // centimetres above the tarmac with `depthWrite: false` in the real frame — the wet lamp/neon
+    // smears and the night light-spill pads. Under the prepass's override material they DO write
+    // depth, so a wet night road had its AO computed against a flat plane hovering over it
+    // instead of against the road, and every one of those quads was a draw call in a second full
+    // submission of the scene. main.js hands this list to createSsaoPass's `exclude`.
+    aoExclude: [smears, spillMesh],
+
+    /** Live point-light pool census, so a harness can size POOL from evidence. */
+    lightStats() { return { ...lightStats, hist: lightStats.hist.slice(0, 21) }; },
 
     setNight(v) {
       night = !!v;
@@ -3104,7 +3140,12 @@ export function createWorld(scene, { rng, roadKit }) {
       concMat.roughness = lerp(1.0, 0.45, v);
     },
 
-    update(dt, focus) {
+    /**
+     * @param camera OPTIONAL. The camera the frame is being rendered from. Used only to frustum-
+     *   cull the dynamic point-light pool (see the note where the pool is filled). Omit it and the
+     *   pool falls back to the old nearest-first ranking, so no caller is required to pass it.
+     */
+    update(dt, focus, camera) {
       // pull the atmosphere from whatever the sky module set this frame
       const fog = scene.fog;
       if (fog) {
@@ -3159,15 +3200,55 @@ export function createWorld(scene, { rng, roadKit }) {
         if (d < 120 * 120) scored.push([d, i]);
       }
       scored.sort((a, b) => a[0] - b[0]);
-      for (let i = 0; i < POOL; i++) {
-        const l = pool[i];
-        if (!night || i >= scored.length) { l.intensity = 0; continue; }
-        const em = emitters[scored[i][1]];
+
+      // ---- THE POOL IS FILLED FROM THE EMITTERS THAT ARE ON SCREEN, NEAREST FIRST -----------
+      // Every visible light in the scene costs EVERY shaded fragment in the frame, because
+      // three's forward renderer puts them all in one uniform array and every lit program loops
+      // over the whole array: `NUM_POINT_LIGHTS` is a shader define, not a per-object property.
+      // Measured at `night-wet`, 1280x720 ratio 1 (`tools/_perfr2.mjs --mode sweep`, three runs,
+      // verdicts/wave-s/perf-r2.md section 4): 14 lights 44.97 ms, 10 lights 36.93, 6 lights
+      // 32.97, 0 lights 29.72. Fifteen milliseconds of a 45 ms frame for fourteen lamps.
+      //
+      // The old selection was "the POOL nearest emitters within 120 m", and distance alone spends
+      // slots on emitters that cannot put a photon in the frame: a street lamp 20 m BEHIND the
+      // camera outranks a neon sign 60 m ahead in the shot. So the ranking is now
+      // frustum-first — a light whose sphere (its own `range`, which is where its attenuation
+      // reaches exactly zero) misses the view frustum is skipped, and its slot goes to the next
+      // nearest emitter that is actually in shot.
+      //
+      // That is why POOL could come down without the frame losing light: see the note on POOL.
+      // With no camera handed in, the frustum gate is inert and the old distance ranking stands.
+      let front = 0;
+      if (camera) {
+        _lightPV.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
+        _lightFrustum.setFromProjectionMatrix(_lightPV);
+      }
+      let slot = 0;
+      for (let k = 0; k < scored.length && slot < POOL; k++) {
+        const em = emitters[scored[k][1]];
+        if (camera) {
+          _lightSphere.center.copy(em.p);
+          _lightSphere.radius = em.range;
+          if (!_lightFrustum.intersectsSphere(_lightSphere)) continue;
+        }
+        front++;
+        if (!night) continue;
+        const l = pool[slot++];
         l.position.copy(em.p);
         l.color.setHex(em.color, THREE.SRGBColorSpace);
         l.intensity = em.power;
         l.distance = em.range;
       }
+      for (let i = slot; i < POOL; i++) pool[i].intensity = 0;
+      // `front` is how many candidates were in shot BEFORE the POOL cap, which is the number
+      // that decides whether POOL is big enough. Histogrammed over a real drive rather than
+      // guessed; see verdicts/wave-s/perf-r2.md section 4.
+      lightStats.considered = scored.length;
+      lightStats.inShot = front;
+      lightStats.used = night ? slot : 0;
+      lightStats.hist[Math.min(front, lightStats.hist.length - 1)]++;
+      if (front > lightStats.maxInShot) lightStats.maxInShot = front;
+      lightStats.frames++;
     },
   };
 

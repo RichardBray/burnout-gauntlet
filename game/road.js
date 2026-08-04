@@ -1591,10 +1591,14 @@ function createReflection(renderer) {
     texMatrix: new THREE.Matrix4(),
     texel: new THREE.Vector2(1 / 1024, 1 / 512),
     enabled: false,
+    // The camera the app actually presents. Set through kit.setMainCamera(); see the gates in
+    // state.render. Null means "no gate", which is the pre-wave-S behaviour.
+    mainCamera: null,
     hidden: [],
     uniforms: [],
     rt: null,
     rtW: 0, rtH: 0,
+    renders: 0, skipped: 0,
     busy: false,
     token: -1,
   };
@@ -1637,9 +1641,42 @@ function createReflection(renderer) {
     }
   }
 
-  state.render = function render(scene, camera) {
+  state.render = function render(scene, camera, material) {
     if (!state.enabled || state.busy) return;
     if (!camera.isPerspectiveCamera) return;
+    // ---- ONE REFLECTION PER FRAME, FOR THE FRAME'S OWN CAMERA. Measured: this was FOUR.
+    //
+    // The token below was written to mean "one reflection per outer render pass", and it does
+    // exactly that. The defect is that a wet frame has FOUR outer passes that draw this road with
+    // a perspective camera, and this function was being asked for a full mirrored re-render of the
+    // whole scene in every one of them. Measured per frame at `night-wet`, 1280x720 ratio 1
+    // (`tools/_perfr2.mjs --mode trace`, and `verdicts/wave-s/perf-r2.md` section 2):
+    //
+    //   640x360 inside the main colour pass          762 calls   4.25 ms   <- the only one that shows
+    //   320x180 inside the SSAO normal/depth prepass 725 calls   7.44 ms
+    //   256x144 inside car.js's cube-probe faces     358 calls  10.83 ms
+    //
+    // 22.5 ms of a 48 ms frame, of which 18.3 ms was drawn into a buffer that nothing sampled.
+    // Two independent gates, both LOSSLESS BY CONSTRUCTION rather than by taste:
+    //
+    // (1) `material` is the material three is about to draw this road WITH. When an outer pass
+    //     installs `scene.overrideMaterial` — the SSAO prepass's normal/depth material,
+    //     boost.js's depth and hero-silhouette materials — the road's own shader, and therefore
+    //     the `uReflMap` sampler, is not in the frame at all. A reflection rendered for that pass
+    //     cannot be read by anything. This is the SSAO and hero-mask rows above.
+    // (2) A planar reflection is only correct for the camera it was mirrored through, so the app
+    //     registers the camera it actually presents (`kit.setMainCamera`, called from main.js).
+    //     Any other perspective camera drawing this road is a side target: car.js's 256-px
+    //     reflection-probe cube faces, which is the 10.83 ms row. Those faces go through
+    //     PMREMGenerator and end up as a roughness-blurred environment on the car's paint, so
+    //     what they now see is the main camera's reflection instead of a per-face one, six of
+    //     which cost more than the entire rest of the frame. The gate on the probe is checked in
+    //     the regression gate against `car-paint-closeup` and `wet-night-asphalt`.
+    //
+    // With no main camera registered (a bare harness), gate (2) is inert and behaviour is the old
+    // behaviour, so nothing that boots this kit without main.js can silently lose its reflection.
+    if (material && scene.overrideMaterial === material) { state.skipped++; return; }
+    if (state.mainCamera && camera !== state.mainCamera) { state.skipped++; return; }
     // One reflection per outer render pass. The nested render below bumps
     // info.render.frame itself, so the token is stamped *after* it: every later road
     // mesh in the same pass then sees a matching token and skips.
@@ -1686,6 +1723,7 @@ function createReflection(renderer) {
     for (const o of state.hidden) o.visible = o.userData._rv !== false;
 
     state.token = renderer.info.render.frame;
+    state.renders++;
     state.busy = false;
   };
 
@@ -1696,6 +1734,9 @@ export function createRoadKit(rng, opts = {}) {
   const renderer = opts.renderer || null;
   const aniso = renderer ? renderer.capabilities.getMaxAnisotropy() : 16;
   const refl = createReflection(renderer);
+  // Scratch parent for addWetSmearBatch: it builds one prototype quad through addWetSmear (which
+  // owns the lazily-built smear texture) and then takes its geometry and material. Never rendered.
+  const _smearProbe = new THREE.Group();
 
   const specs = {
     city: { widthM: 20, tileLenM: 32, lanes: 4, cls: 'city' },
@@ -1852,11 +1893,24 @@ export function createRoadKit(rng, opts = {}) {
       road.receiveShadow = true;
       // Drive the planar reflection from the road itself: no external per-frame hook
       // needed, and it self-guards to one pass per render.
-      road.onBeforeRender = (r, sc, cam) => { if (refl.render) refl.render(sc, cam); };
+      road.onBeforeRender = (r, sc, cam, geo, mat) => { if (refl.render) refl.render(sc, cam, mat); };
       group.add(road);
       refl.hidden.push(road);
       group.userData.length = dist[n - 1];
       return group;
+    },
+
+    /**
+     * Register the camera the app presents, so the planar reflection is rendered once, for that
+     * camera, instead of once per outer render pass that happens to draw a road. See the gate
+     * comment in createReflection's render(). Optional: unset means no gate.
+     */
+    setMainCamera(cam) { refl.mainCamera = cam || null; },
+
+    /** The reflection's own counters, so a harness can assert the gate without reading pixels. */
+    reflStats() {
+      return { enabled: refl.enabled, renders: refl.renders | 0, skipped: refl.skipped | 0,
+        rt: refl.rt ? `${refl.rtW}x${refl.rtH}` : null };
     },
 
     /** 0 = dry, 1 = soaking. Retunes every road material. */
@@ -1950,6 +2004,54 @@ export function createRoadKit(rng, opts = {}) {
       parent.add(m);
       refl.hidden.push(m);
       return m;
+    },
+
+    /**
+     * The same smear, once, for a whole population that shares its colour, size and intensity.
+     *
+     * WHY THIS EXISTS. `addWetSmear` gives every quad its own PlaneGeometry AND its own
+     * MeshBasicMaterial, so the 288 street-lamp smears were 288 geometries, 288 materials and 288
+     * draw calls — and they are submitted by the colour pass, the SSAO normal/depth prepass and
+     * the road's own planar reflection alike. Measured at `night-wet`, 1280x720 ratio 1: turning
+     * wet on took the frame from 1433 to 2420 draw calls and 392 to 749 geometries, and 288 of
+     * those geometries were byte-identical copies of one 2-triangle plane.
+     *
+     * One InstancedMesh is pixel-identical here and not merely close: the quads are ADDITIVELY
+     * blended with `depthWrite: false`, so the frame is the sum of their contributions in any
+     * order, and a single call sums exactly what 288 sorted calls summed. The per-quad transform
+     * is carried by the instance matrix instead of by the mesh's own, which is the same matrix.
+     *
+     * `positions` is an array of {x, z, angle?}. Returns the InstancedMesh.
+     */
+    addWetSmearBatch(parent, positions, color, w = 3, l = 22, intensity = 1) {
+      if (!positions.length) return null;
+      kit.addWetSmear(_smearProbe, 0, 0, 0, color, w, l, intensity); // builds kit._smearTex once
+      const proto = _smearProbe.children.pop();
+      refl.hidden.pop();
+      const mesh = new THREE.InstancedMesh(proto.geometry, proto.material, positions.length);
+      const m4 = new THREE.Matrix4();
+      const e = new THREE.Euler();
+      const q = new THREE.Quaternion();
+      const p = new THREE.Vector3();
+      const one = new THREE.Vector3(1, 1, 1);
+      for (let i = 0; i < positions.length; i++) {
+        const s = positions[i];
+        e.set(-Math.PI / 2, 0, s.angle || 0);
+        q.setFromEuler(e);
+        p.set(s.x, 0.06, s.z);
+        mesh.setMatrixAt(i, m4.compose(p, q, one));
+      }
+      mesh.instanceMatrix.needsUpdate = true;
+      mesh.castShadow = false;
+      mesh.receiveShadow = false;
+      mesh.renderOrder = 5;
+      // The population spans the whole map, so its bounding sphere always intersects the frustum
+      // and `frustumCulled` would only ever cost a test. Off-screen instances are clipped by the
+      // rasteriser for the price of two transformed vertices each.
+      mesh.frustumCulled = false;
+      parent.add(mesh);
+      refl.hidden.push(mesh);
+      return mesh;
     },
   };
 

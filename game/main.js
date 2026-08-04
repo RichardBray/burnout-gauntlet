@@ -153,6 +153,13 @@ export async function boot() {
   const sky = createSky(scene, renderer);
   await stage('road', 'paving roads');
   const roadKit = createRoadKit(makeRng(0xA5FA17), { renderer });
+  // The road's planar reflection is a full mirrored re-render of the scene, and it used to fire
+  // once per outer render pass that drew a road with a perspective camera — four times a frame on
+  // a wet night (SSAO's normal/depth prepass, boost's hero mask, and each of car.js's cube-probe
+  // faces on top of the frame the player sees), 22.5 ms of which 18.3 ms went into a buffer that
+  // nothing sampled. Telling it which camera the frame belongs to is what makes it once.
+  // Measured in verdicts/wave-s/perf-r2.md section 3.
+  roadKit.setMainCamera(camera);
   await stage('world', 'building the city');
   const world = createWorld(scene, { rng: makeRng(0xC17E), roadKit });
 
@@ -204,7 +211,10 @@ export async function boot() {
   // SSAO before bloom: occlusion is part of the scene's radiance, so the glare pyramid
   // must see the darkened seams rather than blooming over them.
   const ssao = createSsaoPass(scene, camera, rtW, rtH, {
-    exclude: [sky.skyMesh, boostFx.group],
+    // world.aoExclude is the additive glow geometry (wet smears, night light spill): it has no
+    // surface for AO to occlude and it writes depth under the prepass's override material, which
+    // put a flat plane in front of the road on every wet frame. See the note in world.js.
+    exclude: [sky.skyMesh, boostFx.group, ...(world.aoExclude || [])],
   });
   composer.addPass(ssao);
   const bloom = bloomMode === 'dual'
@@ -388,7 +398,10 @@ export async function boot() {
       amount: Math.max(s.boostBlend, crash.shutter01),
       speed: s.speed, pos: s.pos, yaw: s.yaw,
     });
-    world.update(sdt, s.pos);
+    // The camera goes in so the dynamic point-light pool can be filled from the emitters that are
+    // actually in shot. Every visible point light costs every shaded fragment in the frame; see
+    // the note in world.js's update().
+    world.update(sdt, s.pos, camera);
     // Traffic runs on the SCALED dt so a crash's slow-mo dilates the other cars too;
     // a wreck tumbling in slow motion past traffic moving at full rate is the single
     // most obvious way to break the crash cam's read.
@@ -443,7 +456,26 @@ export async function boot() {
     const tod = cfg.timeOfDay || 'dusk';
     const city = tod === 'midday' || tod === 'noon' || tod === 'day';
     const sh = sky.sun.shadow;
-    sh.mapSize.set(4096, 4096);
+    // ---- `#shadow=<px>` IS A MEASURED KNOB, AND THE DEFAULT IS DELIBERATELY THE EXPENSIVE ONE.
+    // The sun's depth pass is the largest single item left in this build downtown and at night:
+    // measured at 1280x720 ratio 1 (`tools/_perfr2.mjs --mode kill`, 2 interleaved paired runs,
+    // verdicts/wave-s/perf-r2.md section 6),
+    //
+    //   4096 -> 2048   night-wet  -4.85 ms    city  -2.81 ms
+    //   4096 -> 1024   night-wet  -5.33 ms    city  -2.89 ms
+    //   casters off    night-wet  -9.92 ms    city  -7.20 ms
+    //   PCFSoft -> PCF night-wet  -0.13 ms    city  +0.16 ms   <- the SAMPLING is free
+    //
+    // so it is a raster-area cost, not a filtering or submission one, and the knee is at 2048.
+    // It stays at 4096 by default anyway, because the paragraph above this one is a visual result
+    // that waves K-R paid for: at 2048 the default normalBias is deeper than the 20-45 cm of
+    // facade relief and the facades read FLAT. This wave may not make a scene look worse, so the
+    // frames stay spent and the alternative is one hash parameter with its price printed here.
+    // `#shadow=0` disables the sun's shadow map entirely.
+    const shadowPx = params.shadow === undefined
+      ? 4096 : Math.max(0, Math.min(8192, Math.round(parseFloat(params.shadow) || 0)));
+    if (shadowPx === 0) renderer.shadowMap.enabled = false;
+    sh.mapSize.set(Math.max(256, shadowPx), Math.max(256, shadowPx));
     // 100 m -> 4.9 cm/texel in the city, still well under the 20 cm facade relief.
     // It cannot go tighter than this: at 42 deg a 40 m block throws a 44 m shadow and
     // a 100 m tower a 110 m one, so a +/-62 m box clipped every long shadow out of the
@@ -579,6 +611,21 @@ export async function boot() {
       if (ftN < FT_CAP) ftN++;
       if (ms > 16.7) ftLongTotal++;
     },
+    /**
+     * The ring's raw contents, oldest first. Read-only; `stats()` percentiles are derived from
+     * exactly this. It exists because a percentile cannot tell a 30 ms frame from a 25 ms frame
+     * that waited for the next vsync: wave-s/perf.md section 6 found the p90 pinned at 33.3 ms
+     * (two 60 Hz intervals) while the p50 walked from 27.6 to 16.4, and read it as our workload
+     * for two measurements before a kill-control overturned it. A HISTOGRAM of the raw deltas
+     * shows cadence pinning immediately — the samples pile up at multiples of the refresh
+     * interval and nowhere in between — and nothing else in this instrument can.
+     */
+    samples() {
+      const out = new Array(ftN);
+      const start = ftN === FT_CAP ? ftHead : 0;
+      for (let i = 0; i < ftN; i++) out[i] = ftBuf[(start + i) % FT_CAP];
+      return out;
+    },
     stats() {
       if (!ftN) return null;
       const a = Array.prototype.slice.call(Array.from(ftBuf.subarray(0, ftN))).sort((x, y) => x - y);
@@ -645,7 +692,68 @@ export async function boot() {
   // black screen with the overlay already dismissed, which read as a hang. Do it while
   // the bar is still up and honest about it.
   await stage('warm', 'compiling shaders');
+  // Effects that are built at boot but held INVISIBLE until they fire — crash debris, sparks,
+  // flares, boost flames — were never compiled here, because three's compile() walks visible
+  // nodes only. Every one of their programs therefore compiled on the first C press or the
+  // first boost, which is what the pause on the first crash was: measured at 88 ms of compile
+  // against 19 ms for a second pass, plus the first-render cost of each material variant.
+  //
+  // Force those subtrees visible for exactly one compile, then restore each node's own flag.
+  // Restoring per node rather than per group matters: several of these are individually
+  // toggled at runtime, so a blanket `visible = true` afterwards would make them all appear.
+  //
+  // WAVE-S ROUND 2: THE SUBTREE LIST IS NOW THE WHOLE SCENE, AND A REAL FRAME IS RENDERED.
+  // Two separate defects, both measured on the stall timeline (`tools/perf-probe.mjs --mode
+  // stall`, cruise, 45 s, 1280x720 ratio 1; verdicts/wave-s/perf-r2.md section 7):
+  //
+  //   t+0.72 s   718 ms   dProgs 68  dGeos 379  dTexs 88   <- the first REAL frame
+  //   t+1.94 s    68 ms   dProgs 1
+  //   t+3.84 s    70 ms   dProgs 1
+  //   t+4.36 s    69 ms   dProgs 1
+  //   t+5.44 s    64 ms   dProgs 1
+  //
+  // The named-subtree list could only ever cover the subtrees somebody thought of, and four more
+  // programs were still compiling in the first six seconds of play. Forcing every hidden node in
+  // the scene visible for exactly one compile costs one traversal and covers all of them.
+  //
+  // The 718 ms one is not compilation at all: `renderer.compile()` builds PROGRAMS, and that
+  // frame's counters say `geometries` and `textures`, i.e. 379 vertex buffers and 88 textures
+  // being uploaded to the GPU the first time something actually draws with them. The only way to
+  // force an upload is to draw, so the warm stage now renders one full composer frame with
+  // everything visible. It lands inside the boot bar, where the player is already being told to
+  // wait, instead of on the first frame of the drive.
+  // The subtree list is deliberately NAMED and not `scene.traverse`. I measured the whole-scene
+  // version: it compiles 172 programs instead of 68 and uploads 296 more geometries, it took the
+  // warm stage to **10.1 seconds**, and it STILL left three compiles in the first five seconds of
+  // play, because what those three want is a material variant that no hidden node carries.
+  // Twelve seconds of boot to move 200 ms of stall is not a trade worth making.
+  const warmRoots = [crash.group, boostFx.group].filter(Boolean);
+  const hidden = [];
+  for (const root of warmRoots) {
+    root.traverse((o) => { if (o.visible === false) { hidden.push(o); o.visible = true; } });
+    if (!root.visible) { hidden.push(root); root.visible = true; }
+  }
   renderer.compile(scene, camera);
+  // Restoring per node rather than per group matters: several of these are individually toggled
+  // at runtime, so a blanket `visible = true` afterwards would make them all appear.
+  // boost.js's radial smear only renders its hero mask when the pass is actually smearing, and
+  // that mask installs `scene.overrideMaterial` — so the depth and silhouette PROGRAM VARIANTS
+  // for every attribute layout in the scene (instanced, plain, multi-material) compile on the
+  // player's first boost and nowhere else. Measured on the boost scenario before this line:
+  // five stalls of 55-108 ms between t+3.1 s and t+9.4 s, each carrying `dProgs 1`, with
+  // `renderer.info.programs` walking 178 -> 195 during the drive. Warming the pass ON for one
+  // frame compiles all of them behind the boot bar.
+  const warmBoostAmt = boostFx.pass.uniforms.uAmount.value;
+  const warmBoostOn = boostFx.pass.enabled;
+  boostFx.pass.uniforms.uAmount.value = 1;
+  boostFx.pass.enabled = true;   // boost.js:1062 ships it disabled; a disabled pass is skipped
+  try { composer.render(); } catch { /* a warm frame must never be able to stop the boot */ }
+  boostFx.pass.uniforms.uAmount.value = warmBoostAmt;
+  boostFx.pass.enabled = warmBoostOn;
+  for (const o of hidden) o.visible = false;
+  // ...and one more frame in the SHIPPING visibility state, so the (cheaper) program and buffer
+  // set the first real frame actually uses is resident too.
+  try { composer.render(); } catch { /* as above */ }
   await stage('done', 'ready');
   if (bootBarEl) bootBarEl.style.width = '100%';
   await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));

@@ -1882,9 +1882,29 @@ export function createCar(rng, { paint = 0xd8420f } = {}) {
   // detail that survives to the mip a 0.06-roughness lobe samples is the sky gradient, the
   // horizon split and the road's brightness, none of which change materially over 40 m of the
   // same street. What it gains is the whole 11 ms/frame mean.
-  const PROBE_MIN_FRAMES = 60; // hard floor: never re-bake sooner than this many ticks
-  const PROBE_MOVE = 60.0;     // ...then re-bake once the car has moved this far (metres)
-  const PROBE_MAX_FRAMES = 180; // ...and always by here, so a PARKED car still tracks a time-of-day
+  //
+  // ---- WAVE-S ROUND 2: THE RATE CAME DOWN AGAIN, AND THIS TIME IT IS THE p99 THAT PAYS FOR IT.
+  // Round 1 split the bake across seven ticks (one cube face per tick, then the PMREM chain) on
+  // the theory that this converted one ~100 ms hitch into six ~14 ms ones. Measured, it did not.
+  // A single cube FACE submits the whole city through a 90-degree frustum: traced at cruise,
+  // 1280x720 ratio 1, one face render was **1469 draw calls and 2.34 M triangles** against the
+  // main camera's 639 and 0.80 M in the same frame (`tools/_perfr2.mjs --mode trace`). So the
+  // tick that carries a face costs more than the frame it is riding in, and the kill-control is
+  // unambiguous — probe pinned to a single bake, cruise, 20 s windows, 1280x720 ratio 1:
+  //
+  //                        p50      p90      p99    frames >40 ms of ~1360
+  //   bake every ~1 s     15.38    25.81    48.83        17
+  //   baked once          15.47    17.22    33.88         2
+  //
+  // i.e. the probe was still the ENTIRE p90/p99 tail, and none of the p50. The floor is therefore
+  // three seconds rather than one, and the distance trigger 120 m rather than 60. What that costs
+  // is staleness in a cube that is consumed exclusively as a PMREM roughness chain on curved
+  // painted panels, and at 276 km/h down one street the sky gradient, the horizon split and the
+  // road brightness that survive to the mip a 0.06-roughness lobe samples do not change over
+  // 120 m. What it buys is 3x fewer of the largest stalls left in the build.
+  const PROBE_MIN_FRAMES = 180; // hard floor: never re-bake sooner than this many ticks
+  const PROBE_MOVE = 120.0;     // ...then re-bake once the car has moved this far (metres)
+  const PROBE_MAX_FRAMES = 480; // ...and always by here, so a PARKED car still tracks a time-of-day
                                // change or a light coming on rather than holding a stale sky
   const PROBE_Y = 0.95;       // eye height of the probe ≈ the shoulder-crease line
 
