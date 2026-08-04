@@ -182,6 +182,12 @@ export async function boot() {
   const traffic = createTraffic(scene, {
     rng: makeRng(0x7AFF1C), layout: world.LAYOUT, blocks: world.blocks, roadKit,
   });
+  // THE BOOST JOIN, and it is the whole boost economy. Paradise has no passive refill: every
+  // point of boost is a near miss, oncoming, a traffic check, air or a takedown. physics.js
+  // deleted its passive earn terms and traffic.js emits intensity-tagged events; this is the
+  // one line that connects them. Until it existed, drift was the only earn path in the
+  // shipped game. traffic drains on read, so nothing else may call drainEvents().
+  physics.setEventSource(() => traffic.drainEvents());
 
   // ---- post chain ------------------------------------------------------
   await stage('post', 'post-processing');
@@ -370,7 +376,18 @@ export async function boot() {
   function applyCarTransform() {
     const s = physics.state;
     carRoot.position.set(s.pos.x, s.pos.y, s.pos.z);
-    carRoot.rotation.y = s.yaw - s.slip * 0.22;
+    // THE DRAWN NOSE IS THE HEADING. `s.yaw` and nothing else.
+    // The `- s.slip * 0.22` term dates from before physics.js had a real lateral velocity:
+    // back then `slip` was a cosmetic body angle bolted onto a car that travelled exactly
+    // where it pointed, and rotating the shell was the only way to suggest a slide. Physics
+    // now integrates vLat and yaw independently, so the heading is already the direction the
+    // body faces and the velocity already differs from it. Keeping the term subtracted the
+    // slide from the very thing that shows the slide: wave-s/handling-critic-r2 measured it
+    // spending 12.6 of the 18.3 deg the camera-sign fix bought, leaving 5.3 deg of readable
+    // on-screen lag and the WRONG SIGN at peak slip (rig 1.5-2.1 deg AHEAD of the drawn nose
+    // at 30 deg of slip). It called this "the largest single thing between the fixed drift
+    // and a drift the player can see".
+    carRoot.rotation.y = s.yaw;
   }
 
   function tick(dt) {
@@ -380,6 +397,14 @@ export async function boot() {
 
     if (crash.active) crash.update(sdt);
     else physics.step(sdt);
+
+    // THE WRECK JOIN. physics.js must not import crash.js, so a wreck-grade contact is
+    // published through `drainWreck()` (cleared on read) rather than by half-setting
+    // `state.crashed`. Round 1's critic found `state.crashed` was set by nothing at all, so
+    // crash.js's whole state machine was unreachable from driving; this is the line that makes
+    // it reachable. Drained even while a crash is active so a queued wreck cannot fire twice.
+    const wreck = physics.drainWreck();
+    if (wreck && !crash.active) crash.trigger(wreck);
 
     const s = physics.state;
     applyCarTransform();

@@ -338,6 +338,7 @@ export function createTraffic(scene, { rng, layout, blocks = [], roadKit } = {})
   // calls reset(pos) with no yaw), so gating there would leave the road ahead permanently
   // empty on every boot and every press of R.
   let spawnGate = true;
+  let firstFill = true;    // see reset(): the view gate is only opened for a boot's first fill
 
   /**
    * Is (x, z) inside the hero's forward view cone AND within `r`? A radius on its own cannot
@@ -642,10 +643,19 @@ export function createTraffic(scene, { rng, layout, blocks = [], roadKit } = {})
       for (const j of junc) { j.owner = -1; j.heldT = 0; j.occT = 0; j.occ = 0; }
       events.length = 0;
       const hx = heroPos ? heroPos.x : 0, hz = heroPos ? heroPos.z : 0;
-      hpx = hx; hpz = hz; hfx = 0; hfz = 1;
-      spawnGate = false;
+      hpx = hx; hpz = hz;
+      // The view gate must be OFF for the first fill of a boot and ON for every later reset.
+      // At boot there is no hero heading yet, so `inHeroView` would be testing against a
+      // fabricated +Z and could reject most of the network; but `reset()` is also what R and
+      // the START button call, and there the heading is real and known. Zeroing it there and
+      // dropping the gate is what re-opened the pop-in defect: wave-s/traffic-critic-r2
+      // measured a visible spawn at 9 m after an R. So keep the live heading across a reset
+      // and only open the gate for the very first fill.
+      if (firstFill) { hfx = 0; hfz = 1; }
+      spawnGate = !firstFill;
       fill(hx, hz, POOL);
       spawnGate = true;
+      firstFill = false;
       api.update(0, _hero.set(hx, 0, hz), 0, 0);
     },
 

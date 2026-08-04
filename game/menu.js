@@ -790,6 +790,19 @@ export function createMenu({ ctx, onStart } = {}) {
     }
   }
 
+  // A KEYUP THE PAGE NEVER RECEIVES IS A PERMANENT LATCH. `heldNow` is only ever emptied by
+  // a keyup, so any path that swallows one leaves a code in the set forever and
+  // `reassertHeldKeys()` re-synthesises it on EVERY later resume - wave-s/menu-music-critic
+  // measured steer stuck at +0.99999857 with the keyboard completely idle. The two ways a
+  // keyup goes missing are both window-level and neither is exotic: focus leaves the window
+  // while a key is down (cmd-tab), and the tab is hidden. Clear the whole set on both; a key
+  // still genuinely held when focus returns produces a fresh keydown, and the set is polled
+  // rather than trusted for exactly this reason.
+  window.addEventListener('blur', () => heldNow.clear());
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) heldNow.clear();
+  });
+
   window.addEventListener('keydown', (e) => {
     if (!e.repeat) heldNow.add(e.code);
 
