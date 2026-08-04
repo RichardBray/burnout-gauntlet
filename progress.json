@@ -1,5 +1,5 @@
 {
-  "generated": "2026-08-04T04:24:49.096Z",
+  "generated": "2026-08-04T04:29:33.513Z",
   "waves": [
     "wave-k",
     "wave-l",
@@ -59,45 +59,29 @@
     {
       "piece": "handling",
       "goal": "feels like Burnout Paradise, matched to researched numbers",
-      "rounds": 3,
-      "verdict": "PARTIAL",
-      "waves": "s* s s* s s s*",
-      "building": true,
+      "rounds": 4,
+      "verdict": "PASS",
+      "waves": "s* s s* s s s* s",
+      "building": false,
       "metrics": [
         {
-          "k": "worst WRONG-WAY yaw rate on brake+lock, LIVE",
-          "v": "0 deg/s at every speed (was -96 deg/s at 250 km/h; two earlier passes measured heading unsigned and could not see it)"
+          "k": "wrong-way yaw on brake+lock at 250 km/h",
+          "v": "-92 deg/s BEFORE -> 0 AFTER, and both halves load-bearing (each deleted alone reproduces the defect) CONFIRMED"
         },
         {
-          "k": "chain drift, all 6 beats, LIVE per beat",
-          "v": "15.4/24.2/15.6/15.0/15.5/14.9 deg at 68-98% drifting - all six above the critic's 10 deg bar for the first time (round 2: beat 1 was 9.0 deg)"
+          "k": "power-on grip edge at 250 km/h",
+          "v": "28-29 deg/s, peak slip 4.9 deg, 0% drifting - STILL ABSENT, and the structural-limit disclosure is CORRECT (rear demand/capacity 0.77 on throttle vs 0.86 coasting)"
         },
         {
-          "k": "one 200 ms brake tap after 0.5 s load, LIVE",
-          "v": "13.8/13.9/13.3 deg held 2.53/2.54/2.48 s at 100/130/150 km/h (round 2: 9.5/8.5/8.0 deg held 2.05/1.70/1.53 s)"
+          "k": "round 2's wins all survive LIVE",
+          "v": "orderings 2.22/2.68/0.78 s (10 deg bar 2.85/3.23/0.82), e-brake monotone at 4 speeds, sign invariant PASS both ways, rig leads in 0/228"
         },
         {
-          "k": "three orderings, LIVE, matched 25.5 deg entries",
-          "v": "2.22 s centred / 2.68 s tapped / 0.77 s held - all three HIT on the half-peak AND the fixed 10 deg bar"
-        },
-        {
-          "k": "power-on grip edge at 250 km/h, LIVE",
-          "v": "28-29 deg/s, 4.9 deg slip, 0% drifting - STRUCTURAL LIMIT, not a miss: 11 kill-controls inert, rear demand/capacity is 0.78 on throttle vs 0.86 coasting"
-        },
-        {
-          "k": "regression gates LIVE, all unmoved",
-          "v": "sign invariant PASS both ways, e-brake monotone -27/-70/-93% at 80 km/h, wall 77%/25%, rig leads the car 0/226 samples, handling-measure 40 HIT / 1 MISS, zero console errors"
-        },
-        {
-          "k": "pixel gate",
-          "v": "every _px.mjs statistic IDENTICAL on all 7 presets; raw decode 5-270 of 3686400 channels differ; opened the worst pair and looked - nothing worse"
-        },
-        {
-          "k": "frame time",
-          "v": "NOT MEASURED, not even a smoke test"
+          "k": "the three joins at 68c093b all verify",
+          "v": "1 km of held W earns 0.0000 with the road emptied and 0.2932 with 7 nearMisses; crash.js reached; carRoot.rotation.y - s.yaw = 0.0000 deg over a 25.5 deg slide"
         }
       ],
-      "metricsFrom": "wave s builder"
+      "metricsFrom": "wave s critic"
     },
     {
       "piece": "traffic",

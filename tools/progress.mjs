@@ -106,8 +106,12 @@ function normalisePiece(name) {
   // A verify pass is a critic round; fold it into the critic name before the
   // round suffix comes off, so `-r2-verify` and `-critic-r2` land in one place.
   n = n.replace(/-r\d+-verify$/, '-critic').replace(/-verify$/, '-critic');
-  n = n.replace(/-r\d+$/, '');                    // handling-r2 -> handling
-  n = n.replace(/-critic-r\d+$/, '-critic');      // belt and braces if order differs
+  // The round suffix is stripped WHEREVER it appears, not just at the end. Both orders
+  // are in use on disk and the trailing-only version silently missed one of them:
+  // `perf-critic-r2.md` normalised fine while `handling-r3-critic.md` did not, so
+  // round 3's handling PASS was filed under a piece of its own and the board kept
+  // showing round 2's PARTIAL. Same defect as before, one name-shape further out.
+  n = n.replace(/-r\d+/g, '');
   return PLAY_ALIAS[n] ?? n;
 }
 

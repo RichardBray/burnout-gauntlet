@@ -253,6 +253,72 @@ What landed there, each routed by a builder that was forbidden to make it:
   slip, i.e. exactly when the player is doing something interesting.
 - `frameStats.push` no longer saturates `over16_7pct` past 4096 frames.
 
+### ROUND 3 — `handling` PASSES. The feel half of the bar is MET.
+
+**`handling` — PASS**, `b72de30`.
+Three things were open and all three are settled, each at the mechanism, every headline number
+re-derived by a fresh critic driving the live page through the real key listeners.
+
+- **The flick no longer manufactures energy.** `driftFlick` added to `state.vLat`; it now ROTATES
+  the body-frame velocity vector, so `hypot(speed, vLat)` is unchanged **algebraically** rather than
+  by tuning.
+  Metered at the line over the published six-beat chain: **6.2173 m/s of ground speed created ->
+  0.0000**.
+  That mattered beyond tidiness because `da65fcf` pointed the speedometer and the engine note at
+  `state.ground`, so the manufactured speed was being displayed and heard.
+  Cost: 16.2 -> 16.1 deg of chain depth.
+- **BRAKE + LOCK WAS ROTATING THE CAR THE WRONG WAY, and two previous instruments could not see it
+  because both measured heading as `|yaw - yaw0|`** — which scores a car spinning away from the
+  corner as a car turning into it.
+  Signed and live from dead straight: **-8.1 deg at 200 km/h and -14.9 at 250**, at up to 96 deg/s
+  the wrong way, with a peak correct-way yaw rate of 1 deg/s.
+  Now +16.3 / +11.0 / +6.1 / +4.9 deg at 100/130/200/250 and **worst wrong-way yaw 0 at every
+  speed**; brake+lock reaches parity with throttle+lock at 130 km/h.
+  Two causes, each load-bearing under its own kill-control and neither redundant: the drift reference
+  was built on `rHold` (the rate that holds the angle the car has NOW, which is zero at entry) so it
+  asked for 8 deg/s while `rTarget` asked for 17-58; and `entering` left the tyre moment uncancelled
+  on a comment's claim that it is pro-rotation, when it measures **-908 deg/s^2 at 250 km/h**, flatly
+  anti-rotation.
+  All six chain beats now clear the critic's fixed 10 deg bar for the first time.
+- **THE POWER-ON GRIP EDGE IS CLOSED AS A DISCLOSED STRUCTURAL LIMIT, and that is the correct
+  outcome, not a miss.**
+  Third round on it, eleven kill-controls, every one inert — including the real yaw-rate servo
+  (`stabilityAssist` + `spinDamp`'s ceiling, a different object from the `steerServo` round 2
+  correctly refuted).
+  The measured reason: **throttle makes the rear axle MORE capable, not less.**
+  Drive spends 29-34% of the rear friction circle while the load transfer it causes adds 13-16% of
+  vertical load, so rear demand/capacity is a flat **0.78 on throttle against 0.86 coasting**.
+  A second ceiling sits behind it: `delta` is an inverse-model output solving for the angle that
+  achieves `rTarget`, so the player cannot ask the front tyre for more slip than the grip-limited
+  rate needs.
+  **The builder refused to ship an unsourced power-yaw term, on the grounds that it would have been
+  `driftFlick` again in a new place. That is the judgement this loop is trying to produce.**
+  Reopening this as a constant hunt is explicitly the wrong move: it and the flick are ONE piece of
+  model work (track width, lateral load transfer, a driven-axle tractive split).
+
+**`perf` — PARTIAL**, `197d70a` / `c2b32bc`.
+Round 2's cold-boot regression is **closed, 0 of 11 boots** against round 2's own unmodified
+instrument (it hitched 9 of 9 before).
+The critic overturned one of the two nominated causes: it was `audio.start()` building the whole
+graph on the first keydown, with a 162-308 ms main-thread longtask sitting exactly on it, and
+stubbing `audio.start` alone kills it 4 of 4.
+Every headline reproduced on the critic's own harness to 0.6 ms on 5 of 5, all three shipped
+mechanisms survived runtime kill-control, and no scene got worse.
+**The HUD was rendering a 2560x1440 backing store over a 1280x720 frame, and that Retina tax was the
+entire 4 ms dpr-2 penalty** — at dpr 2, `corner` passes the bar for the first time.
+Night's 4096 shadow map is 1024 and night-wet went **33.30 -> 27.00 ms**.
+
+**THE BAR, at 1280x720 ratio 1 dpr 1 resScale 1, three runs, as p50 / delivered fps / % over
+16.7 ms:**
+
+| scenario | after round 3 | verdict |
+|---|---|---|
+| corner | 12.90 / 81.2 / 3.1% | **PASSES** |
+| cruise | 15.90 / 60.0 / 23.3% | inside on p50, NOT sustained |
+| city | 21.20 / 44.9 / 93.3% | miss |
+| boost | 23.20 / 43.0 / 96.8% | miss |
+| night-wet | 27.00 / 36.6 / 99.7% | miss |
+
 **A NEW PERMANENT LESSON, and it belongs beside permanent rule 3.**
 Round 2's handling builder retracted two of its own constants after its critic's kill-controls
 refuted them, and round 2's traffic builder rejected its own first fix on measurement (bounding the
@@ -261,6 +327,28 @@ instrument BEFORE shipping).
 Both are the behaviour this loop is for.
 **A builder that reverts its own unmeasured change is producing the most valuable output available
 here.**
+Round 3 extended it: its handling builder **refused to ship an unsourced term** to hit a target it
+could not reach honestly, and closed the item as a disclosed structural limit with eleven
+kill-controls behind the disclosure.
+And round 3's own critic caught the shipped comment quoting a kill-control from a variant that was
+never shipped — **rule 5 cuts both ways: a comment quoting the wrong measurement is the same defect
+as a comment claiming a change the code does not make.**
+
+### A MEASUREMENT RULE THIS WAVE ADDED, AND IT IS NOT OPTIONAL
+
+**`p50 <= 16.7 ms` IS NOT `60 fps sustained`. Report p50 AND delivered fps AND the share of frames
+over 16.7 ms, every time.**
+`cruise` sat at p50 15.90 ms — inside the bar — while dropping **23.3%** of its frames and
+delivering 60.0 fps.
+A p50 that passes with a quarter of the frames long does not feel like 60 fps, and reporting p50
+alone would have declared the bar met on a scenario a player would call uneven.
+
+**AND: MEASURE SIGNED, NOT ABSOLUTE.**
+Round 3's biggest find was invisible to two previous instruments because both measured heading change
+as `|yaw - yaw0|`.
+An absolute value scores a car rotating the WRONG WAY as a car rotating well; the car was spinning
+away from the corner at 96 deg/s and both instruments read it as a success.
+**Any instrument measuring a directional quantity must keep the sign.**
 
 ## THE PERMANENT RULES. Everything above this line is the live record; everything below was paid for in rounds.
 
