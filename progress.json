@@ -1,5 +1,5 @@
 {
-  "generated": "2026-08-04T03:35:06.299Z",
+  "generated": "2026-08-04T04:24:49.096Z",
   "waves": [
     "wave-k",
     "wave-l",
@@ -16,41 +16,45 @@
     {
       "piece": "perf",
       "goal": "holds 60 fps at 1280x720 real pixels",
-      "rounds": 2,
+      "rounds": 3,
       "verdict": "PARTIAL",
-      "waves": "s* s s* s s*",
-      "building": true,
+      "waves": "s* s s* s s* s",
+      "building": false,
       "metrics": [
         {
-          "k": "night-wet p50",
-          "v": "27.60 ms (35.8 fps) at 1280x720 @ ratio 1.0, 3 runs 27.30-27.60 - was 33.30 (29.5 fps)"
-        },
-        {
-          "k": "city p50",
-          "v": "20.60 ms (46.0 fps) at 1280x720 @ ratio 1.0 - was 21.90 (44.7 fps) - MISSES, needs 3.9 ms"
+          "k": "corner",
+          "v": "12.90 ms p50, 81.2 delivered fps, 3.1% over 16.7 ms at 1280x720 ratio 1 dpr 1 - the only scenario that SUSTAINS 60 fps"
         },
         {
           "k": "cruise",
-          "v": "15.90 ms p50 but 57.6 fps delivered and 26.3% of frames over 16.7 at 1280x720 @ ratio 1.0"
+          "v": "15.90 ms p50 but 60.0 fps and 23.3% of frames over 16.7 ms at 1280x720 ratio 1 - NOT sustained"
         },
         {
-          "k": "corner",
-          "v": "12.90 ms p50, 80.8 fps, 4.2% over 16.7 at 1280x720 @ ratio 1.0 - PASSES 60 fps sustained"
+          "k": "city / boost / night-wet",
+          "v": "21.20 / 23.20 / 27.00 ms p50 = 44.9 / 43.0 / 36.6 fps at 1280x720 ratio 1"
         },
         {
-          "k": "Retina (dpr 2, same 1280x720 buffer)",
-          "v": "city 25.70 -> 20.70 ms, corner 15.80 -> 12.90, night-wet 37.80 -> 27.70"
+          "k": "night-wet",
+          "v": "33.30 -> 27.00 ms (-18.9%), and --kill shadow-4096 returns it to 33.30 - the whole win is night's 1024 shadow map"
         },
         {
-          "k": "first 700 ms of play",
-          "v": "40-43 frames in 12 of 12 cold boots, max 33.9-48.2 ms (was 21-31 with a 171-330 ms hitch in 7 of 7)"
+          "k": "Retina (dpr 2, GL buffer still 1280x720 ratio 1)",
+          "v": "corner 15.90 -> 12.80 ms, 57.9 -> 81.3 fps - corner passes the bar there for the first time"
         },
         {
-          "k": "visual gate",
-          "v": "5 presets identical, daytime-downtown inside its own noise floor, wet-night-asphalt 0.75% of px (night shadow 1024, read at 3x)"
+          "k": "cold-boot hitch",
+          "v": "0 of 11 boots on HEAD, 9 of 9 on the parent (170-325 ms); cause is audio.start() on the first keydown, killed 4/4"
+        },
+        {
+          "k": "HUD cost on HEAD at dpr 1",
+          "v": "2.40 ms on cruise (15.90 -> 13.50, 23.3% -> 3.0% long) and 3.40 ms in the city - the next action"
+        },
+        {
+          "k": "visual regression gate",
+          "v": "6 presets inside my own noise floor; wet-night-asphalt maxDiff 37 / 0.75% of px, read at 3x, not worse"
         }
       ],
-      "metricsFrom": "wave s builder"
+      "metricsFrom": "wave s critic"
     },
     {
       "piece": "handling",
