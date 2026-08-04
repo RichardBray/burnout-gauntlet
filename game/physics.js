@@ -1040,8 +1040,15 @@ export function createPhysics({ blocks = [], bounds = 1400 } = {}) {
     // WHAT IT COST: almost nothing, because the manufactured speed was small next to `gv`. The chain's
     // per-beat depth moves 16.2 -> 16.1 deg at 130 km/h (15.8 -> 15.7 at 100, 16.6 -> 16.4 at 150) and
     // peak |vLat| 11.55 -> 11.41 m/s. The three orderings and the e-brake are unmoved to 0.01 s.
-    // WHAT IS STILL UNSOURCED, AND IT IS NOT FIXED BY THIS: 7.4 of the chain's 16.1 deg is still this
-    // term. Zero it and beats 3-6 sit at 8.5-8.7 deg. It is no longer free ENERGY, but it is still a
+    // WHAT IS STILL UNSOURCED, AND IT IS NOT FIXED BY THIS: this term supplies about half the chain's
+    // depth. CORRECTED at wave-s/perf-r4's commit from the figures this comment shipped with (7.4 of
+    // 16.1 deg, beats 3-6 at 8.5-8.7 without it): those were measured on an earlier variant, and
+    // wave-s/handling-r3-critic re-ran the kill-control on the SHIPPED code and got **6.4 of 14.9
+    // deg**, i.e. zeroing this term leaves beats 3-6 at 6.4 deg. Its finding also draws the right
+    // distinction, which the old wording did not: at 69% of samples drifting with the term zeroed,
+    // the drift STATE is earned from the tyre model and only the DEPTH is scripted. Rule 5 cuts both
+    // ways - a comment quoting a kill-control from a variant that was not shipped is the same defect
+    // as a comment claiming a change the code does not make. It is no longer free ENERGY, but it is still a
     // scripted instantaneous rotation rather than a force, and I could not source it from the tyre
     // model - see the verdict's honest miss 1 and the kill-control behind it.
     if (state.drifting && Math.abs(slipNow) > satRear * 0.5) {
