@@ -141,6 +141,10 @@ export function createHud(container, { layout, maxPixelRatio = 1, attached = tru
   let burnMix = 0;         // 0..1 blend into the "burning" look
   let deniedMix = 0;       // 0..1 denied-press flash, driven by physics' boostDenied pulse
   const earnPops = [];     // live earn popups: {text, t, life}; newest replaces oldest past 4
+  // Burnout 1's oncoming meter: yards accumulate WHILE the hero is in the oncoming lane and
+  // the count freezes the moment he leaves, lingering briefly so the final figure is readable.
+  let oncomingYd = 0;      // yards banked in the current oncoming stint
+  let oncomingHold = 0;    // s of linger left; hits 0 -> the stint resets
   let chainMix = 0;        // 0..1 blend into the burnout-chain look
   let damageMix = 0;       // 0..1 body damage
   let crashMix = 0;        // 0..1 wrecked overlay
@@ -2752,9 +2756,23 @@ export function createHud(container, { layout, maxPixelRatio = 1, attached = tru
   // =========================================================================
   // frame
   // =========================================================================
+  // Upper-centre, in the burnout-chain type style. Ticks up live, freezes on exit, fades out.
+  function drawOncoming() {
+    if (oncomingYd < 1) return;
+    const a = oncomingHold < 0.5 ? oncomingHold / 0.5 : 1;
+    ctx.save();
+    ctx.globalAlpha = a;
+    drawType(`ONCOMING  ${Math.floor(oncomingYd)} YDS`, W / 2 - 150 * S, H * 0.22, {
+      size: 30 * S, weight: 900, track: 2.2 * S, slant: 0.22,
+      fill: AMBER_HOT, glow: 'rgba(255,150,30,0.5)',
+    });
+    ctx.restore();
+  }
+
   function draw(s) {
     ctx.clearRect(0, 0, W, H);
     drawCrashState();
+    drawOncoming();
     drawStreetPlate(s);
     drawMinimap(s);
     drawFeed(s);
@@ -2819,6 +2837,17 @@ export function createHud(container, { layout, maxPixelRatio = 1, attached = tru
     crashMix = damp(crashMix, crashed ? 1 : 0, crashed ? 16 : 3, dt);
     const dmg = s.damage != null ? clamp(s.damage, 0, 1) : (crashed ? 1 : 0);
     damageMix = damp(damageMix, dmg, 4, dt);
+
+    // oncoming yards: count only while actually in the lane and moving at real speed
+    // (the same 12 m/s floor traffic.js uses for events)
+    if (s.oncoming && Math.abs(s.speed || 0) > 12 && !crashed) {
+      oncomingYd += Math.abs(s.speed) * dt * 1.09361;   // m -> yd
+      oncomingHold = 1.4;
+    } else if (oncomingHold > 0) {
+      oncomingHold = Math.max(0, oncomingHold - dt);
+      if (oncomingHold === 0) oncomingYd = 0;
+    }
+    if (crashed) { oncomingYd = 0; oncomingHold = 0; }
 
     if (bannerT > 0) bannerT = Math.max(0, bannerT - dt);
     t += dt;

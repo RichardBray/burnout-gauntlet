@@ -745,6 +745,7 @@ export function createTraffic(scene, { rng, layout, blocks = [], roadKit } = {})
       // that is ~440 bodies dense along every kerb in the city.
       if (onPass && statics.length && Math.abs(heroSpeed) > EVENT_SPEED_MIN) {
         for (const b of statics) {
+          if (b.gone) { b.nmOn = false; continue; }   // promoted: the live wreck whooshes now
           const dx = b.x - hx, dz = b.z - hz;
           // Cheap reject first: everything here is static, so most of the population is
           // nowhere near the hero on any given frame and never needs the exact test.
@@ -873,6 +874,43 @@ export function createTraffic(scene, { rng, layout, blocks = [], roadKit } = {})
         if (j.dem[o] > 0 && j.imm[j.owner] === 0
             && (j.dem[j.owner] === 0 || j.heldT > GREEN_MIN)) {
           j.owner = o; j.heldT = 0;
+        }
+      }
+
+      // ---- promote hit parked cars -------------------------------------------------------
+      // physics.js stamps `heroHit` on a struck parked body just like a live one, but a baked
+      // car has no simulation to react with. Promotion: hide its sealed instances
+      // (world.js's hide()), claim a dead pool slot, and boot it as a WRECKED live car with
+      // the hit's own impulse — from then on it is ordinary wreck physics. No free slot or a
+      // too-soft hit: the stamp is dropped and the car stays a wall until hit harder.
+      for (const b of statics) {
+        if (!b.heroHit) continue;
+        const hit = b.heroHit; b.heroHit = null;
+        if (b.gone || !b.hide || hit.rel < 4) continue;
+        let slot = null;
+        for (const v of pool) if (!v.live) { slot = v; break; }
+        if (!slot) continue;
+        b.gone = true;
+        b.hide();
+        slot.live = true; slot.wrecked = true;
+        slot.line = lines[0]; slot.dir = 1; slot.lane = 0; slot.s = 0; slot.lat = 0;
+        slot.van = !!b.van;
+        slot.halfLen = b.halfLen; slot.halfWid = b.halfWid;
+        slot.pos.set(b.x, 0, b.z);
+        slot.yaw = Math.atan2(-b.fz, b.fx);   // forward = (cos ry, -sin ry) -> ry
+        slot.speed = 0; slot.vDes = 0;
+        slot.nmOn = false; slot.ctOn = true;  // already in contact; don't double-fire
+        slot.endHold = 0; slot.stallT = 0; slot.otT = 0; slot.shove = 0; slot.shoveT = 0;
+        slot.jIdx = -1; slot.jDist = 1e9; slot.hornT = 0;
+        const kick = clamp(hit.rel / 30, 0, 1);
+        slot.wvx = hit.kx * (0.35 + 0.35 * kick);
+        slot.wvz = hit.kz * (0.35 + 0.35 * kick);
+        slot.wspin = (rngRange(R, 0, 1) < 0.5 ? -1 : 1) * (1.0 + 3.0 * kick);
+        if (bodyMesh.instanceColor && b.col !== undefined) {
+          tmpC.setHex(b.col, THREE.SRGBColorSpace);
+          bodyMesh.setColorAt(slot.k * 2, tmpC);
+          bodyMesh.setColorAt(slot.k * 2 + 1, tmpC);
+          bodyMesh.instanceColor.needsUpdate = true;
         }
       }
 
@@ -1158,7 +1196,11 @@ export function createTraffic(scene, { rng, layout, blocks = [], roadKit } = {})
               // that grows with how hard the hit was, and a spin whose sign comes from which
               // side of the hero's line it was struck on. From the next frame the `wrecked`
               // branch at the top of this loop owns it.
-              if (rel0 > WRECK_REL || Math.abs(heroSpeed) > WRECK_HERO) {
+              // A stopped car has no IDM momentum to absorb a shunt — it just brakes back to
+              // rest within a frame and reads as bolted down — so it wrecks on a much lighter
+              // hit than a flowing one.
+              if (rel0 > WRECK_REL || Math.abs(heroSpeed) > WRECK_HERO
+                  || (v.speed < 2 && rel0 > 6)) {
                 v.wrecked = true;
                 const kick = clamp(rel0 / 30, 0, 1);
                 v.wvx = (a0 ? v.dir * v.speed : 0) * 0.5 + hvx * (0.35 + 0.35 * kick);

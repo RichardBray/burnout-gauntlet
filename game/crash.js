@@ -2381,6 +2381,20 @@ export function createCrash(scene, car, physics, damage) {
       fxIdleT = Math.max(fxIdleT, 4);
     },
 
+    /**
+     * Continuous grind sparks: a small per-frame trickle while the hero scrapes along a wall
+     * or another car. Call every frame the grind holds; intensity 0..1 (physics.state.grind).
+     */
+    grindSparks(x, z, dirX, dirZ, intensity = 0.5) {
+      const s = clamp(intensity, 0, 1);
+      _puffPos.set(x, 0.34, z);
+      _v.set(dirX, 0.10, dirZ);
+      if (_v.lengthSq() < 1e-6) return;
+      sparkBurst(_puffPos, _v.normalize(), 1 + Math.round(2 * s), 5 + 13 * s, 0.35,
+        { life: 0.22 + 0.12 * s, hot: 0.9, streak: 0.010, drag: 1.3 });
+      fxIdleT = Math.max(fxIdleT, 1.5);
+    },
+
     update(dt) {
       if (!active) {
         // Keep impactBurst() particles stepping outside a crash — bounded by fxIdleT so an

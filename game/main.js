@@ -701,9 +701,15 @@ export async function boot() {
     // 52% LOW during the exact moment the player is doing something interesting. A
     // speedometer shows |v|; so does an engine whose wheels are being dragged sideways.
     const gspd = s.ground !== undefined ? s.ground : Math.abs(s.speed);
+    // Grind sparks: physics holds `grind` up every tick the hero is scraping a wall or a car;
+    // one small burst per frame reads as a continuous spark trail at the contact point.
+    if (s.grind > 0.05 && !crash.active) {
+      crash.grindSparks(s.grindX, s.grindZ, s.grindDx, s.grindDz, s.grind);
+    }
     hud.update(dt, {
       speed: gspd, boost: s.boost, boosting: s.boosting, boostDenied: s.boostDenied,
       earnFeed: s.earnFeed,
+      oncoming: !!traffic.heroOncoming,
       gear: gearOf(gspd), pos: s.pos, yaw: s.yaw, crashed: s.crashed,
     });
     // Denied boost press: rising edge of physics' pulse -> one refusal blip.

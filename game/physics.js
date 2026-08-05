@@ -683,6 +683,10 @@ export function createPhysics({ blocks = [], bounds = 1400 } = {}) {
     boostDenied: 0,  // 0..1 pulse on a boost press the full-bar gate refused; HUD/audio feedback
     earnFeed: [],    // this tick's boost earns for the HUD: {type, mult, earn}; cleared each step
     earnMult: 1,     // current event-chain multiplier, x1..earnChainMax
+    // Held-contact grinding, for the spark trail: 0..1 intensity while the car is scraping
+    // along a wall or another car (the contact-hold branch of the resolvers), with the
+    // contact point and the slide direction. Purely cosmetic; main.js feeds it to crash.js.
+    grind: 0, grindX: 0, grindZ: 0, grindDx: 0, grindDz: 1,
   };
 
   let input = { throttle: 0, brake: 0, steer: 0, boost: false, handbrake: false };
@@ -785,7 +789,7 @@ export function createPhysics({ blocks = [], bounds = 1400 } = {}) {
       // to be pushed, not re-detected there: this resolver has already separated the
       // bodies and matched the speeds by the time traffic.update() runs, so its own
       // overlap test never sees the contact, let alone the pre-impact closing speed.
-      if (o) o.heroHit = { rel: Math.hypot(rvx, rvz), sev };
+      if (o) o.heroHit = { rel: Math.hypot(rvx, rvz), sev, kx: rvx, kz: rvz };
       if (onTrafficHit) {
         // Contact point: the hero's face toward the body. Outgoing direction: the
         // tangential remainder of the relative velocity (what shunt() keeps), falling
@@ -802,9 +806,22 @@ export function createPhysics({ blocks = [], bounds = 1400 } = {}) {
     } else {
       state.speed -= Math.sign(state.speed || 1) * TUNE.wallFriction * h;
       state.vLat *= Math.exp(-14 * h);
+      noteGrind(rvx, rvz, nx, nz);
     }
     wallCool = TUNE.contactHold;
     return true;
+  }
+
+  /** Record a held (grinding) contact for the spark trail: slide dir = tangential velocity. */
+  function noteGrind(vx, vz, nx, nz) {
+    const tx = -nz, tz = nx;
+    const vt = vx * tx + vz * tz;
+    const sg = Math.sign(vt) || 1;
+    state.grind = clamp(Math.abs(vt) / 25, 0, 1);
+    state.grindX = state.pos.x - nx;
+    state.grindZ = state.pos.z - nz;
+    state.grindDx = tx * sg;
+    state.grindDz = tz * sg;
   }
 
   function collide(h) {
@@ -833,6 +850,7 @@ export function createPhysics({ blocks = [], bounds = 1400 } = {}) {
         } else {
           state.speed -= Math.sign(state.speed || 1) * TUNE.wallFriction * h;
           state.vLat *= Math.exp(-14 * h);
+          noteGrind(vx, vz, nx, nz);
         }
         wallCool = TUNE.contactHold;
         return true;
@@ -863,9 +881,10 @@ export function createPhysics({ blocks = [], bounds = 1400 } = {}) {
     // to react — the bodies are sealed InstancedMeshes, so the car itself neither moves nor
     // wrecks; the hero side (shunt, severity, wreck, impact burst) all still applies.
     for (const b of parkedBodies) {
+      if (b.gone) continue;   // promoted to a live traffic wreck; that body owns the contact now
       const along = Math.abs(b.fx) > 0.5;
       if (hitCarBody(h, b.x, b.z,
-        along ? b.halfLen : b.halfWid, along ? b.halfWid : b.halfLen, 0, 0, null)) return true;
+        along ? b.halfLen : b.halfWid, along ? b.halfWid : b.halfLen, 0, 0, b)) return true;
     }
     const outX = Math.abs(state.pos.x) > bounds, outZ = Math.abs(state.pos.z) > bounds;
     if (outX || outZ) {
@@ -1644,6 +1663,7 @@ export function createPhysics({ blocks = [], bounds = 1400 } = {}) {
       }
 
       const throttle = clamp(input.throttle, -1, 1);
+      state.grind = 0;   // re-asserted by any held contact this tick (noteGrind)
 
       // ---- boost economy ---------------------------------------------------------------------
       // PUBLISHED: a Speed boost bar is usable only when COMPLETELY full. So the button ARMS a

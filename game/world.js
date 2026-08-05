@@ -2479,8 +2479,14 @@ export function createWorld(scene, { rng, roadKit }) {
     parkCounts[parkPop]++;
     const col = rngPick(R, carColors);
     const fx = Math.cos(ry), fz = -Math.sin(ry);      // unit forward for this yaw
-    const at = (m, d, y, sx, sy, sz, c) =>
+    // Every instance this car owns, so hide() below can take the baked body out of the
+    // draw when traffic.js promotes it to a live (shoved/wrecked) pool car after a hit.
+    const used = [];
+    const rec = (m) => { if (m.count < m.userData.cap) used.push([m, m.count]); };
+    const at = (m, d, y, sx, sy, sz, c) => {
+      rec(m);
       push(m, x + fx * d, CAR_Y + y, z + fz * d, ry, 0, sx, sy, sz, c);
+    };
     const van = R() < 0.16;
     if (van) {
       at(carBody, 0.00, 0.86, 4.90, 1.12, 1.92, col);   // slab side, 0.30 - 1.42
@@ -2512,6 +2518,7 @@ export function createWorld(scene, { rng, roadKit }) {
         dummy.scale.set(1, 1, 1);
         dummy.updateMatrix();
         if (carWheel.count < carWheel.userData.cap) {
+          used.push([carWheel, carWheel.count]);
           carWheel.setMatrixAt(carWheel.count, dummy.matrix); carWheel.count++;
         }
       }
@@ -2527,9 +2534,19 @@ export function createWorld(scene, { rng, roadKit }) {
     // `fx`/`fz` are stored rather than the yaw so a consumer does not repeat the trig, and
     // the LATERAL axis is (fz, -fx) - the same convention the wheel placement above uses.
     parkedBodies.push({
-      x, z, fx, fz,
+      x, z, fx, fz, van, col,
       halfLen: van ? 2.45 : 2.20,
       halfWid: van ? 0.96 : 0.91,
+      // Take this car's baked instances out of the draw (traffic.js calls it when the car is
+      // promoted to a live pool slot after a hit). ponytail: the baked ground shadow stays
+      // where the car was parked — it reads as a stain once the body has been knocked away.
+      hide() {
+        dummy.position.set(0, -1000, 0);
+        dummy.rotation.set(0, 0, 0);
+        dummy.scale.set(1e-6, 1e-6, 1e-6);
+        dummy.updateMatrix();
+        for (const [m, i] of used) { m.setMatrixAt(i, dummy.matrix); m.instanceMatrix.needsUpdate = true; }
+      },
     });
   }
   // Parking geometry, all measured off the road centreline:
