@@ -145,9 +145,11 @@ const DEFAULTS = {
   lookStiffness: 8.0,
   shake: 1.0,
   roll: 0.55,             // camera bank into corners
-  yawLag: 5.4,            // rad/s the rig azimuth chases the car's yaw — lower = more lag
+  // User feel: left/right camera too snappy. 5.4 -> 3.78 (-30%) -> 3.02 (-20% more).
+  yawLag: 3.02,           // rad/s the rig azimuth chases the car's yaw — lower = more lag
   slipSwing: 2.1,         // metres the tail swings across frame per unit of slip
-  steerLead: 0.26,        // rad the aim point leads per unit of steer
+  // Same stack: 0.26 -> 0.182 (-30%) -> 0.146 (-20% more).
+  steerLead: 0.146,       // rad the aim point leads per unit of steer
   surface: 0,             // 0 smooth .. 1 broken tarmac, feeds the shake
   collide: true,          // raycast car -> desired camera position, pull in on a hit
   camRadius: 0.5,         // keep-out padding around geometry
@@ -167,7 +169,8 @@ const DEFAULTS = {
 // Per-axis spring rates, as multiples of cfg.stiffness. Longitudinal is the softest so the car
 // visibly surges away under power and settles back into frame under braking; vertical is the
 // stiffest so crests and kerbs do not bounce the whole frame.
-const AXIS = { long: 0.80, lat: 1.65, vert: 2.30 };
+// lat 1.65 -> 1.155 (-30%) -> 0.924 (-20% more): softer side-to-side spring on yaw.
+const AXIS = { long: 0.80, lat: 0.924, vert: 2.30 };
 
 /** Exact critically-damped spring step. Returns nothing; writes [error, velocity] into out. */
 function springStep(err, vel, omega, dt, out) {

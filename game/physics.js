@@ -276,14 +276,19 @@ export const TUNE = {
   // 17.9 deg/s at 40 m/s against a 33 deg/s grip limit, because a real tyre needs slip angle to
   // make force and the load transfer under throttle stiffens the rear. The understeer allowance
   // below closes that 2.25x gap from the tyre model's own numbers rather than from a fudge factor.
-  minRadius: 11.5,      // m at low speed; measured 11.4 m and 62.6 deg/s at the peak
+  // User feel stack: 11.5 -> ... -> 7.57 (latest +15%). Geometric yaw = v/R.
+  minRadius: 7.57,      // m at low speed; was 11.5 before the sharpness passes
   steerMax: 0.40,       // rad, the MECHANICAL lock limit (23 deg); normally not the binding one
   // 10 -> 16 on the user's report that the steering is not sharp enough. This is INPUT smoothing,
   // not grip: with a binary keyboard the old 10/s spent ~100 ms of every corner entry winding the
   // virtual wheel, which reads as lag in the hands before the tyre model is even consulted. It
   // cannot destabilise anything the servo does not already cover, because the steady-state angle
   // is unchanged - only the time to reach it moves.
-  steerRate: 16,        // 1/s the smoothed steer chases the input; keyboard is binary
+  // 16 -> ... -> 24.29 (latest +15%): hands reach full lock faster.
+  steerRate: 24.29,     // 1/s the smoothed steer chases the input; keyboard is binary
+  // While the e-brake is held, input and yaw-rate demand get this extra multiplier on top of
+  // the base curve (user stack: 1.20 -> 1.62 -> 1.94).
+  handbrakeSteerGain: 1.94,
   // YAW-RATE SERVO on the steering angle: this is the hands, and it is what a human does that a
   // feed-forward angle cannot. Open loop, the angle is solved for a steady state that does not
   // exist yet, so at 60 m/s the yaw rate (fast) outruns the sideslip (slow), both axles saturate,
@@ -395,9 +400,29 @@ export const TUNE = {
   // the angle error, so the car rotated into the slide over half a second instead of snapping.
   // Neither changes the sustained slide, so the anti-pirouette guard and spinDamp are untouched.
   handbrakeSlip: 0.55,      // rad, 31.5 deg at full lock; measured 32-35 deg reached in play
-  handbrakeAssist: 3.20,    // 1/s the slip angle approaches handbrakeSlip
-  handbrakeRate: 1.60,      // rad/s the angle command may add on top of the sustaining rate
-  handbrakeGain: 9.0,       // yaw-rate servo gain used to achieve the commanded rate
+  // Entry snap stack: ... -> 5.18/2.59/14.58 (+35%) -> 6.22/3.11/17.50 (+20% more).
+  handbrakeAssist: 6.22,    // 1/s the slip angle approaches handbrakeSlip
+  handbrakeRate: 3.11,      // rad/s the angle command may add on top of the sustaining rate
+  handbrakeGain: 17.50,     // yaw-rate servo gain used to achieve the commanded rate
+  // ---- HANDBRAKE TAP WHILE TURNING (Burnout-style) ----------------------------------------
+  // Hold Space + steer was already a sustained slip-angle command. Paradise also rewards a
+  // short TAP of the e-brake mid-corner: the rear steps out on the press edge and the car
+  // tightens. Until this block, a tap and a hold used the same rates for as long as Space was
+  // down, then cut to zero on release - no edge impulse, no linger. These knobs only fire when
+  // the car is already steering-loaded above handbrakeTapMinSteer.
+  handbrakeTapMinSteer: 0.28, // |steer| needed to arm a tap kick
+  handbrakeTapMinSpeed: 6,    // m/s; below this a tap is just a scrub, not a turn tool
+  handbrakeTapDecay: 0.34,    // s for the edge-kick envelope to fall 1 -> 0
+  handbrakeTapRise: 0.08,     // s to ease the kick in (hard 0→1 was a cam whip via slip/yaw)
+  handbrakeTapBoost: 1.40,    // assist/rate multiplier at full kick (on top of hold values)
+  handbrakeTapWindow: 0.25,   // s held: at or under this, release still lingers the command
+  handbrakeTapLinger: 0.36,   // s the slip command outlives a short tap after Space comes up
+  // Chain: re-taps escalate stack while kick/linger/window are open. Authority is assist/rate
+  // only — no additive rKick and no yawRate impulse (both read as camera shake).
+  handbrakeTapChainWindow: 0.70, // s after a tap during which the next escalates
+  handbrakeTapStackStep: 0.55,   // +55% assist/rate per extra tap (1 / 1.55 / 2.1 / 2.65 / 3.2)
+  handbrakeTapStackMax: 5,       // hard cap so a mash cannot spin the car free
+  handbrakeTapDepthStep: 0.08,   // +8% commanded slip depth per stack level during the kick
   // OVER-ROTATION DAMPER. Exactly zero while the yaw rate is at or under the rate the car is
   // ENTITLED to, so it cannot touch ordinary cornering, ever — which is the property that makes it
   // checkable rather than a tuning fudge. CORRECTION, wave-s round 2: the comment here used to say
@@ -644,6 +669,13 @@ export function createPhysics({ blocks = [], bounds = 1400 } = {}) {
   let wallCool = 0;
   let driftHold = 0;
   let tapCmd = 0;           // 0..1 brake-tap drift command, latched and decayed over driftTapLinger
+  let hbPrev = false;       // last substep's handbrake, for rising-edge detection
+  let hbPressT = 0;         // s Space has been held this press
+  let hbCmd = 0;            // 0..1 e-brake slip command; lingers after a short turn-tap
+  let hbTapKick = 0;        // 0..1 smoothed edge envelope (tap while turning)
+  let hbTapKickT = 0;       // target 0..1 the kick eases toward, then decays
+  let hbTapStack = 0;       // chained tap count (1 = first, up to handbrakeTapStackMax)
+  let hbTapChainT = 0;      // s since last qualifying tap (resets on each stack hit)
   let counterHold = 0;      // s of CONTINUOUS opposite lock inside the current drift
   let counterPrev = 0;      // last substep's countersteer amount, for the flick's rate term
   let wreck = null;         // a wreck-grade contact, published through drainWreck() once
@@ -765,7 +797,9 @@ export function createPhysics({ blocks = [], bounds = 1400 } = {}) {
     const sn = clamp(gv / TUNE.vMax, 0, 1.4);
     const L = TUNE.wheelbase, a = TUNE.cgFront, b = TUNE.cgRear, m = TUNE.mass;
 
-    state.steer = damp(state.steer, clamp(steerIn, -1, 1), TUNE.steerRate, h);
+    // handbrakeSteerGain: e-brake steering reaches lock and yaw demand faster than normal.
+    state.steer = damp(state.steer, clamp(steerIn, -1, 1),
+      TUNE.steerRate * (handbrake ? TUNE.handbrakeSteerGain : 1), h);
 
     // ---- vertical loads: static split, downforce, longitudinal transfer --------------------
     const dfFactor = 1 + TUNE.downforce * sn * sn;
@@ -835,7 +869,8 @@ export function createPhysics({ blocks = [], bounds = 1400 } = {}) {
       TUNE.muRear * fzRear0 * L / (m * a));
     const rGrip = TUNE.gripUse * aLatMax / Math.max(gv, 0.5);   // grip-limited, falls as 1/v
     const rGeo = gv / TUNE.minRadius;                 // geometric, rises with v
-    const rTarget = state.steer * Math.min(rGrip, rGeo) * Math.sign(v || 1);
+    const rTarget = state.steer * Math.min(rGrip, rGeo) * Math.sign(v || 1)
+      * (handbrake ? TUNE.handbrakeSteerGain : 1);
     // Steering angle for that rate: Ackermann plus the slip the tyres need to make the force.
     // (aR - aF) = (m*ay / (tyreStiff * L)) * (b/FzF - a/FzR), straight out of the linear tyre
     // model above, so it tracks load transfer and downforce instead of being a constant.
@@ -1073,26 +1108,95 @@ export function createPhysics({ blocks = [], bounds = 1400 } = {}) {
     }
     counterPrev = cPos;
 
+    // ---- handbrake tap edge + short-tap linger + chain stack -------------------------------
+    // Rising edge while steering-loaded: arm the kick. A second press while the previous kick
+    // is still up, the slip command is lingering, or chainT is inside handbrakeTapChainWindow
+    // escalates hbTapStack so each dab in the chain is sharper than the last.
+    // Hold past handbrakeTapWindow: release drops the command immediately (sustained e-brake).
+    // Short press: command lingers so the snap can finish after Space is up.
+    const steerAbs = Math.abs(state.steer);
     if (handbrake) {
+      if (!hbPrev) {
+        hbPressT = 0;
+        if (steerAbs >= TUNE.handbrakeTapMinSteer && gv >= TUNE.handbrakeTapMinSpeed) {
+          const chainOpen = hbTapStack > 0 && (
+            hbTapKick > 0.08
+            || hbCmd > 0.05
+            || hbTapChainT < TUNE.handbrakeTapChainWindow
+          );
+          hbTapStack = chainOpen
+            ? Math.min(hbTapStack + 1, TUNE.handbrakeTapStackMax)
+            : 1;
+          hbTapChainT = 0;
+          // Target 1; pull the envelope down a little so each re-tap eases in again instead of
+          // hard-holding at 1 (which made stacked taps feel like a camera hitch).
+          hbTapKick = Math.min(hbTapKick, 0.2);
+          hbTapKickT = 1;
+        }
+      }
+      hbPressT += h;
+      hbCmd = 1;
+    } else {
+      if (hbPrev && hbPressT > TUNE.handbrakeTapWindow) hbCmd = 0;
+      hbCmd = Math.max(0, hbCmd - h / TUNE.handbrakeTapLinger);
+      hbPressT = 0;
+    }
+    // Ease kick up, then decay the target and follow it down - never a hard 0→1 step into yaw.
+    if (hbTapKickT > 0) {
+      const rise = Math.max(TUNE.handbrakeTapRise, 1e-3);
+      hbTapKick = Math.min(1, hbTapKick + h / rise);
+      if (hbTapKick >= 0.999) {
+        hbTapKickT = Math.max(0, hbTapKickT - h / TUNE.handbrakeTapDecay);
+        hbTapKick = hbTapKickT;
+      }
+    } else {
+      hbTapKick = Math.max(0, hbTapKick - h / TUNE.handbrakeTapDecay);
+    }
+    if (hbTapStack > 0) {
+      hbTapChainT += h;
+      // Drop the chain only once the kick and linger are dead AND the window has closed,
+      // so a slightly late re-tap still escalates if the player is still mid-snap.
+      if (hbTapKick < 0.05 && hbCmd < 0.02 && hbTapChainT >= TUNE.handbrakeTapChainWindow) {
+        hbTapStack = 0;
+        hbTapChainT = 0;
+      }
+    }
+    hbPrev = handbrake;
+
+    if (handbrake || hbCmd > 0.02) {
       // The e-brake commands a SLIP ANGLE. `handbrakeSlip` is the angle asked for at full lock,
       // approached at handbrakeAssist 1/s: since d(slipAngle)/dt = yawRate - rHold, the rate that
       // closes the angle error at that pace is rHold + assist * error, and the servo below tracks
       // it. The same command therefore produces the same readable slide at 80 and at 250 km/h,
       // where round 1's grip-cut-and-hope produced +26% speed at one end and -86% at the other.
-      const want = TUNE.handbrakeSlip * clamp(Math.abs(state.steer), 0.30, 1) * Math.sign(state.steer || 1);
+      // Tap kick multiplies assist/rate on the press edge so a mid-corner dab tightens harder
+      // than a plain hold. No additive rWant kick and no direct yawRate write — those read as
+      // chase-cam shake through slipSwing / slipAim / accelG jerk.
+      // stackMul: 1 / 1.55 / 2.1 / 2.65 / 3.2 at taps 1..5.
+      const stackMul = 1 + Math.max(0, hbTapStack - 1) * TUNE.handbrakeTapStackStep;
+      const kick = hbTapKick;
+      const boost = 1 + (TUNE.handbrakeTapBoost - 1) * kick * stackMul;
+      const assist = TUNE.handbrakeAssist * boost;
+      // Rate ceiling grows with stack so later taps can still approach faster, but gain is NOT
+      // multiplied by stack (high gain + big error was the remaining whip after the impulse removal).
+      const rate = TUNE.handbrakeRate * boost;
+      const gain = TUNE.handbrakeGain * (1 + (TUNE.handbrakeTapBoost - 1) * kick * 0.25);
+      // Depth: full while held; fades with hbCmd after a short tap so linger is not a free deep slide.
+      const depthMul = 1 + Math.max(0, hbTapStack - 1) * TUNE.handbrakeTapDepthStep * kick;
+      const depth = TUNE.handbrakeSlip * (handbrake ? 1 : hbCmd) * depthMul;
+      const want = depth * clamp(steerAbs, 0.30, 1) * Math.sign(state.steer || 1);
       // The correction is BOUNDED. Unbounded, rHold + assist*error asks for 2.3 rad/s at the moment
       // the e-brake bites, which is above yawRateMax, so the yaw rate saturated, the angle overshot
       // to 52-66 deg, and the scrub at that angle took 91% of the car's speed in two seconds. The
       // bound is the whole difference between a commanded slide and a pirouette.
-      const rWant = rHold + clamp((want - slipNow) * TUNE.handbrakeAssist,
-        -TUNE.handbrakeRate, TUNE.handbrakeRate);
+      const rWant = rHold + clamp((want - slipNow) * assist, -rate, rate);
       // Same feed-forward as the drift branch, and for the same reason: without it the tyre moment
       // is a standing disturbance the servo can only divide down, and with the rear mu cut that
       // moment is PRO-rotation, so the angle overshot its 26 deg command to 54 deg at 80 km/h and
       // 89 deg at 250 - the flat spin the critic measured, and the whole reason the speed cost was
       // four different numbers on the same two keys.
       yawAccel -= TUNE.driftYawAuthority * tyreMoment;
-      yawAccel += (rWant - state.yawRate) * TUNE.handbrakeGain;
+      yawAccel += (rWant - state.yawRate) * gain;
     } else if (state.drifting) {
       // rSustain holds the angle and bleeds it off at driftAngularDamping 1/s; `gather` hands the
       // target back to the rate the DRIVER is asking for as a countersteer is held, and with
@@ -1226,7 +1330,7 @@ export function createPhysics({ blocks = [], bounds = 1400 } = {}) {
     // drift is the sustaining rate and not the driver's requested rate - otherwise it removes every
     // slide the moment the steering is centred, since rTarget is then zero. Outside a drift it is
     // unchanged, so it still cannot touch ordinary cornering.
-    const rAllow = state.drifting || handbrake
+    const rAllow = state.drifting || handbrake || hbCmd > 0.02
       ? Math.max(Math.abs(rTarget), Math.abs(rHold) + TUNE.handbrakeSlip * TUNE.handbrakeAssist)
       : Math.abs(rTarget);
     const excess = Math.abs(state.yawRate) - rAllow;
@@ -1280,6 +1384,8 @@ export function createPhysics({ blocks = [], bounds = 1400 } = {}) {
       state.chain = 0; state.impact = 0; state.accelG = 0; state.eventEarn = 0;
       state.ground = Math.abs(speed); prevGround = speed;
       boostLatch = false; driftHold = 0; tapCmd = 0; aLongPrev = 0; wallCool = 0;
+      hbPrev = false; hbPressT = 0; hbCmd = 0; hbTapKick = 0; hbTapKickT = 0;
+      hbTapStack = 0; hbTapChainT = 0;
       counterHold = 0; counterPrev = 0; wreck = null;
     },
 
