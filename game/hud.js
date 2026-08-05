@@ -1086,13 +1086,28 @@ export function createHud(container, { layout, maxPixelRatio = 1, attached = tru
     // ---- earn popups ------------------------------------------------------
     // Stacked above the bar in the burnout-chain type style: amber, slanted, glowing. Each
     // rises a little and fades over its life; newest sits closest to the bar.
+    //
+    // The oncoming yard meter REPLACES the old 'ONCOMING LANE +2%' pulse popups (advance()
+    // filters those out of the feed): it holds the popup stack's bottom slot, ticking up
+    // live in the same type, freezing when the hero leaves the lane, then fading out.
+    let slot0 = 0;
+    if (oncomingYd >= 1) {
+      slot0 = 1;
+      ctx.save();
+      ctx.globalAlpha = oncomingHold < 0.5 ? oncomingHold / 0.5 : 1;
+      drawType(`ONCOMING ${Math.floor(oncomingYd)} YDS`, x - 28 * S, y - 62 * S - 14 * S, {
+        size: 20 * S, weight: 800, track: 1.8 * S, slant: 0.22,
+        fill: AMBER_HOT, glow: 'rgba(255,150,30,0.5)',
+      });
+      ctx.restore();
+    }
     for (let i = 0; i < earnPops.length; i++) {
       const p = earnPops[earnPops.length - 1 - i];
       const k = p.t / p.life;                       // 0 fresh -> 1 gone
       const rise = (14 + 10 * k) * S;
       ctx.save();
       ctx.globalAlpha = k < 0.7 ? 1 : 1 - (k - 0.7) / 0.3;
-      drawType(p.text, x - 28 * S, y - 62 * S - i * 24 * S - rise, {
+      drawType(p.text, x - 28 * S, y - 62 * S - (i + slot0) * 24 * S - rise, {
         size: 20 * S, weight: 800, track: 1.8 * S, slant: 0.22,
         fill: AMBER_HOT, glow: 'rgba(255,150,30,0.5)',
       });
@@ -2756,23 +2771,9 @@ export function createHud(container, { layout, maxPixelRatio = 1, attached = tru
   // =========================================================================
   // frame
   // =========================================================================
-  // Upper-centre, in the burnout-chain type style. Ticks up live, freezes on exit, fades out.
-  function drawOncoming() {
-    if (oncomingYd < 1) return;
-    const a = oncomingHold < 0.5 ? oncomingHold / 0.5 : 1;
-    ctx.save();
-    ctx.globalAlpha = a;
-    drawType(`ONCOMING  ${Math.floor(oncomingYd)} YDS`, W / 2 - 150 * S, H * 0.22, {
-      size: 30 * S, weight: 900, track: 2.2 * S, slant: 0.22,
-      fill: AMBER_HOT, glow: 'rgba(255,150,30,0.5)',
-    });
-    ctx.restore();
-  }
-
   function draw(s) {
     ctx.clearRect(0, 0, W, H);
     drawCrashState();
-    drawOncoming();
     drawStreetPlate(s);
     drawMinimap(s);
     drawFeed(s);
@@ -2814,6 +2815,8 @@ export function createHud(container, { layout, maxPixelRatio = 1, attached = tru
         drift: 'DRIFT', speeding: 'ONCOMING LANE',
       };
       for (const e of s.earnFeed) {
+        // the oncoming yard meter replaces the 'ONCOMING LANE +n%' pulse popups outright
+        if (e.type === 'speeding') continue;
         const name = NAMES[e.type] || String(e.type).toUpperCase();
         const mult = e.mult > 1 ? ` x${e.mult}` : '';
         const passive = e.type === 'drift' || e.type === 'speeding';

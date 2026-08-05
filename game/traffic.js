@@ -887,8 +887,21 @@ export function createTraffic(scene, { rng, layout, blocks = [], roadKit } = {})
         if (!b.heroHit) continue;
         const hit = b.heroHit; b.heroHit = null;
         if (b.gone || !b.hide || hit.rel < 4) continue;
+        // A dead slot if one exists; otherwise STEAL the farthest live non-wrecked car —
+        // in normal play the pool is usually full, and "no slot free" must not read as a
+        // parked car bolted to the road. The stolen car is far away by construction, so
+        // its retire is invisible.
         let slot = null;
         for (const v of pool) if (!v.live) { slot = v; break; }
+        if (!slot) {
+          let far = -1;
+          for (const v of pool) {
+            if (!v.live || v.wrecked) continue;
+            const d = (v.pos.x - hx) * (v.pos.x - hx) + (v.pos.z - hz) * (v.pos.z - hz);
+            if (d > far) { far = d; slot = v; }
+          }
+          if (slot) closePass(slot);
+        }
         if (!slot) continue;
         b.gone = true;
         b.hide();
