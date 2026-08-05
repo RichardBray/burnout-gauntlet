@@ -223,6 +223,7 @@ export async function boot() {
   // traffic.js keeps owning the NPC side of the same contact — the knock-forward and shove.
   // A wreck-grade hit surfaces through the existing drainWreck() path below.
   physics.setTrafficBodies(() => traffic.vehicles);
+  physics.setParkedBodies(world.parkedCars);
   // Cosmetic side of the same join: sparks + grit at the contact point of a survivable
   // traffic hit. Wreck-grade contacts get the full cinematic through drainWreck() instead,
   // and crash.impactBurst() shares the crash pools so the two can never double-spend.

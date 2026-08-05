@@ -712,6 +712,7 @@ export function createPhysics({ blocks = [], bounds = 1400 } = {}) {
   let eventSource = null;   // see setEventSource()
   let trafficBodies = null; // see setTrafficBodies(); () => [{pos, yaw, speed, halfLen, halfWid}]
   let onTrafficHit = null;  // see setTrafficHitListener(); fired once per traffic contact edge
+  let parkedBodies = [];    // see setParkedBodies(); [{x, z, fx, fz, halfLen, halfWid}]
   let aLongPrev = 0;        // last substep's DRIVE/BRAKE acceleration, for load transfer only
   let prevGround = 0;       // last tick's signed ground speed, for accelG
 
@@ -753,6 +754,57 @@ export function createPhysics({ blocks = [], bounds = 1400 } = {}) {
     forward(fwd); leftward(side);
     state.speed = clamp(wx * fwd.x + wz * fwd.z, -TUNE.reverseMax, TUNE.vMaxBoost);
     state.vLat = wx * side.x + wz * side.z;
+  }
+
+  /**
+   * One car-shaped body (live traffic or parked), centred (cx, cz) with axis-aligned half
+   * extents (ex, ez), moving at world velocity (bvx, bvz). Severity and shunt are resolved in
+   * the body's frame — see the TRAFFIC comment in collide(). `o` is the live traffic slot to
+   * stamp the hit onto, or null for a body with no simulation side (parked cars).
+   */
+  function hitCarBody(h, cx, cz, ex, ez, bvx, bvz, o) {
+    const hx = ex + 1.0, hz = ez + 1.0;   // +1.0 = hero half width, as blocks
+    const dx = state.pos.x - cx, dz = state.pos.z - cz;
+    if (Math.abs(dx) >= hx || Math.abs(dz) >= hz) return false;
+    const px = hx - Math.abs(dx), pz = hz - Math.abs(dz);
+    forward(fwd); leftward(side);
+    const vx = fwd.x * state.speed + side.x * state.vLat;
+    const vz = fwd.z * state.speed + side.z * state.vLat;
+    let nx = 0, nz = 0;
+    if (px < pz) { state.pos.x = cx + Math.sign(dx || 1) * hx; nx = Math.sign(dx || 1); }
+    else { state.pos.z = cz + Math.sign(dz || 1) * hz; nz = Math.sign(dz || 1); }
+    const rvx = vx - bvx, rvz = vz - bvz;
+    const closing = Math.max(0, -(rvx * nx + rvz * nz));
+    if (wallCool <= 0) {
+      const sev = clamp((closing - TUNE.grazeNormalSpeed)
+        / (TUNE.hitNormalSpeed - TUNE.grazeNormalSpeed), 0, 1);
+      shunt(rvx, rvz, nx, nz, lerp(TUNE.scrapeKeep, TUNE.hitKeep, sev), bvx, bvz);
+      state.yawRate *= lerp(0.9, 0.35, sev);
+      state.impact = Math.max(state.impact, sev);
+      // Stamp the hit on the struck body for traffic.js to consume next update. It has
+      // to be pushed, not re-detected there: this resolver has already separated the
+      // bodies and matched the speeds by the time traffic.update() runs, so its own
+      // overlap test never sees the contact, let alone the pre-impact closing speed.
+      if (o) o.heroHit = { rel: Math.hypot(rvx, rvz), sev };
+      if (onTrafficHit) {
+        // Contact point: the hero's face toward the body. Outgoing direction: the
+        // tangential remainder of the relative velocity (what shunt() keeps), falling
+        // back to the contact normal for a dead-square hit.
+        const dot = rvx * nx + rvz * nz;
+        let dxo = rvx - dot * nx, dzo = rvz - dot * nz;
+        if (dxo * dxo + dzo * dzo < 1e-4) { dxo = nx; dzo = nz; }
+        onTrafficHit({ x: state.pos.x - nx, z: state.pos.z - nz, dirX: dxo, dirZ: dzo,
+          sev, rel: Math.hypot(rvx, rvz) });
+      }
+      if (sev >= TUNE.wreckSeverity && !wreck) {
+        wreck = { speed: Math.hypot(rvx, rvz), dir: { x: -nx, z: -nz }, severity: sev };
+      }
+    } else {
+      state.speed -= Math.sign(state.speed || 1) * TUNE.wallFriction * h;
+      state.vLat *= Math.exp(-14 * h);
+    }
+    wallCool = TUNE.contactHold;
+    return true;
   }
 
   function collide(h) {
@@ -797,56 +849,23 @@ export function createPhysics({ blocks = [], bounds = 1400 } = {}) {
       for (const o of trafficBodies()) {
         const ofx = Math.cos(o.yaw), ofz = -Math.sin(o.yaw);
         const along = Math.abs(ofx) > 0.5;   // body length along world x?
-        const hx = (along ? o.halfLen : o.halfWid) + 1.0;   // +1.0 = hero half width, as blocks
-        const hz = (along ? o.halfWid : o.halfLen) + 1.0;
-        const dx = state.pos.x - o.pos.x, dz = state.pos.z - o.pos.z;
-        if (Math.abs(dx) >= hx || Math.abs(dz) >= hz) continue;
-        const px = hx - Math.abs(dx), pz = hz - Math.abs(dz);
-        forward(fwd); leftward(side);
-        const vx = fwd.x * state.speed + side.x * state.vLat;
-        const vz = fwd.z * state.speed + side.z * state.vLat;
-        let nx = 0, nz = 0;
-        if (px < pz) { state.pos.x = o.pos.x + Math.sign(dx || 1) * hx; nx = Math.sign(dx || 1); }
-        else { state.pos.z = o.pos.z + Math.sign(dz || 1) * hz; nz = Math.sign(dz || 1); }
         // A wrecked body's velocity is not along its heading (it slides and spins freely);
         // traffic.js publishes it as (wvx, wvz). ponytail: its box is still tested with the
-        // nearest-axis extents above, good to ~a half-width at 45 deg of spin — swap for a
+        // nearest-axis extents, good to ~a half-width at 45 deg of spin — swap for a
         // rotated-box test if wreck contacts ever read as snaggy.
         const bvx = o.wrecked ? o.wvx : ofx * o.speed;
         const bvz = o.wrecked ? o.wvz : ofz * o.speed;
-        const rvx = vx - bvx, rvz = vz - bvz;
-        const closing = Math.max(0, -(rvx * nx + rvz * nz));
-        if (wallCool <= 0) {
-          const sev = clamp((closing - TUNE.grazeNormalSpeed)
-            / (TUNE.hitNormalSpeed - TUNE.grazeNormalSpeed), 0, 1);
-          shunt(rvx, rvz, nx, nz, lerp(TUNE.scrapeKeep, TUNE.hitKeep, sev), bvx, bvz);
-          state.yawRate *= lerp(0.9, 0.35, sev);
-          state.impact = Math.max(state.impact, sev);
-          // Stamp the hit on the struck body for traffic.js to consume next update. It has
-          // to be pushed, not re-detected there: this resolver has already separated the
-          // bodies and matched the speeds by the time traffic.update() runs, so its own
-          // overlap test never sees the contact, let alone the pre-impact closing speed.
-          o.heroHit = { rel: Math.hypot(rvx, rvz), sev };
-          if (onTrafficHit) {
-            // Contact point: the hero's face toward the body. Outgoing direction: the
-            // tangential remainder of the relative velocity (what shunt() keeps), falling
-            // back to the contact normal for a dead-square hit.
-            const dot = rvx * nx + rvz * nz;
-            let dxo = rvx - dot * nx, dzo = rvz - dot * nz;
-            if (dxo * dxo + dzo * dzo < 1e-4) { dxo = nx; dzo = nz; }
-            onTrafficHit({ x: state.pos.x - nx, z: state.pos.z - nz, dirX: dxo, dirZ: dzo,
-              sev, rel: Math.hypot(rvx, rvz) });
-          }
-          if (sev >= TUNE.wreckSeverity && !wreck) {
-            wreck = { speed: Math.hypot(rvx, rvz), dir: { x: -nx, z: -nz }, severity: sev };
-          }
-        } else {
-          state.speed -= Math.sign(state.speed || 1) * TUNE.wallFriction * h;
-          state.vLat *= Math.exp(-14 * h);
-        }
-        wallCool = TUNE.contactHold;
-        return true;
+        if (hitCarBody(h, o.pos.x, o.pos.z,
+          along ? o.halfLen : o.halfWid, along ? o.halfWid : o.halfLen, bvx, bvz, o)) return true;
       }
+    }
+    // PARKED CARS: world.js's baked kerb population. Same contact, zero velocity, and no `o`
+    // to react — the bodies are sealed InstancedMeshes, so the car itself neither moves nor
+    // wrecks; the hero side (shunt, severity, wreck, impact burst) all still applies.
+    for (const b of parkedBodies) {
+      const along = Math.abs(b.fx) > 0.5;
+      if (hitCarBody(h, b.x, b.z,
+        along ? b.halfLen : b.halfWid, along ? b.halfWid : b.halfLen, 0, 0, null)) return true;
     }
     const outX = Math.abs(state.pos.x) > bounds, outZ = Math.abs(state.pos.z) > bounds;
     if (outX || outZ) {
@@ -1551,6 +1570,12 @@ export function createPhysics({ blocks = [], bounds = 1400 } = {}) {
      * the consumer is cosmetic (impact FX / audio) and must never affect the sim.
      */
     setTrafficHitListener(fn) { onTrafficHit = typeof fn === 'function' ? fn : null; },
+
+    /**
+     * The baked kerb population (world.parkedCars): collidable but sealed — the hero takes
+     * the full scrape/hit/wreck contact, the parked car itself cannot move or deform.
+     */
+    setParkedBodies(list) { parkedBodies = Array.isArray(list) ? list : []; },
 
     /**
      * A wreck-grade contact, or null; CLEARED ON READ. physics.js cannot start the crash cinematic

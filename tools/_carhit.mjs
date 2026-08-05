@@ -50,6 +50,21 @@ const npc = (x, z, yaw, speed = 0) =>
   assert(p.state.speed > 30, `kept speed through matched-speed contact (${p.state.speed.toFixed(1)} m/s)`);
 }
 
+// 2b. Parked car dead ahead: same head-on outcome via setParkedBodies.
+{
+  const p = createPhysics({ blocks: [], bounds: 1e9 });
+  p.setParkedBodies([{ x: 0, z: 60, fx: 0, fz: 1, halfLen: 2.2, halfWid: 0.91 }]);
+  p.state.speed = 40;
+  let peak = 0;
+  for (let t = 0; t < 2; t += DT) {
+    p.step(DT, { throttle: 1, brake: 0, steer: 0, boost: false, handbrake: false });
+    peak = Math.max(peak, p.state.impact);
+  }
+  const w = p.drainWreck();
+  assert(p.state.pos.z < 60, `stopped short of parked car (z=${p.state.pos.z.toFixed(1)})`);
+  assert(peak > 0.9 && w, `head-on into parked car is a wreck (impact ${peak.toFixed(2)})`);
+}
+
 // 3. No bodies: identical run must be untouched by the traffic branch (sanity/regression).
 {
   const a = run([], { speed: 40, seconds: 2 });

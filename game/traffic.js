@@ -524,18 +524,12 @@ export function createTraffic(scene, { rng, layout, blocks = [], roadKit } = {})
       const ry = v.yaw;
       const fx = Math.cos(ry), fz = -Math.sin(ry);   // world.js's forward for this yaw
       const gx = v.pos.x, gz = v.pos.z;
-      // ponytail: the wreck LOOK is a matrix crush — body squashed to 78% height with a
-      // seeded roll tilt (plus the soot tint applied once at wreck time). Reads as damage at
-      // traffic distances for zero draw-call cost; the upgrade path is promoting wrecks to a
-      // small pool of real deformable meshes with damage.js if this ever reads too cheap.
-      const crushY = v.wrecked ? 0.78 : 1;
-      const tilt = v.wrecked ? ((((v.k * 2654435761) >>> 0) % 100) / 100 - 0.5) * 0.10 : 0;
       // `d` runs along the body, `side` across it; both in metres, exactly the offsets
       // world.js's parkedCar() uses so the two populations are the same shape.
       const set = (m, idx, d, side, y, sx, sy, sz) => {
-        dummy.position.set(gx + fx * d - fz * side, CAR_Y + y * crushY, gz + fz * d + fx * side);
-        dummy.rotation.set(0, ry, tilt);
-        dummy.scale.set(sx, sy * crushY, sz);
+        dummy.position.set(gx + fx * d - fz * side, CAR_Y + y, gz + fz * d + fx * side);
+        dummy.rotation.set(0, ry, 0);
+        dummy.scale.set(sx, sy, sz);
         dummy.updateMatrix();
         m.setMatrixAt(idx, dummy.matrix);
       };
@@ -1171,14 +1165,6 @@ export function createTraffic(scene, { rng, layout, blocks = [], roadKit } = {})
                 v.wvz = (a0 ? 0 : v.dir * v.speed) * 0.5 + hvz * (0.35 + 0.35 * kick);
                 const side = Math.sign((v.pos.x - hx) * -heroFz + (v.pos.z - hz) * heroFx) || 1;
                 v.wspin = -side * (1.5 + 3.5 * kick);
-                // soot the paint, once; spawn() restores the slot's color when it recycles
-                if (bodyMesh.instanceColor) {
-                  bodyMesh.getColorAt(v.k * 2, tmpC);
-                  tmpC.multiplyScalar(0.45);
-                  bodyMesh.setColorAt(v.k * 2, tmpC);
-                  bodyMesh.setColorAt(v.k * 2 + 1, tmpC);
-                  bodyMesh.instanceColor.needsUpdate = true;
-                }
               }
             }
           } else if (clr > 0.6) v.ctOn = false;
