@@ -807,7 +807,12 @@ export function createPhysics({ blocks = [], bounds = 1400 } = {}) {
         let nx = 0, nz = 0;
         if (px < pz) { state.pos.x = o.pos.x + Math.sign(dx || 1) * hx; nx = Math.sign(dx || 1); }
         else { state.pos.z = o.pos.z + Math.sign(dz || 1) * hz; nz = Math.sign(dz || 1); }
-        const bvx = ofx * o.speed, bvz = ofz * o.speed;
+        // A wrecked body's velocity is not along its heading (it slides and spins freely);
+        // traffic.js publishes it as (wvx, wvz). ponytail: its box is still tested with the
+        // nearest-axis extents above, good to ~a half-width at 45 deg of spin — swap for a
+        // rotated-box test if wreck contacts ever read as snaggy.
+        const bvx = o.wrecked ? o.wvx : ofx * o.speed;
+        const bvz = o.wrecked ? o.wvz : ofz * o.speed;
         const rvx = vx - bvx, rvz = vz - bvz;
         const closing = Math.max(0, -(rvx * nx + rvz * nz));
         if (wallCool <= 0) {
@@ -816,6 +821,11 @@ export function createPhysics({ blocks = [], bounds = 1400 } = {}) {
           shunt(rvx, rvz, nx, nz, lerp(TUNE.scrapeKeep, TUNE.hitKeep, sev), bvx, bvz);
           state.yawRate *= lerp(0.9, 0.35, sev);
           state.impact = Math.max(state.impact, sev);
+          // Stamp the hit on the struck body for traffic.js to consume next update. It has
+          // to be pushed, not re-detected there: this resolver has already separated the
+          // bodies and matched the speeds by the time traffic.update() runs, so its own
+          // overlap test never sees the contact, let alone the pre-impact closing speed.
+          o.heroHit = { rel: Math.hypot(rvx, rvz), sev };
           if (sev >= TUNE.wreckSeverity && !wreck) {
             wreck = { speed: Math.hypot(rvx, rvz), dir: { x: -nx, z: -nz }, severity: sev };
           }

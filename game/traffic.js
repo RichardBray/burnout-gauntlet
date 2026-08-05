@@ -132,6 +132,13 @@ const EVENT_REL_MIN = 8;    // m/s relative speed floor, same reason
 const HERO_HALF_W = 0.95;   // hero body half-width; a pass is a LATERAL event so this is the
                             // right inflation radius for a point-vs-box clearance
 const CHECK_SHUNT = 2.6;    // m/s-ish lateral shove a traffic check puts on the vehicle
+// A hit closing faster than this doesn't shunt the car back into its lane — it WRECKS it: the
+// body leaves the lane system and becomes a free 2-D projectile (see the `wrecked` branch in
+// the drive loop). 13 m/s of relative speed is ~47 km/h of closing, a real T-bone or a fast
+// rear-end, comfortably above the brush-past contacts CHECK_SHUNT is tuned for.
+const WRECK_REL = 13;       // m/s relative speed at contact that turns a shunt into a wreck
+const WRECK_FRICTION = 6.5; // m/s^2 a sliding wreck sheds; ~2 s from a 13 m/s kick to rest
+const WRECK_SPIN_DECAY = 1.4; // 1/s exponential decay on a wreck's spin rate
 const EVENT_CAP = 96;       // queue ceiling, so an undrained queue cannot grow without bound
 
 // ---- IDM (Treiber) ----------------------------------------------------------------------
@@ -304,6 +311,9 @@ export function createTraffic(scene, { rng, layout, blocks = [], roadKit } = {})
       // one open near-miss pass, per slot: min clearance, peak relative speed, whether it
       // turned into contact, whether the hero was travelling against my lane at the closest point
       nmOn: false, nmMin: 0, nmRel: 0, nmHit: false, nmOnc: false, ctOn: false,
+      // wrecked: hit hard enough to leave the lane system. `pos`/`yaw` become authoritative
+      // (place() no longer writes them), (wvx, wvz) is the world velocity, wspin the yaw rate.
+      wrecked: false, wvx: 0, wvz: 0, wspin: 0,
     });
   }
   const vehicles = [];   // the live subset; same array object every frame, so no per-frame alloc
@@ -418,6 +428,7 @@ export function createTraffic(scene, { rng, layout, blocks = [], roadKit } = {})
     slot.jIdx = -1; slot.jDist = 1e9;
     slot.endHold = 0; slot.stallT = 0; slot.shove = 0; slot.shoveT = 0;
     slot.nmOn = false; slot.ctOn = false;
+    slot.wrecked = false; slot.wvx = 0; slot.wvz = 0; slot.wspin = 0;
     slot.pos.set(px, 0, pz);
     slot.yaw = yawOf(slot);
     const col = rngPick(R, COLORS);
@@ -666,6 +677,7 @@ export function createTraffic(scene, { rng, layout, blocks = [], roadKit } = {})
       for (const v of pool) {
         v.live = false; v.nmOn = false; v.ctOn = false;
         v.endHold = 0; v.stallT = 0; v.otT = 0; v.shove = 0; v.shoveT = 0;
+        v.wrecked = false; v.wvx = 0; v.wvz = 0; v.wspin = 0;
       }
       for (const j of junc) { j.owner = -1; j.heldT = 0; j.occT = 0; j.occ = 0; }
       events.length = 0;
@@ -752,6 +764,12 @@ export function createTraffic(scene, { rng, layout, blocks = [], roadKit } = {})
       // ---- retire ------------------------------------------------------------------------
       for (const v of pool) {
         if (!v.live) continue;
+        // A wreck owns its position (place() would snap it back onto a lane) and has no line
+        // end to retire at: the distance test is the only retire it needs.
+        if (v.wrecked) {
+          if (v.pos.distanceTo(_hero) > DESPAWN_R) { closePass(v); v.live = false; v.endHold = 0; }
+          continue;
+        }
         place(v, _p);
         if (_p.distanceTo(_hero) > DESPAWN_R) { closePass(v); v.live = false; v.endHold = 0; continue; }
         // THE LINE-END RETIRE IS NOT A DISTANCE TEST AND WAS NEVER GATED ON THE HERO. Round 1
@@ -862,6 +880,48 @@ export function createTraffic(scene, { rng, layout, blocks = [], roadKit } = {})
       for (const v of pool) {
         if (!v.live) continue;
         if (v.hornT > 0) v.hornT -= step;
+
+        // ---- wrecked: a free 2-D body, not a lane follower --------------------------------
+        // It slides where the hit sent it, spins, sheds speed to friction and stays where it
+        // stops as a live obstacle (the IDM corridor scan and physics.js both keep seeing it
+        // in `vehicles`). It never rejoins traffic; it despawns by distance like anyone else.
+        if (v.wrecked) {
+          v.heroHit = null;   // this branch detects its own hero contact below
+          v.wspin *= Math.exp(-WRECK_SPIN_DECAY * step);
+          v.yaw += v.wspin * step;
+          const sp = Math.hypot(v.wvx, v.wvz);
+          if (sp > 0) {
+            const ns = Math.max(0, sp - WRECK_FRICTION * step);
+            v.wvx *= ns / sp; v.wvz *= ns / sp;
+          }
+          v.pos.x += v.wvx * step;
+          v.pos.z += v.wvz * step;
+          v.speed = Math.hypot(v.wvx, v.wvz);   // what the IDM scan reads as leader speed
+          // Re-contact with the hero kicks it again, so a wreck can be batted down the road.
+          // Exact point-to-rotated-box in the wreck's frame (same shape as the statics test);
+          // the hero-side impulse is physics.js's job, this is only the wreck's share.
+          const fx = Math.cos(v.yaw), fz = -Math.sin(v.yaw);
+          const rdx = hx - v.pos.x, rdz = hz - v.pos.z;
+          const along = Math.abs(rdx * fx + rdz * fz) - v.halfLen;
+          const lat = Math.abs(rdx * fz - rdz * fx) - v.halfWid;
+          const clr = Math.hypot(Math.max(along, 0), Math.max(lat, 0)) - HERO_HALF_W;
+          if (clr <= 0) {
+            if (!v.ctOn) {
+              v.ctOn = true;
+              const rel = Math.hypot(hvx - v.wvx, hvz - v.wvz);
+              const kick = clamp(rel / 30, 0, 1);
+              v.wvx = v.wvx * 0.35 + hvx * (0.3 + 0.4 * kick);
+              v.wvz = v.wvz * 0.35 + hvz * (0.3 + 0.4 * kick);
+              // ponytail: spin sign from which side of the hero the wreck sits; a contact-point
+              // torque would be more honest, upgrade if the spin ever reads wrong in play
+              const side = Math.sign((v.pos.x - hx) * -heroFz + (v.pos.z - hz) * heroFx) || 1;
+              v.wspin += -side * (1.0 + 3.0 * kick);
+            }
+          } else if (clr > 0.6) v.ctOn = false;
+          vehicles.push(v);
+          continue;
+        }
+
         const L = v.line;
         const a0 = L.axis === 0;
         const p = progOf(v);
@@ -1072,17 +1132,36 @@ export function createTraffic(scene, { rng, layout, blocks = [], roadKit } = {})
           }
           if (rel > v.nmRel) v.nmRel = rel;
         }
-        if (v.nmOn) {
-          if (clr <= 0) {
+        // physics.js resolves the hero side of a contact BEFORE this update runs, separating
+        // the bodies and matching the speeds — so `clr <= 0` alone misses every resolved hit
+        // and `rel` here is the post-impact relative speed, not the one that matters. The
+        // resolver stamps `heroHit` with the pre-impact numbers; consume it as a contact.
+        const hit = v.heroHit; v.heroHit = null;
+        if (v.nmOn || hit) {
+          if (clr <= 0 || hit) {
             if (!v.ctOn) {
               v.ctOn = true; v.nmHit = true;
-              emit('check', 0.2 + 0.8 * clamp((rel - 5) / 28, 0, 1), v.pos.x, v.pos.z,
-                { relSpeed: +rel.toFixed(1) });
+              const rel0 = hit ? hit.rel : rel;
+              emit('check', 0.2 + 0.8 * clamp((rel0 - 5) / 28, 0, 1), v.pos.x, v.pos.z,
+                { relSpeed: +rel0.toFixed(1) });
               // and it SHUNTS. physics.js does not collide with traffic yet (routed, round 1),
               // so this is one-sided until it does, but a car that is hit has to move: it is
               // knocked toward the hero's own speed and shoved out of his line.
               v.speed = Math.max(0, v.speed * 0.55 + Math.max(0, heroAlong) * 0.45);
               v.shove = away * CHECK_SHUNT; v.shoveT = 0.7;
+              // Above WRECK_REL the shunt is not enough: the car is knocked OUT of the lane
+              // system entirely. It inherits half its own momentum plus a share of the hero's
+              // that grows with how hard the hit was, and a spin whose sign comes from which
+              // side of the hero's line it was struck on. From the next frame the `wrecked`
+              // branch at the top of this loop owns it.
+              if (rel0 > WRECK_REL) {
+                v.wrecked = true;
+                const kick = clamp(rel0 / 30, 0, 1);
+                v.wvx = (a0 ? v.dir * v.speed : 0) * 0.5 + hvx * (0.35 + 0.35 * kick);
+                v.wvz = (a0 ? 0 : v.dir * v.speed) * 0.5 + hvz * (0.35 + 0.35 * kick);
+                const side = Math.sign((v.pos.x - hx) * -heroFz + (v.pos.z - hz) * heroFx) || 1;
+                v.wspin = -side * (1.5 + 3.5 * kick);
+              }
             }
           } else if (clr > 0.6) v.ctOn = false;
           if (clr > NEAR_MISS_R + NEAR_MISS_OUT) closePass(v);
