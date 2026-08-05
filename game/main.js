@@ -218,6 +218,12 @@ export async function boot() {
   // shipped game. traffic drains on read, so nothing else may call drainEvents().
   physics.setEventSource(() => traffic.drainEvents());
 
+  // THE COLLISION JOIN. physics.js collides the hero with the live traffic bodies (the same
+  // two-tier scrape/hit/wreck contact as a building, resolved in relative velocity), and
+  // traffic.js keeps owning the NPC side of the same contact — the knock-forward and shove.
+  // A wreck-grade hit surfaces through the existing drainWreck() path below.
+  physics.setTrafficBodies(() => traffic.vehicles);
+
   // THE PASS-AUDIO JOIN. Intensity is mostly CLEARANCE - what makes a pass thrilling is how
   // close it was, and a car three lanes over at the same speed should barely register - with
   // relative speed as the smaller term so a fast pass still reads as more violent than a
