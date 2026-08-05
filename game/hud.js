@@ -52,10 +52,13 @@ const AMBER_HOT = '#ffd34a';
 // against hud-overlay-03's 94.6,154.2,74.3 sat 0.519 B/G 0.481, so the acid lime
 // was never the authored colour - it was the filter.
 const C_CHARGE = { core: '#c2d878', edge: '#48ad0c', tip: '#dcebb4', glow: 'rgba(190,240,120,0.55)' };
-const C_READY = { core: '#d4e68e', edge: '#5fc51c', tip: '#ebf5b9', glow: 'rgba(215,250,150,0.9)' };
-const C_BURN = { core: '#e6f4bc', edge: '#8ade2c', tip: '#f8ffe8', glow: 'rgba(236,255,190,1.0)' };
+const C_READY = { core: '#ffd34a', edge: '#e2a012', tip: '#fff2c8', glow: 'rgba(255,205,70,0.9)' };   // FULL = yellow: the bar only turns amber when the full-bar rule will accept the button
+const C_BURN = { core: '#ffe27a', edge: '#f0b428', tip: '#fffbe0', glow: 'rgba(255,220,110,1.0)' };   // burning stays yellow - full and in use are the same statement: boost is live
 const C_CHAIN = { core: '#ffb347', edge: '#e2761b', tip: '#fff2cd', glow: 'rgba(255,150,40,0.95)' };
 const C_DEAD = { core: '#4a5560', edge: '#232a31', tip: '#78848f', glow: 'rgba(0,0,0,0)' };
+// Denied flash: a boost press the full-bar rule refused. Amber, not red - it means
+// "not full yet", not "broken".
+const C_DENIED = { core: '#ffcf5e', edge: '#d98a12', tip: '#ffe9b0', glow: 'rgba(255,190,70,0.9)' };
 
 // Additive bloom for the flame: [blur radius as a fraction of the body height,
 // weight]. Radii are relative so the halo keeps its reach at any resolution.
@@ -69,7 +72,11 @@ const C_DEAD = { core: '#4a5560', edge: '#232a31', tip: '#78848f', glow: 'rgba(0
 // behind an opaque body that tail is what the measurement sees.
 const BOOST_BLOOM = [[0.18, 0.20, true], [0.075, 0.14], [0.030, 0.14]];
 
-const READY_AT = 0.34;   // boost fraction at which the bar can be fired
+// Boost fraction at which the bar reads as fireable. WAS 0.34, which lied: physics.js's
+// full-bar rule (boost >= 0.999) is the actual gate, so the bar pulsed "ready" at a third
+// of a tank and the button did nothing - the exact "I press boost and nothing happens"
+// report. 0.97 keeps the smoothstep window while reading full-only.
+const READY_AT = 0.97;
 const STREETS_EW = ['GLANCEY', 'HAMILTON', 'LAMBERT', 'ROOT', 'ANGUS', 'MANNERS', 'NAKAMURA'];
 const STREETS_NS = ['PARADISE', 'MORTON', 'YOUNG', 'HARBER', 'FRY', 'WEBSTER', 'CRAWFORD'];
 // The reference street plate never stands alone: it always carries the objective's
@@ -132,6 +139,8 @@ export function createHud(container, { layout, maxPixelRatio = 1, attached = tru
   let shownBoost = 0;      // 0..1
   let readyPulse = 0;      // 0..1 glow on the charged state
   let burnMix = 0;         // 0..1 blend into the "burning" look
+  let deniedMix = 0;       // 0..1 denied-press flash, driven by physics' boostDenied pulse
+  const earnPops = [];     // live earn popups: {text, t, life}; newest replaces oldest past 4
   let chainMix = 0;        // 0..1 blend into the burnout-chain look
   let damageMix = 0;       // 0..1 body damage
   let crashMix = 0;        // 0..1 wrecked overlay
@@ -509,6 +518,9 @@ export function createHud(container, { layout, maxPixelRatio = 1, attached = tru
     let c = mixCol(C_CHARGE, C_READY, ready);
     c = mixCol(c, C_BURN, burnMix);
     c = mixCol(c, C_CHAIN, chainMix);
+    // Denied press: flash amber to say "not full yet". Under burn/chain in priority (a denied
+    // press cannot happen while burning, but the mixes decay slower than the pulse rises).
+    c = mixCol(c, C_DENIED, deniedMix * (1 - Math.max(burnMix, chainMix)));
     c = mixCol(c, C_DEAD, crashMix * 0.9);
     return c;
   }
@@ -1065,6 +1077,22 @@ export function createHud(container, { layout, maxPixelRatio = 1, attached = tru
         size: 40 * S, weight: 900, fill: AMBER_HOT, slant: 0.22,
         glow: 'rgba(255,150,30,0.8)', track: 0,
       });
+    }
+
+    // ---- earn popups ------------------------------------------------------
+    // Stacked above the bar in the burnout-chain type style: amber, slanted, glowing. Each
+    // rises a little and fades over its life; newest sits closest to the bar.
+    for (let i = 0; i < earnPops.length; i++) {
+      const p = earnPops[earnPops.length - 1 - i];
+      const k = p.t / p.life;                       // 0 fresh -> 1 gone
+      const rise = (14 + 10 * k) * S;
+      ctx.save();
+      ctx.globalAlpha = k < 0.7 ? 1 : 1 - (k - 0.7) / 0.3;
+      drawType(p.text, x - 28 * S, y - 62 * S - i * 24 * S - rise, {
+        size: 20 * S, weight: 800, track: 1.8 * S, slant: 0.22,
+        fill: AMBER_HOT, glow: 'rgba(255,150,30,0.5)',
+      });
+      ctx.restore();
     }
   }
 
@@ -2756,6 +2784,32 @@ export function createHud(container, { layout, maxPixelRatio = 1, attached = tru
 
     burnMix = damp(burnMix, boosting ? 1 : 0, 12, dt);
     chainMix = damp(chainMix, chain > 1 ? 1 : 0, 8, dt);
+    deniedMix = clamp(s.boostDenied ?? 0, 0, 1);   // physics decays the pulse; no double-smooth
+
+    // ---- earn popup feed --------------------------------------------------
+    // physics.state.earnFeed is per-tick; each entry becomes a popup above the boost bar in
+    // the burnout-chain type style. Passive chunks (drift/speeding) get a shorter life so a
+    // long slide reads as a pulse train, not a standing label.
+    if (s.earnFeed && s.earnFeed.length) {
+      const NAMES = {
+        nearMiss: 'NEAR MISS', oncoming: 'ONCOMING', check: 'TRAFFIC CHECK',
+        drift: 'DRIFT', speeding: 'ONCOMING LANE',
+      };
+      for (const e of s.earnFeed) {
+        const name = NAMES[e.type] || String(e.type).toUpperCase();
+        const mult = e.mult > 1 ? ` x${e.mult}` : '';
+        const passive = e.type === 'drift' || e.type === 'speeding';
+        earnPops.push({
+          text: `${name}${mult} +${Math.max(1, Math.round((e.earn || 0) * 100))}%`,
+          t: 0, life: passive ? 0.9 : 1.5,
+        });
+        if (earnPops.length > 4) earnPops.shift();
+      }
+    }
+    for (let i = earnPops.length - 1; i >= 0; i--) {
+      earnPops[i].t += dt;
+      if (earnPops[i].t >= earnPops[i].life) earnPops.splice(i, 1);
+    }
     readyPulse = damp(readyPulse, shownBoost >= READY_AT ? 1 : 0, 8, dt);
 
     const crashed = !!s.crashed;
