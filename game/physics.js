@@ -710,6 +710,7 @@ export function createPhysics({ blocks = [], bounds = 1400 } = {}) {
   let counterPrev = 0;      // last substep's countersteer amount, for the flick's rate term
   let wreck = null;         // a wreck-grade contact, published through drainWreck() once
   let eventSource = null;   // see setEventSource()
+  let trafficBodies = null; // see setTrafficBodies(); () => [{pos, yaw, speed, halfLen, halfWid}]
   let aLongPrev = 0;        // last substep's DRIVE/BRAKE acceleration, for load transfer only
   let prevGround = 0;       // last tick's signed ground speed, for accelG
 
@@ -737,12 +738,17 @@ export function createPhysics({ blocks = [], bounds = 1400 } = {}) {
    * contact normal, `keep` the fraction of the TANGENTIAL component that survives. The inbound
    * normal component is removed outright, because a wall cannot push the car into itself; the
    * tangential component is what the car drives away with. See the TUNE comment at hitNormalSpeed.
+   *
+   * For a MOVING obstacle pass its world velocity as (bx, bz) and the car's velocity RELATIVE to
+   * it as (vx, vz): the shunt is resolved in the obstacle's frame (where it is a wall again) and
+   * the obstacle's velocity is added back, so rear-ending a car doing your own speed costs
+   * nothing and a head-on doubles the closing speed, both falling out of the same arithmetic.
    */
-  function shunt(vx, vz, nx, nz, keep) {
+  function shunt(vx, vz, nx, nz, keep, bx = 0, bz = 0) {
     const tx = -nz, tz = nx;                       // the wall face, in world space
     const vt = (vx * tx + vz * tz) * keep;
     const vn = Math.max(0, vx * nx + vz * nz);     // keep any component already leaving the wall
-    const wx = tx * vt + nx * vn, wz = tz * vt + nz * vn;
+    const wx = tx * vt + nx * vn + bx, wz = tz * vt + nz * vn + bz;
     forward(fwd); leftward(side);
     state.speed = clamp(wx * fwd.x + wz * fwd.z, -TUNE.reverseMax, TUNE.vMaxBoost);
     state.vLat = wx * side.x + wz * side.z;
@@ -770,6 +776,48 @@ export function createPhysics({ blocks = [], bounds = 1400 } = {}) {
           state.impact = Math.max(state.impact, sev);
           if (sev >= TUNE.wreckSeverity && !wreck) {
             wreck = { speed: Math.hypot(vx, vz), dir: { x: -nx, z: -nz }, severity: sev };
+          }
+        } else {
+          state.speed -= Math.sign(state.speed || 1) * TUNE.wallFriction * h;
+          state.vLat *= Math.exp(-14 * h);
+        }
+        wallCool = TUNE.contactHold;
+        return true;
+      }
+    }
+    // TRAFFIC. The same two-tier contact as a building, resolved in the struck car's frame: the
+    // severity and the shunt both use the velocity RELATIVE to the body (see shunt()), so
+    // rear-ending a car at matched speed is a graze and a head-on closes at the sum of the two
+    // speeds. Every traffic yaw is a multiple of 90 deg (traffic.js yawOf: forward =
+    // (cos ry, -sin ry)), so the body is an axis-aligned box exactly like a building block, and
+    // the NPC's own reaction to the contact — the knock-forward and the shove out of the hero's
+    // line — already lives in traffic.js (the `check` shunt) and stays there.
+    if (trafficBodies) {
+      for (const o of trafficBodies()) {
+        const ofx = Math.cos(o.yaw), ofz = -Math.sin(o.yaw);
+        const along = Math.abs(ofx) > 0.5;   // body length along world x?
+        const hx = (along ? o.halfLen : o.halfWid) + 1.0;   // +1.0 = hero half width, as blocks
+        const hz = (along ? o.halfWid : o.halfLen) + 1.0;
+        const dx = state.pos.x - o.pos.x, dz = state.pos.z - o.pos.z;
+        if (Math.abs(dx) >= hx || Math.abs(dz) >= hz) continue;
+        const px = hx - Math.abs(dx), pz = hz - Math.abs(dz);
+        forward(fwd); leftward(side);
+        const vx = fwd.x * state.speed + side.x * state.vLat;
+        const vz = fwd.z * state.speed + side.z * state.vLat;
+        let nx = 0, nz = 0;
+        if (px < pz) { state.pos.x = o.pos.x + Math.sign(dx || 1) * hx; nx = Math.sign(dx || 1); }
+        else { state.pos.z = o.pos.z + Math.sign(dz || 1) * hz; nz = Math.sign(dz || 1); }
+        const bvx = ofx * o.speed, bvz = ofz * o.speed;
+        const rvx = vx - bvx, rvz = vz - bvz;
+        const closing = Math.max(0, -(rvx * nx + rvz * nz));
+        if (wallCool <= 0) {
+          const sev = clamp((closing - TUNE.grazeNormalSpeed)
+            / (TUNE.hitNormalSpeed - TUNE.grazeNormalSpeed), 0, 1);
+          shunt(rvx, rvz, nx, nz, lerp(TUNE.scrapeKeep, TUNE.hitKeep, sev), bvx, bvz);
+          state.yawRate *= lerp(0.9, 0.35, sev);
+          state.impact = Math.max(state.impact, sev);
+          if (sev >= TUNE.wreckSeverity && !wreck) {
+            wreck = { speed: Math.hypot(rvx, rvz), dir: { x: -nx, z: -nz }, severity: sev };
           }
         } else {
           state.speed -= Math.sign(state.speed || 1) * TUNE.wallFriction * h;
@@ -1466,6 +1514,14 @@ export function createPhysics({ blocks = [], bounds = 1400 } = {}) {
      * AS SHIPPED THIS IS UNJOINED and the only earn path in play is drift. Say so in any measurement.
      */
     setEventSource(fn) { eventSource = typeof fn === 'function' ? fn : null; },
+
+    /**
+     * Give collide() the live traffic bodies. `fn` returns traffic.js's `vehicles` array
+     * ({pos, yaw, speed, halfLen, halfWid}); a getter rather than the array itself so physics
+     * never holds a stale reference across a traffic.reset(). main.js wires it:
+     * `physics.setTrafficBodies(() => traffic.vehicles)`.
+     */
+    setTrafficBodies(fn) { trafficBodies = typeof fn === 'function' ? fn : null; },
 
     /**
      * A wreck-grade contact, or null; CLEARED ON READ. physics.js cannot start the crash cinematic
