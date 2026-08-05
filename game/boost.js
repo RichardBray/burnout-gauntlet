@@ -1027,7 +1027,11 @@ const TrailShader = {
     void main() {
       vLife = aLife; vType = aType;
       vec4 mv = modelViewMatrix * vec4(position, 1.0);
-      float grow = mix(1.0 + (1.0 - aLife) * 2.4, 1.0, aType); // dust puffs expand, sparks do not
+      // dust (0) and tyre smoke (2) expand as they age; sparks (1) do not. Smoke grows
+      // harder than dust - the puff has to swallow its neighbours into one cloud.
+      float isSpark = step(0.5, aType) * (1.0 - step(1.5, aType));
+      float expand = 1.0 + (1.0 - aLife) * mix(2.4, 4.5, step(1.5, aType));
+      float grow = mix(expand, 1.0, isSpark);
       gl_PointSize = max(1.0, aSize * grow * uPixH / max(0.1, -mv.z));
       gl_Position = projectionMatrix * mv;
     }
@@ -1042,7 +1046,14 @@ const TrailShader = {
       float d = dot(p, p);
       if (d > 1.0) discard;
       float soft = 1.0 - d;
-      if (vType > 0.5) {
+      if (vType > 1.5) {
+        // tyre smoke: broad grey puff, NOT scaled by uAmount - it belongs to the drift,
+        // not the boost, so it has to show with the boost effect fully off. Soft-cored on
+        // purpose: the first cut used soft^1.3 at 0.30 and screenshotted as opaque white
+        // balls, not smoke - a puff needs most of its footprint to be near-transparent haze.
+        float a = pow(soft, 2.6) * vLife * (1.0 - vLife) * 4.0;
+        gl_FragColor = vec4(vec3(0.62, 0.62, 0.64) * a * 0.085, 1.0);
+      } else if (vType > 0.5) {
         // spark: tiny, very hot, snaps out
         float a = pow(soft, 2.5) * pow(vLife, 1.6);
         gl_FragColor = vec4(vec3(16.0, 6.4, 1.3) * a * uAmount, 1.0);
@@ -1187,7 +1198,7 @@ export function createBoost(car) {
   // ---- state ------------------------------------------------------------------------------
   let t = 0;
   let env = 0;            // our own attack/decay envelope on top of whatever main.js hands us
-  let dustAcc = 0, sparkAcc = 0;
+  let dustAcc = 0, sparkAcc = 0, smokeAcc = 0;
   let pixH = 1080;
 
   // Combustion pulse: a stepped random resampled at ~20 Hz and smoothstep-interpolated between
@@ -1421,7 +1432,7 @@ export function createBoost(car) {
   const fx = {
     pass, group, flames, trail,
 
-    update(dt, { amount: amt = 0, speed = 0, pos, yaw = 0 } = {}) {
+    update(dt, { amount: amt = 0, speed = 0, pos, yaw = 0, slip = 0 } = {}) {
       const step = Math.min(Math.max(dt || 0, 0), 0.1);
       t += step;
 
@@ -1559,6 +1570,29 @@ export function createBoost(car) {
         }
       }
 
+      // ---- tyre smoke off the rear contact patches while drifting ------------------------
+      // Independent of the boost envelope: keyed on the same slip signal audio's tyre-screech
+      // voice uses, so smoke and screech always agree about when the tyres are working.
+      // `slip` is |slipAngle| in radians; smoke ramps in over 7-24 deg, gated on real road
+      // speed so a stationary scrub does not chimney.
+      if (pos && step > 0) {
+        const drift = clamp((slip - 0.12) / 0.30, 0, 1) * clamp((Math.abs(speed) - 4) / 10, 0, 1);
+        if (drift > 0) {
+          const sy = Math.sin(yaw), cy = Math.cos(yaw);
+          smokeAcc += step * 150 * drift;
+          const nSmoke = Math.floor(smokeAcc); smokeAcc -= nSmoke;
+          for (let kk = 0; kk < nSmoke; kk++) {
+            const lx = (rng() < 0.5 ? -0.86 : 0.86) + (rng() - 0.5) * 0.5;
+            const lz = -1.35 - rng() * 0.6;
+            // smoke is shed at the contact patch and left behind in world space: a puff of
+            // slow sideways bleed, a slow rise, and the car drives out of it
+            spawn(pos.x + lx * cy + lz * sy, 0.05 + rng() * 0.15, pos.z - lx * sy + lz * cy,
+              (rng() - 0.5) * 2.6, 0.8 + rng() * 1.6, (rng() - 0.5) * 2.6,
+              (0.30 + rng() * 0.45) * (0.6 + 0.4 * drift), 2, 0.8 + rng() * 0.7);
+          }
+        }
+      }
+
       // integrate + retire
       let anyLive = false;
       for (let i = 0; i < MAX; i++) {
@@ -1567,9 +1601,10 @@ export function createBoost(car) {
         if (tLife[i] <= 0) { tLife[i] = 0; tSize[i] = 0; continue; }
         anyLive = true;
         const j = i * 3;
-        const spark = tType[i] > 0.5;
-        const drag = spark ? 2.6 : 1.9;
-        const g = spark ? -9.0 : 0.35;   // sparks fall, dust keeps rising
+        const spark = tType[i] > 0.5 && tType[i] < 1.5;
+        const smoke = tType[i] > 1.5;
+        const drag = spark ? 2.6 : smoke ? 1.3 : 1.9;
+        const g = spark ? -9.0 : smoke ? 0.55 : 0.35;   // sparks fall, dust and smoke rise
         tVel[j] -= tVel[j] * drag * step;
         tVel[j + 1] += g * step;
         tVel[j + 1] -= tVel[j + 1] * drag * 0.35 * step;
@@ -1578,7 +1613,9 @@ export function createBoost(car) {
         tPos[j + 1] = Math.max(0.02, tPos[j + 1] + tVel[j + 1] * step);
         tPos[j + 2] += tVel[j + 2] * step;
       }
-      trail.visible = on && anyLive;
+      // anyLive alone, not `on && anyLive`: tyre smoke lives in this buffer and must render
+      // with the boost effect fully off. Dust/spark stay boost-only via their uAmount scale.
+      trail.visible = anyLive;
       if (trail.visible) {
         trailGeo.attributes.position.needsUpdate = true;
         trailGeo.attributes.aSize.needsUpdate = true;

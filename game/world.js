@@ -2463,7 +2463,7 @@ export function createWorld(scene, { rng, roadKit }) {
   // the reference stills. The stills are a regression gate now, not a target, and a person who
   // has driven the city outranks a still that cannot be driven. If it does read empty, raise
   // this rather than reintroducing a second population.
-  const NPC_DENSITY = 0.40;
+  const NPC_DENSITY = 0.32;  // was 0.40; -20% parked/stationary population on user request
 
   let parkPop = 'rank';
   const parkCounts = { rank: 0, queue: 0, culled: 0 };

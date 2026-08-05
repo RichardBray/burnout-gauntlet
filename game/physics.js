@@ -148,7 +148,14 @@ export const TUNE = {
   // event source attached the bar never fills by itself - which is the Paradise behaviour, and it
   // is also the honest failure mode if the join in main.js is missing.
   boostEarnCruise: 0,
-  boostEarnDanger: 0,
+  // ---- earn feedback (HUD popup feed + event chain multiplier) -------------------------------
+  // Consecutive events inside the window escalate a x1..x4 multiplier on the earn, Burnout
+  // style, and every earn (event or chunked passive) lands in state.earnFeed for the HUD.
+  earnChainWindow: 3.0,   // s between events that keeps the multiplier alive
+  earnChainMax: 4,        // x4 cap
+  earnChunk: 0.02,        // passive earn (drift/speeding) pops a feed entry per 2% of bar
+  boostEarnDanger: 0.045, // bar/s at vMax; ramps in above 50% of vMax - speeding now earns,
+                          // because an earn the player can see (feed + bar) needs to exist
   // Drift is a legitimate earn and always was: Paradise pays for a drift by distance-in-slide.
   // This is per second at |slipAngle| >= slipRef, so 10 s of full-angle drift is one bar.
   boostEarnDrift: 0.10,
@@ -674,12 +681,17 @@ export function createPhysics({ blocks = [], bounds = 1400 } = {}) {
     // yet; it costs one multiply per tick and it is the hook the boost economy needs to be legible.
     eventEarn: 0,
     boostDenied: 0,  // 0..1 pulse on a boost press the full-bar gate refused; HUD/audio feedback
+    earnFeed: [],    // this tick's boost earns for the HUD: {type, mult, earn}; cleared each step
+    earnMult: 1,     // current event-chain multiplier, x1..earnChainMax
   };
 
   let input = { throttle: 0, brake: 0, steer: 0, boost: false, handbrake: false };
   let auto = null;
   let boostLatch = false;   // the full-bar gate: armed only from a full tank, held until empty
   let boostPrev = false;    // last tick's boost button, for the denied-press edge
+  let earnChainT = 1e9;     // s since the last chainable event
+  let driftEarnAcc = 0;     // passive drift earn banked toward the next earnChunk feed entry
+  let dangerEarnAcc = 0;    // same, for speeding
   // Seconds of "still in this contact". A boolean was not enough: the resolver puts the car exactly
   // ON the face, so the next substep often finds it a hair outside, the contact reads as released,
   // and the next one re-charges the full impact impulse. With the impulse fired once per genuine
@@ -1473,6 +1485,8 @@ export function createPhysics({ blocks = [], bounds = 1400 } = {}) {
       state.steer = 0; state.slip = 0; state.lean = 0; state.pitch = 0;
       state.boost = 1; state.boosting = false; state.boostBlend = 0; state.boostKick = 0;
       state.boostDenied = 0; boostPrev = false;
+      state.earnFeed.length = 0; state.earnMult = 1;
+      earnChainT = 1e9; driftEarnAcc = 0; dangerEarnAcc = 0;
       state.crashed = false; state.vy = 0; state.airborne = false; state.distance = 0;
       state.vLat = 0; state.yawRate = 0; state.slipAngle = 0; state.drifting = false;
       state.chain = 0; state.impact = 0; state.accelG = 0; state.eventEarn = 0;
@@ -1608,6 +1622,9 @@ export function createPhysics({ blocks = [], bounds = 1400 } = {}) {
       // peer file being edited concurrently, and an event stream that can throw inside the physics
       // tick would take the whole game down. An unknown type is worth nothing rather than being an
       // error, so a future 'air' or 'takedown' event costs a tuning line here and not a crash.
+      state.earnFeed.length = 0;   // feed is per-tick; consumers read between steps
+      earnChainT += dt;
+      if (earnChainT >= TUNE.earnChainWindow) state.earnMult = 1;
       if (eventSource) {
         const evs = eventSource();
         if (evs && evs.length) {
@@ -1616,9 +1633,20 @@ export function createPhysics({ blocks = [], bounds = 1400 } = {}) {
             const e = evs[i];
             if (!e) continue;
             const amt = clamp(typeof e.amount === 'number' ? e.amount : 0, 0, 1);
-            if (e.type === 'nearMiss') earned += TUNE.boostPerNearMiss * amt;
-            else if (e.type === 'oncoming') earned += TUNE.boostPerOncoming * amt;
-            else if (e.type === 'check') earned += TUNE.boostPerCheck * amt;
+            let base = 0;
+            if (e.type === 'nearMiss') base = TUNE.boostPerNearMiss * amt;
+            else if (e.type === 'oncoming') base = TUNE.boostPerOncoming * amt;
+            else if (e.type === 'check') base = TUNE.boostPerCheck * amt;
+            if (base <= 0) continue;
+            // Chain multiplier: an event arriving inside the window escalates the multiplier
+            // FIRST and is paid at the escalated value, so the second event in a chain is x2.
+            if (earnChainT < TUNE.earnChainWindow) {
+              state.earnMult = Math.min(TUNE.earnChainMax, state.earnMult + 1);
+            }
+            const paid = base * state.earnMult;
+            state.earnFeed.push({ type: e.type, mult: state.earnMult, earn: paid });
+            earnChainT = 0;
+            earned += paid;
           }
           if (earned > 0) {
             state.boost = clamp(state.boost + earned, 0, 1);
@@ -1644,10 +1672,24 @@ export function createPhysics({ blocks = [], bounds = 1400 } = {}) {
         state.chain = 0;
         const sn = clamp(Math.abs(state.speed) / TUNE.vMax, 0, 1.4);
         const danger = clamp((sn - 0.5) / 0.5, 0, 1);
-        const earn = TUNE.boostEarnCruise * (0.35 + 0.65 * sn)
-          + TUNE.boostEarnDanger * danger
-          + TUNE.boostEarnDrift * driftAmount;
-        state.boost = clamp(state.boost + earn * dt, 0, 1);
+        const driftEarn = TUNE.boostEarnDrift * driftAmount * dt;
+        // Speed only earns in the ONCOMING LANE (input.oncoming, computed by traffic.js from
+        // the road network) - raw speed on your own side is just driving.
+        const dangerEarn = input.oncoming ? TUNE.boostEarnDanger * danger * dt : 0;
+        const earn = TUNE.boostEarnCruise * (0.35 + 0.65 * sn) * dt + driftEarn + dangerEarn;
+        state.boost = clamp(state.boost + earn, 0, 1);
+        // Passive earn is continuous, so it pops a feed entry per banked earnChunk instead of
+        // per tick - "DRIFT +2%" every couple of seconds of sliding, not 120 popups a second.
+        driftEarnAcc += driftEarn;
+        dangerEarnAcc += dangerEarn;
+        if (driftEarnAcc >= TUNE.earnChunk) {
+          state.earnFeed.push({ type: 'drift', mult: 1, earn: TUNE.earnChunk });
+          driftEarnAcc -= TUNE.earnChunk;
+        }
+        if (dangerEarnAcc >= TUNE.earnChunk) {
+          state.earnFeed.push({ type: 'speeding', mult: 1, earn: TUNE.earnChunk });
+          dangerEarnAcc -= TUNE.earnChunk;
+        }
       }
 
       // ---- integrate the chassis at a fixed substep -------------------------------------------

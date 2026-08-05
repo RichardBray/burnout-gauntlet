@@ -237,6 +237,7 @@ export async function boot() {
     const fast = Math.max(0, Math.min(1, (relSpeed - 8) / 40));
     audio.pass(0.35 + 0.65 * (0.7 * close + 0.3 * fast), { side, relSpeed });
   });
+  traffic.setHornListener(({ side, urgency, dist }) => audio.horn({ side, urgency, dist }));
 
   // ---- post chain ------------------------------------------------------
   await stage('post', 'post-processing');
@@ -615,6 +616,7 @@ export async function boot() {
   }
 
   let lastBoostDenied = 0;   // previous frame's boostDenied pulse, for the blip edge
+  let lastBoostFull = true;  // bar starts full; true so boot does not chime
 
   function applyCarTransform() {
     const s = physics.state;
@@ -673,6 +675,7 @@ export async function boot() {
     boostFx.update(sdt, {
       amount: Math.max(s.boostBlend, crash.shutter01),
       speed: s.speed, pos: s.pos, yaw: s.yaw,
+      slip: Math.abs(s.slipAngle || 0),
     });
     // The camera goes in so the dynamic point-light pool can be filled from the emitters that are
     // actually in shot. Every visible point light costs every shaded fragment in the frame; see
@@ -693,11 +696,17 @@ export async function boot() {
     const gspd = s.ground !== undefined ? s.ground : Math.abs(s.speed);
     hud.update(dt, {
       speed: gspd, boost: s.boost, boosting: s.boosting, boostDenied: s.boostDenied,
+      earnFeed: s.earnFeed,
       gear: gearOf(gspd), pos: s.pos, yaw: s.yaw, crashed: s.crashed,
     });
     // Denied boost press: rising edge of physics' pulse -> one refusal blip.
     if ((s.boostDenied || 0) > 0.9 && lastBoostDenied <= 0.9) audio.boostDenied();
     lastBoostDenied = s.boostDenied || 0;
+    // Bar just filled: the ready chime. Edge on crossing the full-bar gate's own threshold,
+    // and not while burning (a Burnout Chain refill mid-burn has its own drama already).
+    const full = s.boost >= 0.999;
+    if (full && !lastBoostFull && !s.boosting) audio.boostReady();
+    lastBoostFull = full;
     audio.update(dt, {
       rpm01: rpmOf(gspd), load: clamp(0.25 + s.accelG * 0.09, 0, 1),
       throttle: clamp(0.25 + s.accelG * 0.09, 0, 1),
@@ -1023,6 +1032,8 @@ export async function boot() {
         steer: (keys.KeyA || keys.ArrowLeft ? 1 : 0) - (keys.KeyD || keys.ArrowRight ? 1 : 0),
         boost: !!(keys.ShiftLeft || keys.ShiftRight),
         handbrake: !!keys.Space,
+        // speeding earn is gated on actually being in the oncoming lane
+        oncoming: !!traffic.heroOncoming,
       });
       // How long the wreck replay holds before control is handed back. 4.5 s read as a
       // punishment rather than a beat; Paradise's own takedown replay is nearer 2 s.

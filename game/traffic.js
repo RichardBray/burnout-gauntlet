@@ -86,7 +86,7 @@ import { makeRng, rngRange, rngPick, clamp, damp, makeCanvas, canvasTexture } fr
 // and 56 puts twelve on an open freeway, which reads as a jam. At 30 the hero earns a near
 // miss every ~1.4 s of highway at 279 km/h and every ~3 s downtown. It is a 46% cut on 56.
 const POOL_CAP = 64;      // instanced CAPACITY. POOL may be moved at runtime, never past this.
-let POOL = 30;
+let POOL = 24;   // was 30; -20% live traffic on user request
 const SPAWN_R = 300;      // half-length of the along-road window a spawn may land in
 const SPAWN_MIN = 62;     // behind or beside the hero this is invisible, so it stays
 // IN THE HERO'S VIEW CONE nothing may appear closer than this. `SPAWN_MIN` alone is a radius
@@ -295,7 +295,7 @@ export function createTraffic(scene, { rng, layout, blocks = [], roadKit } = {})
   const pool = [];
   for (let k = 0; k < POOL_CAP; k++) {
     pool.push({
-      k, live: false, line: null, dir: 1, lane: 0, s: 0, lat: 0, swerve: 0,
+      k, live: false, line: null, dir: 1, lane: 0, s: 0, lat: 0, swerve: 0, hornT: 0,
       speed: 0, vDes: 0, van: false, halfLen: 2.4, halfWid: 0.91,
       pos: new THREE.Vector3(), yaw: 0, jIdx: -1, jDist: 1e9, jOk: false,
       endHold: 0,          // s this vehicle's line-end retire has been deferred for
@@ -489,6 +489,7 @@ export function createTraffic(scene, { rng, layout, blocks = [], roadKit } = {})
   // ---- state -----------------------------------------------------------------------------
   let night = false;
   let onPass = null;        // fired at the OPENING of a near-miss pass; see the call site
+  let onHorn = null;        // fired when an NPC leans on the horn at a head-on hero
   let statics = [];         // world.js's parked bodies, for pass audio only; see update()
   const _hero = new THREE.Vector3();
 
@@ -623,6 +624,7 @@ export function createTraffic(scene, { rng, layout, blocks = [], roadKit } = {})
      * Optional: left unset, traffic is silent on passes and nothing else changes.
      */
     setPassListener(fn) { onPass = typeof fn === 'function' ? fn : null; },
+    setHornListener(fn) { onHorn = typeof fn === 'function' ? fn : null; },
 
     /**
      * The STATIONARY bodies (world.parkedCars) that should also make a pass whoosh. Optional:
@@ -690,6 +692,32 @@ export function createTraffic(scene, { rng, layout, blocks = [], roadKit } = {})
       const heroFx = Math.sin(heroYaw), heroFz = Math.cos(heroYaw);
       const step = clamp(dt, 0, 0.05);
       hpx = hx; hpz = hz; hfx = heroFx; hfz = heroFz;
+
+      // ---- is the hero in the oncoming lane? -----------------------------------------------
+      // Right-hand traffic: your own lanes sit to the RIGHT of the centreline along your
+      // heading, so a hero LEFT of the nearest road's centreline is driving against the flow.
+      // Nearest line within its own half-width wins; off-road (junction aprons included, they
+      // are inside some line's half) reports false. Consumed by the boost economy: speeding
+      // only earns while it is actually dangerous.
+      api.heroOncoming = false;
+      {
+        let bestD = 1e9, best = null;
+        for (const L of lines) {
+          const along = L.axis === 0 ? hx : hz, lat = L.axis === 0 ? hz - L.c : hx - L.c;
+          if (along < L.lo || along > L.hi) continue;
+          const d = Math.abs(lat);
+          if (d <= L.half && d < bestD) { bestD = d; best = L; }
+        }
+        if (best) {
+          const lat = best.axis === 0 ? hz - best.c : hx - best.c;
+          const fwd = best.axis === 0 ? heroFx : heroFz;   // hero heading along the road axis
+          // Own-side sign per place(): axis 0 puts a dir-positive car at lat > 0, axis 1 at
+          // lat < 0. Deadband ~1 m about the crown, and require the hero to actually be
+          // travelling along the road (|fwd| > 0.5), not sliding across it.
+          const side = (best.axis === 0 ? lat : -lat) * Math.sign(fwd);
+          if (Math.abs(fwd) > 0.5 && side < -0.9) api.heroOncoming = true;
+        }
+      }
 
       // ---- passes on the STATIONARY population ---------------------------------------------
       // The kerb ranks are world.js's, not this pool's, so none of the machinery below sees
@@ -833,6 +861,7 @@ export function createTraffic(scene, { rng, layout, blocks = [], roadKit } = {})
       vehicles.length = 0;
       for (const v of pool) {
         if (!v.live) continue;
+        if (v.hornT > 0) v.hornT -= step;
         const L = v.line;
         const a0 = L.axis === 0;
         const p = progOf(v);
@@ -918,7 +947,18 @@ export function createTraffic(scene, { rng, layout, blocks = [], roadKit } = {})
             // why the critic measured max lane error 0.000 m with the whole population coming
             // at the hero head-on and called the reaction non-existent.
             const closing = v.speed - heroAlong;
-            if (heroAlong < -3 && closing > 1 && hg / closing < 3.0) swerve = away * EVADE_LAT;
+            if (heroAlong < -3 && closing > 1 && hg / closing < 3.0) {
+              swerve = away * EVADE_LAT;
+              // The driver being run at leans on the horn, same trigger as the evade so the
+              // honk and the swerve are one reaction. Per-vehicle cooldown: one honk per
+              // encounter, not one per frame. Same plain-callback channel as onPass and for
+              // the same reason - drainEvents' income is physics.js's, sound is not.
+              if (onHorn && v.hornT <= 0) {
+                v.hornT = 5 + Math.random() * 3;
+                const side = Math.sign((v.pos.x - hx) * -heroFz + (v.pos.z - hz) * heroFx) || 1;
+                onHorn({ side, closing, dist: Math.max(hg, 0), urgency: clamp(1.2 - (hg / closing) / 3, 0.3, 1) });
+              }
+            }
           } else if (hg > -36 && heroAlong - v.speed > 8) {
             swerve = away * SHY_LAT;         // he is coming past me from behind
           }
