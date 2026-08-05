@@ -25,6 +25,7 @@ import { createCrash } from './crash.js';
 import { createHud } from './hud.js';
 import { createAudio } from './audio.js';
 import { createTraffic } from './traffic.js';
+import { createPoleFall } from './polefall.js';
 import { createMenu } from './menu.js';
 import { createMusic } from './music.js';
 import { getScene } from './scenes.js';
@@ -194,6 +195,7 @@ export async function boot() {
   scene.add(boostFx.group);
   const damage = createDamage(car);
   const crash = createCrash(scene, car, physics, damage);
+  const poleFall = createPoleFall(scene, world.poles);
   // maxPixelRatio caps the HUD's own 2-D backing store. Default 1 = one HUD pixel per CSS pixel,
   // which is what the 3-D buffer is too; `#hudres=2` restores the Retina-supersampled HUD and
   // costs 4.0 ms/frame in the city. The measurement and the kill-control are in hud.js's resize().
@@ -507,7 +509,7 @@ export async function boot() {
   const cfg = getScene(sceneId);
   const ctx = {
     THREE, renderer, scene, camera, sky, roadKit, world, car, carRoot,
-    physics, camRig, boost: boostFx, damage, crash, hud, audio, music, traffic, bloom, composer, ssao,
+    physics, camRig, boost: boostFx, damage, crash, hud, audio, music, traffic, poleFall, bloom, composer, ssao,
     outputPass, toneMode, bloomMode,
     setResScale,
     getResScale: () => resScale,
@@ -692,6 +694,11 @@ export async function boot() {
     // a wreck tumbling in slow motion past traffic moving at full rate is the single
     // most obvious way to break the crash cam's read.
     traffic.update(sdt, s.pos, s.yaw, s.speed);
+    // Knockable street furniture: poles topple with the hero's travel and never slow him.
+    // World velocity includes the drift component so a sideways clip fells the pole sideways.
+    poleFall.update(sdt, s.pos,
+      Math.sin(s.yaw) * s.speed + Math.cos(s.yaw) * s.vLat,
+      Math.cos(s.yaw) * s.speed - Math.sin(s.yaw) * s.vLat);
     sky.update(sdt, s.pos);
     reassertKeyDir(s.pos);
     camRig.update(dt, s);

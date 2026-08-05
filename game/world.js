@@ -2142,6 +2142,20 @@ export function createWorld(scene, { rng, roadKit }) {
   const lampPositions = [];
   const lamps = new THREE.Group();
   group.add(lamps);
+  // KNOCKABLE POLES. Every free-standing pole (street lamp, traffic light) is recorded here
+  // with its baked instance indices; polefall.js hides the baked pole on contact and animates
+  // a dynamic falling copy. The hero's car is deliberately unaffected by these.
+  const poles = [];
+  const hidePoles = (used) => () => {
+    dummy.rotation.order = 'XYZ';
+    dummy.position.set(0, -1000, 0);
+    dummy.rotation.set(0, 0, 0);
+    dummy.scale.set(1e-6, 1e-6, 1e-6);
+    dummy.updateMatrix();
+    dummy.rotation.order = 'YZX';
+    for (const [m, i] of used) { m.setMatrixAt(i, dummy.matrix); m.instanceMatrix.needsUpdate = true; }
+  };
+
   const slPole = inst(new THREE.CylinderGeometry(0.11, 0.17, 1, 8), poleMat, 400, { recv: false });
   const slArm = inst(boxGeo, poleMat, 400, { recv: false });
   const slHead = inst(boxGeo, darkMat, 400, { recv: false });
@@ -2149,18 +2163,31 @@ export function createWorld(scene, { rng, roadKit }) {
   lamps.add(slPole, slArm, slHead, slBulb);
 
   function streetLight(x, z, rotY) {
+    // Record this lamp's instances so hide() can take the baked pole out of the draw when
+    // the hero knocks it down (lampfall.js swaps in a dynamic falling copy).
+    const used = [];
+    const rec = (m) => { if (m.count < m.userData.cap) used.push([m, m.count]); };
+    rec(slPole);
     push(slPole, x, 0.2 + 4.3, z, rotY, 0, 1, 8.6, 1);
     const ax = Math.cos(rotY), az = -Math.sin(rotY);
+    rec(slArm);
     push(slArm, x + ax * 1.2, 8.7, z + az * 1.2, rotY, 0, 2.4, 0.16, 0.16);
+    rec(slHead);
     push(slHead, x + ax * 2.3, 8.56, z + az * 2.3, rotY, 0, 1.15, 0.24, 0.55);
     dummy.position.set(x + ax * 2.3, 8.42, z + az * 2.3);
     dummy.rotation.set(-Math.PI / 2, rotY, 0);
     dummy.scale.set(0.98, 0.46, 1);
     dummy.updateMatrix();
-    if (slBulb.count < slBulb.userData.cap) { slBulb.setMatrixAt(slBulb.count, dummy.matrix); slBulb.count++; }
+    if (slBulb.count < slBulb.userData.cap) {
+      used.push([slBulb, slBulb.count]);
+      slBulb.setMatrixAt(slBulb.count, dummy.matrix); slBulb.count++;
+    }
     dummy.rotation.order = 'YZX';
     lampPositions.push(new THREE.Vector3(x + ax * 2.3, 8.2, z + az * 2.3));
     shadowAt(x, z, 0.24, 1.5, 0.9);
+    // ponytail: the night light wash (lampPositions) keeps shining from a felled lamp's old
+    // spot — a fallen pole that still lights the street. Fix if it ever reads wrong at night.
+    poles.push({ x, z, rotY, kind: 'lamp', hit: false, hide: hidePoles(used) });
   }
   // dummy.rotation.set with an X component needs the default order; restore after
   dummy.rotation.order = 'XYZ';
@@ -2186,18 +2213,25 @@ export function createWorld(scene, { rng, roadKit }) {
   const signalLights = [];
 
   function trafficLight(x, z, ry) {
+    const used = [];
+    const rec = (m) => { if (m.count < m.userData.cap) used.push([m, m.count]); };
+    rec(tlPole);
     push(tlPole, x, 0.2 + 3.4, z, ry, 0, 1, 6.8, 1);
     const ax = Math.cos(ry), az = -Math.sin(ry);
+    rec(tlArm);
     push(tlArm, x + ax * 2.6, 6.75, z + az * 2.6, ry, 0, 5.4, 0.18, 0.18);
     const hx = x + ax * 4.9, hz = z + az * 4.9;
+    rec(tlHead);
     push(tlHead, hx, 6.05, hz, ry, 0, 0.52, 1.5, 0.44);
     const cols = [0xd82a1e, 0xe8a41c, 0x1fd05a];
     for (let i = 0; i < 3; i++) {
       const ly = 6.55 - i * 0.5;
+      rec(tlLens);
       push(tlLens, hx - Math.sin(ry) * 0.26, ly, hz - Math.cos(ry) * 0.26, 0, 0, 0.30, 0.30, 0.30, cols[i]);
     }
     signalLights.push(new THREE.Vector3(hx, 6.05, hz));
     shadowAt(x, z, 0.24, 1.8, 0.9);
+    poles.push({ x, z, rotY: ry, kind: 'signal', hit: false, hide: hidePoles(used) });
   }
   for (const x of G) {
     for (const z of G) {
@@ -3092,7 +3126,7 @@ export function createWorld(scene, { rng, roadKit }) {
     group, LAYOUT, paths, blocks, buildings, neons, lampPositions, lamps,
     buildingMats, roadKit, atmo, towers,
     // The STATIONARY vehicle population, split by mechanism. traffic.js owns the moving one.
-    carKit, parkedCounts: parkCounts, parkedCars: parkedBodies,
+    carKit, parkedCounts: parkCounts, parkedCars: parkedBodies, poles,
     /** What the spatial chunking pass did, so a harness can assert it actually ran. */
     chunkStats,
     // ---- OBJECTS THE SSAO NORMAL/DEPTH PREPASS MUST NOT SEE -------------------------------
