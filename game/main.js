@@ -223,6 +223,12 @@ export async function boot() {
   // traffic.js keeps owning the NPC side of the same contact — the knock-forward and shove.
   // A wreck-grade hit surfaces through the existing drainWreck() path below.
   physics.setTrafficBodies(() => traffic.vehicles);
+  // Cosmetic side of the same join: sparks + grit at the contact point of a survivable
+  // traffic hit. Wreck-grade contacts get the full cinematic through drainWreck() instead,
+  // and crash.impactBurst() shares the crash pools so the two can never double-spend.
+  physics.setTrafficHitListener(({ x, z, dirX, dirZ, sev }) => {
+    if (sev > 0.04) crash.impactBurst(x, z, dirX, dirZ, sev);
+  });
 
   // THE PASS-AUDIO JOIN. Intensity is mostly CLEARANCE - what makes a pass thrilling is how
   // close it was, and a car three lanes over at the same speed should barely register - with

@@ -711,6 +711,7 @@ export function createPhysics({ blocks = [], bounds = 1400 } = {}) {
   let wreck = null;         // a wreck-grade contact, published through drainWreck() once
   let eventSource = null;   // see setEventSource()
   let trafficBodies = null; // see setTrafficBodies(); () => [{pos, yaw, speed, halfLen, halfWid}]
+  let onTrafficHit = null;  // see setTrafficHitListener(); fired once per traffic contact edge
   let aLongPrev = 0;        // last substep's DRIVE/BRAKE acceleration, for load transfer only
   let prevGround = 0;       // last tick's signed ground speed, for accelG
 
@@ -826,6 +827,16 @@ export function createPhysics({ blocks = [], bounds = 1400 } = {}) {
           // bodies and matched the speeds by the time traffic.update() runs, so its own
           // overlap test never sees the contact, let alone the pre-impact closing speed.
           o.heroHit = { rel: Math.hypot(rvx, rvz), sev };
+          if (onTrafficHit) {
+            // Contact point: the hero's face toward the body. Outgoing direction: the
+            // tangential remainder of the relative velocity (what shunt() keeps), falling
+            // back to the contact normal for a dead-square hit.
+            const dot = rvx * nx + rvz * nz;
+            let dxo = rvx - dot * nx, dzo = rvz - dot * nz;
+            if (dxo * dxo + dzo * dzo < 1e-4) { dxo = nx; dzo = nz; }
+            onTrafficHit({ x: state.pos.x - nx, z: state.pos.z - nz, dirX: dxo, dirZ: dzo,
+              sev, rel: Math.hypot(rvx, rvz) });
+          }
           if (sev >= TUNE.wreckSeverity && !wreck) {
             wreck = { speed: Math.hypot(rvx, rvz), dir: { x: -nx, z: -nz }, severity: sev };
           }
@@ -1532,6 +1543,14 @@ export function createPhysics({ blocks = [], bounds = 1400 } = {}) {
      * `physics.setTrafficBodies(() => traffic.vehicles)`.
      */
     setTrafficBodies(fn) { trafficBodies = typeof fn === 'function' ? fn : null; },
+
+    /**
+     * Called once per traffic contact entry edge with {x, z, dirX, dirZ, sev, rel}: the
+     * contact point, the outgoing (tangential) direction, the 0..1 severity and the
+     * relative closing speed. Push, not a queue, same shape as traffic's pass listener:
+     * the consumer is cosmetic (impact FX / audio) and must never affect the sim.
+     */
+    setTrafficHitListener(fn) { onTrafficHit = typeof fn === 'function' ? fn : null; },
 
     /**
      * A wreck-grade contact, or null; CLEARED ON READ. physics.js cannot start the crash cinematic

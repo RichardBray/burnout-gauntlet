@@ -990,6 +990,7 @@ export function createCrash(scene, car, physics, damage) {
   }
 
   let active = false;
+  let fxIdleT = 0;   // s left of stepping burst particles while NO crash runs (impactBurst)
   let t = 0, tReal = 0, timeScale = 1;
   let impactDir = new THREE.Vector3(0, 0, 1);
   let impactSide = new THREE.Vector3(1, 0, 0);
@@ -2332,6 +2333,8 @@ export function createCrash(scene, car, physics, damage) {
     get shutter01() { return active ? shutter01 : 0; },
     /** Real-world ground velocity the shutter is keyed to, m/s. For probes. */
     get groundV() { return active ? groundV : 0; },
+    /** Live spark count. For probes (the impactBurst live check reads it). */
+    get sparksLive() { let n = 0; for (const s of sparks) if (s.live) n++; return n; },
 
     trigger({ speed = 60, dir = new THREE.Vector3(0, 0, 1), severity = 1 } = {}) {
       crash.reset();
@@ -2347,8 +2350,47 @@ export function createCrash(scene, car, physics, damage) {
       updateShutter(0);
     },
 
+    /**
+     * Small contact burst for NON-crash impacts (a traffic hit the hero survives): a spark
+     * cone plus a few grit puffs at the contact point. No debris, no flash light, no time
+     * dilation — those belong to trigger(). Runs off the same pools, so a burst during a
+     * crash simply joins it. (x, z) is the contact, (dirX, dirZ) the outgoing shunt
+     * direction, strength 0..1 scales count and speed.
+     */
+    impactBurst(x, z, dirX, dirZ, strength = 0.5) {
+      const s = clamp(strength, 0, 1);
+      _puffPos.set(x, 0.55, z);
+      _v.set(dirX, 0.25, dirZ);
+      if (_v.lengthSq() < 1e-6) _v.set(0, 1, 0);
+      sparkBurst(_puffPos, _v.normalize(), Math.round(8 + 30 * s), 7 + 15 * s, 0.65,
+        { life: 0.4, hot: 1.0, streak: 0.012, drag: 1.0 });
+      const n = 3 + Math.round(5 * s);
+      for (let i = 0; i < n; i++) {
+        const a = fxRng() * Math.PI * 2;
+        _puffVel.set(Math.cos(a) * (1.5 + fxRng() * 2.5), 1.2 + fxRng() * 1.8,
+          Math.sin(a) * (1.5 + fxRng() * 2.5))
+          .addScaledVector(_v, 2 + 4 * s);
+        _puffPos.set(x + (fxRng() - 0.5) * 1.2, 0.3 + fxRng() * 0.4, z + (fxRng() - 0.5) * 1.2);
+        emitPuff(_puffPos, _puffVel, {
+          life: 1.0 + fxRng() * 0.8, s0: 0.5, s1: 2.0 + 1.4 * s, peak: 0.24 + 0.14 * s,
+          cool: 2.4, rise: 0.7, drag: 1.8, thin: 3.0, floor: 0.26,
+          shade: 0.9 + fxRng() * 0.2, spin: 1.4,
+          warm: 0xd2c1a2, cold: 0x8a8271,
+        });
+      }
+      fxIdleT = Math.max(fxIdleT, 4);
+    },
+
     update(dt) {
-      if (!active) return;
+      if (!active) {
+        // Keep impactBurst() particles stepping outside a crash — bounded by fxIdleT so an
+        // idle frame costs nothing once the last burst has died.
+        if (dt > 0 && fxIdleT > 0) {
+          fxIdleT -= dt;
+          stepSparks(dt); stepPuffs(dt); syncDust();
+        }
+        return;
+      }
       if (!(dt > 0)) { applyWreckPose(); return; }
 
       // dt arrives in SIM seconds (main.js has already scaled it), so dividing

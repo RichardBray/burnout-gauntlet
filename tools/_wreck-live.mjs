@@ -59,9 +59,13 @@ const setup = await page.evaluate(() => {
     target, x0: target.pos.x, z0: target.pos.z,
     heroMin: 1e9, wreckSeen: false, spun: false,
   };
+  rec.sparks = false;
   rec.iv = setInterval(() => {
     rec.heroMin = Math.min(rec.heroMin, Math.abs(s.speed));
     if (target.wrecked) rec.wreckSeen = true;
+    // impactBurst evidence: any live spark while no crash cinematic is running
+    const c = g.crash;
+    if (c && !c.active && c.sparksLive > 0) rec.sparks = true;
     const off = ((target.yaw % (Math.PI / 2)) + Math.PI / 2) % (Math.PI / 2);
     if (Math.min(off, Math.PI / 2 - off) > 0.15) rec.spun = true;
   }, 16);
@@ -79,6 +83,7 @@ const out = await page.evaluate(() => {
   clearInterval(rec.iv);
   return {
     heroMin: +rec.heroMin.toFixed(1), wreckSeen: rec.wreckSeen, spun: rec.spun,
+    sparks: rec.sparks,
     moved: +Math.hypot(target.pos.x - rec.x0, target.pos.z - rec.z0).toFixed(1),
     restSpeed: +Math.hypot(target.wvx || 0, target.wvz || 0).toFixed(2),
     stillLive: !!target.live, impact: +window.__game.physics.state.impact.toFixed(2),
@@ -96,4 +101,5 @@ assert(out.wreckSeen, 'struck car entered wrecked state');
 assert(out.heroMin < 35, `hero lost speed at contact (min ${out.heroMin} m/s)`);
 assert(out.moved > 3 || out.spun, `wreck was displaced or spun (moved ${out.moved} m, spun ${out.spun})`);
 assert(out.restSpeed < 2, `wreck came to rest (residual ${out.restSpeed} m/s)`);
+assert(out.sparks, 'contact fired an impact burst (live sparks outside a crash)');
 console.log('wreck-live: all checks passed');
