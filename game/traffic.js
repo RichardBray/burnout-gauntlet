@@ -137,6 +137,10 @@ const CHECK_SHUNT = 2.6;    // m/s-ish lateral shove a traffic check puts on the
 // the drive loop). 13 m/s of relative speed is ~47 km/h of closing, a real T-bone or a fast
 // rear-end, comfortably above the brush-past contacts CHECK_SHUNT is tuned for.
 const WRECK_REL = 13;       // m/s relative speed at contact that turns a shunt into a wreck
+// A hit is ALSO a wreck whenever the hero himself is over ~50 mph, whatever the relative
+// speed: rear-ending flowing traffic at highway speed closes at only a few m/s, which the
+// WRECK_REL test alone reads as a brush — but at 50+ mph any contact should wreck the car.
+const WRECK_HERO = 22.4;    // m/s (~50 mph) of hero speed above which any contact wrecks
 const WRECK_FRICTION = 6.5; // m/s^2 a sliding wreck sheds; ~2 s from a 13 m/s kick to rest
 const WRECK_SPIN_DECAY = 1.4; // 1/s exponential decay on a wreck's spin rate
 const EVENT_CAP = 96;       // queue ceiling, so an undrained queue cannot grow without bound
@@ -1160,7 +1164,7 @@ export function createTraffic(scene, { rng, layout, blocks = [], roadKit } = {})
               // that grows with how hard the hit was, and a spin whose sign comes from which
               // side of the hero's line it was struck on. From the next frame the `wrecked`
               // branch at the top of this loop owns it.
-              if (rel0 > WRECK_REL) {
+              if (rel0 > WRECK_REL || Math.abs(heroSpeed) > WRECK_HERO) {
                 v.wrecked = true;
                 const kick = clamp(rel0 / 30, 0, 1);
                 v.wvx = (a0 ? v.dir * v.speed : 0) * 0.5 + hvx * (0.35 + 0.35 * kick);
