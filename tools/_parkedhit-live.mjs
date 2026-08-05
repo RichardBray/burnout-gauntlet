@@ -87,7 +87,7 @@ console.log(out);
 const assert = (c, l) => { if (!c) { console.error(`FAIL: ${l}`); process.exit(1); } console.log(`  ok: ${l}`); };
 assert(errors.length === 0, `no page errors (${errors.join('; ') || 'none'})`);
 assert(out.gone, 'parked body was promoted (baked instance hidden)');
-console.log(`  (info: ${out.goneCount} parked car(s) promoted this run)`);
+console.log(`  (info: ${out.goneCount} parked car(s) promoted this run; ranks are ~40 m sparse)`);
 assert(out.wreckNear, 'a live wrecked car exists near the parking spot');
 // rest behaviour is _wreck-live.mjs's assertion; this check owns only the promotion
 assert(out.moved > 1, `the wreck was knocked away (moved ${out.moved} m)`);

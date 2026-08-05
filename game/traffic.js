@@ -1216,8 +1216,13 @@ export function createTraffic(scene, { rng, layout, blocks = [], roadKit } = {})
                   || (v.speed < 2 && rel0 > 6)) {
                 v.wrecked = true;
                 const kick = clamp(rel0 / 30, 0, 1);
-                v.wvx = (a0 ? v.dir * v.speed : 0) * 0.5 + hvx * (0.35 + 0.35 * kick);
-                v.wvz = (a0 ? 0 : v.dir * v.speed) * 0.5 + hvz * (0.35 + 0.35 * kick);
+                // The impulse direction: the stamp's own relative velocity when the hit came
+                // through physics (or the crash-shell sweep, where the hero velocity here is
+                // stale), else the live hero velocity.
+                const kx = hit && hit.kx !== undefined ? hit.kx : hvx;
+                const kz = hit && hit.kz !== undefined ? hit.kz : hvz;
+                v.wvx = (a0 ? v.dir * v.speed : 0) * 0.5 + kx * (0.35 + 0.35 * kick);
+                v.wvz = (a0 ? 0 : v.dir * v.speed) * 0.5 + kz * (0.35 + 0.35 * kick);
                 const side = Math.sign((v.pos.x - hx) * -heroFz + (v.pos.z - hz) * heroFx) || 1;
                 v.wspin = -side * (1.5 + 3.5 * kick);
               }

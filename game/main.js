@@ -652,6 +652,29 @@ export async function boot() {
     if (crash.active) crash.update(sdt);
     else physics.step(sdt);
 
+    // THE SHELL SWEEP. During the crash cinematic physics.step (and so collide()) does not
+    // run — the tumbling shell used to ghost straight through parked and stopped cars, which
+    // is exactly where a wreck most often lands. While the shell is moving with real speed,
+    // stamp heroHit on any car body it overlaps, with the shell's own velocity as the kick;
+    // traffic.update consumes the stamps and promotes/wrecks them like any other hit.
+    if (crash.active && crash.shellPos) {
+      const cp = crash.shellPos, cv = crash.shellVel;
+      const rel = Math.hypot(cv.x, cv.z);
+      if (rel > 4) {
+        const stamp = { rel, sev: 0.6, kx: cv.x, kz: cv.z };
+        for (const b of world.parkedCars) {
+          if (b.gone || b.heroHit) continue;
+          const dx = cp.x - b.x, dz = cp.z - b.z;
+          if (dx * dx + dz * dz < 10.5) b.heroHit = stamp;
+        }
+        for (const v of traffic.vehicles) {
+          if (v.wrecked || v.heroHit) continue;
+          const dx = cp.x - v.pos.x, dz = cp.z - v.pos.z;
+          if (dx * dx + dz * dz < 10.5) v.heroHit = stamp;
+        }
+      }
+    }
+
     // THE WRECK JOIN. physics.js must not import crash.js, so a wreck-grade contact is
     // published through `drainWreck()` (cleared on read) rather than by half-setting
     // `state.crashed`. Round 1's critic found `state.crashed` was set by nothing at all, so
@@ -696,9 +719,13 @@ export async function boot() {
     traffic.update(sdt, s.pos, s.yaw, s.speed);
     // Knockable street furniture: poles topple with the hero's travel and never slow him.
     // World velocity includes the drift component so a sideways clip fells the pole sideways.
-    poleFall.update(sdt, s.pos,
-      Math.sin(s.yaw) * s.speed + Math.cos(s.yaw) * s.vLat,
-      Math.cos(s.yaw) * s.speed - Math.sin(s.yaw) * s.vLat);
+    if (crash.active && crash.shellPos) {
+      poleFall.update(sdt, crash.shellPos, crash.shellVel.x, crash.shellVel.z);
+    } else {
+      poleFall.update(sdt, s.pos,
+        Math.sin(s.yaw) * s.speed + Math.cos(s.yaw) * s.vLat,
+        Math.cos(s.yaw) * s.speed - Math.sin(s.yaw) * s.vLat);
+    }
     sky.update(sdt, s.pos);
     reassertKeyDir(s.pos);
     camRig.update(dt, s);

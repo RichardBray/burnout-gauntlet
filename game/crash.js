@@ -2335,6 +2335,11 @@ export function createCrash(scene, car, physics, damage) {
     get groundV() { return active ? groundV : 0; },
     /** Live spark count. For probes (the impactBurst live check reads it). */
     get sparksLive() { let n = 0; for (const s of sparks) if (s.live) n++; return n; },
+    /** The tumbling shell's centre and world velocity while a crash runs, else null. main.js
+     *  sweeps these against parked/stopped cars and poles so the wreck shell knocks them
+     *  around instead of ghosting through them (physics.collide does not run mid-crash). */
+    get shellPos() { return active ? com : null; },
+    get shellVel() { return active ? vel : null; },
 
     trigger({ speed = 60, dir = new THREE.Vector3(0, 0, 1), severity = 1 } = {}) {
       crash.reset();
