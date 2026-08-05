@@ -74,6 +74,26 @@ const npc = (x, z, yaw, speed = 0) =>
   assert(Math.abs(a.state.speed - b.state.speed) < 1e-9, 'empty bodies list changes nothing');
 }
 
+// 3b. Two bodies hit back to back inside the contactHold window: BOTH must take an entry
+//     impulse (the global wallCool used to swallow the second body's, so a rank of parked
+//     cars read as bolted down past the first).
+{
+  const a = { x: 0, z: 60, fx: 0, fz: 1, halfLen: 2.2, halfWid: 0.91 };
+  const b = { x: 40, z: 60, fx: 0, fz: 1, halfLen: 2.2, halfWid: 0.91 };
+  const p = createPhysics({ blocks: [], bounds: 1e9 });
+  p.setParkedBodies([a, b]);
+  const thr = { throttle: 1, brake: 0, steer: 0, boost: false, handbrake: false };
+  p.state.speed = 40;
+  let guard = 0;
+  while (!a.heroHit && guard++ < 2000) p.step(DT, thr);
+  // still inside a's contactHold window; meet body b immediately — a DIFFERENT body must
+  // count as a fresh entry edge, not inherit a's cooldown
+  p.state.pos.x = b.x; p.state.pos.z = b.z - 4; p.state.speed = 30;
+  for (let i = 0; i < 6; i++) p.step(DT, thr);   // 0.05 s < contactHold (0.15 s)
+  assert(a.heroHit && b.heroHit,
+    `both bodies in a pile-up get stamped (a ${!!a.heroHit}, b ${!!b.heroHit})`);
+}
+
 // 4. Reverse drifting earns no drift boost: full lock in reverse for 4 s must not out-earn
 //    the plain cruise trickle of the same duration driven forward slowly.
 {

@@ -701,6 +701,8 @@ export function createPhysics({ blocks = [], bounds = 1400 } = {}) {
   // and the next one re-charges the full impact impulse. With the impulse fired once per genuine
   // contact, a 3.2 deg graze now retains 79% of the speed it arrived with and a square hit 25%.
   let wallCool = 0;
+  let contactBody = null;   // the car body the current wallCool window belongs to; a NEW body
+                            // is an entry edge even inside the window (see hitCarBody)
   let driftHold = 0;
   let tapCmd = 0;           // 0..1 brake-tap drift command, latched and decayed over driftTapLinger
   let hbPrev = false;       // last substep's handbrake, for rising-edge detection
@@ -779,7 +781,13 @@ export function createPhysics({ blocks = [], bounds = 1400 } = {}) {
     else { state.pos.z = cz + Math.sign(dz || 1) * hz; nz = Math.sign(dz || 1); }
     const rvx = vx - bvx, rvz = vz - bvz;
     const closing = Math.max(0, -(rvx * nx + rvz * nz));
-    if (wallCool <= 0) {
+    // wallCool is one cooldown for ALL contacts, which is right for a wall face but wrong
+    // across bodies: ramming a rank of parked cars used to stamp only the FIRST car (every
+    // later one began inside the 0.15 s hold, so it never got its impulse or its heroHit and
+    // read as bolted down). A different body is a new contact, whatever the clock says.
+    const entry = wallCool <= 0 || o !== contactBody;
+    contactBody = o;
+    if (entry) {
       const sev = clamp((closing - TUNE.grazeNormalSpeed)
         / (TUNE.hitNormalSpeed - TUNE.grazeNormalSpeed), 0, 1);
       shunt(rvx, rvz, nx, nz, lerp(TUNE.scrapeKeep, TUNE.hitKeep, sev), bvx, bvz);
@@ -853,6 +861,7 @@ export function createPhysics({ blocks = [], bounds = 1400 } = {}) {
           noteGrind(vx, vz, nx, nz);
         }
         wallCool = TUNE.contactHold;
+        contactBody = null;   // a wall owns the window now; the next car body is an entry
         return true;
       }
     }

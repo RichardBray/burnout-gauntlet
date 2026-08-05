@@ -40,7 +40,9 @@ const setup = await page.evaluate(() => {
     if (d > 30 && d < best) { best = d; target = b; }
   }
   if (!target) return { fail: 'no parked body found' };
-  // 40 m back along the parked car's own axis, aimed at it, fast
+  // 40 m back along the parked car's own axis, aimed DOWN THE RANK, fast — cars park
+  // nose-to-tail, so holding throttle rams several in a row (the multi-car regression:
+  // the global wallCool used to stamp only the first body).
   const aim = Math.atan2(target.fx, target.fz);   // physics yaw for the body's forward
   g.physics.clearPath && g.physics.clearPath();
   g.physics.reset(new g.THREE.Vector3(
@@ -68,7 +70,10 @@ const out = await page.evaluate(() => {
     const d = Math.hypot(v.pos.x - x0, v.pos.z - z0);
     if (d < dMin) { dMin = d; wreck = v; }
   }
+  let goneCount = 0;
+  for (const b of g.world.parkedCars) if (b.gone) goneCount++;
   return {
+    goneCount,
     gone: !!target.gone,
     wreckNear: !!wreck && dMin < 150,
     moved: wreck ? +Math.hypot(wreck.pos.x - x0, wreck.pos.z - z0).toFixed(1) : 0,
@@ -82,6 +87,7 @@ console.log(out);
 const assert = (c, l) => { if (!c) { console.error(`FAIL: ${l}`); process.exit(1); } console.log(`  ok: ${l}`); };
 assert(errors.length === 0, `no page errors (${errors.join('; ') || 'none'})`);
 assert(out.gone, 'parked body was promoted (baked instance hidden)');
+console.log(`  (info: ${out.goneCount} parked car(s) promoted this run)`);
 assert(out.wreckNear, 'a live wrecked car exists near the parking spot');
 // rest behaviour is _wreck-live.mjs's assertion; this check owns only the promotion
 assert(out.moved > 1, `the wreck was knocked away (moved ${out.moved} m)`);
