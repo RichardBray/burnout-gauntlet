@@ -28,3 +28,14 @@
 [2026-08-03 08:24:41] round 13 starting -> /Users/robray/fc/demos/burnout-gauntlet/logs/round-013-20260803-082441.log
 [2026-08-03 08:39:25] round 13 finished (exit 0, 884s)
 [2026-08-03 08:39:55] round 14 starting -> /Users/robray/fc/demos/burnout-gauntlet/logs/round-014-20260803-083955.log
+[2026-08-03 09:00:00] round 14 finished (exit 0, 1205s)
+[2026-08-03 09:00:30] round 15 starting -> /Users/robray/fc/demos/burnout-gauntlet/logs/round-015-20260803-090030.log
+[2026-08-03 10:34:27] round 15 finished (exit 1, 5637s)
+[2026-08-03 10:50:33] round 16 starting -> /Users/robray/fc/demos/burnout-gauntlet/logs/round-016-20260803-105033.log
+[2026-08-03 11:57:21] round 16 finished (exit 143, 4008s)
+[2026-08-03 11:57:21] usage limit hit - sleeping 18000s (until 16:57:21)
+[2026-08-03 16:35:37] round 1 starting on .claude-work -> /Users/robray/fc/demos/burnout-gauntlet/logs/round-001-20260803-163537.log
+[2026-08-03 16:37:53] round 1 starting on .claude-work -> /Users/robray/fc/demos/burnout-gauntlet/logs/round-001-20260803-163753.log
+[2026-08-03 21:45:23] round 1 finished (exit 0, 18450s, .claude-work)
+[2026-08-03 21:45:33] round 1 starting on .claude-work -> /Users/robray/fc/demos/burnout-gauntlet/logs/round-001-20260803-214533.log
+[2026-08-04 06:42:29] round 1 finished (exit 0, 32216s, .claude-work)

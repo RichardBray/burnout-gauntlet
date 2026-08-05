@@ -4,6 +4,7 @@
 // API (unchanged, main.js depends on it):
 //   createCrash(scene, car, physics, damage) -> crash
 //   crash.trigger({speed, dir, severity})  crash.update(dt)  crash.reset()
+//   crash.prewarm(render)   silent first-crash path for boot (mask paint + debris upload)
 //   crash.active            is a crash running
 //   crash.timeScale         audio/gameplay-facing slow-mo factor; main.js multiplies dt by it
 //   crash.time              seconds of CRASH time elapsed (i.e. already slow-mo scaled)
@@ -2514,6 +2515,36 @@ export function createCrash(scene, car, physics, damage) {
     settle(seconds, step = 1 / 120) {
       const n = Math.round(seconds / step);
       for (let i = 0; i < n; i++) crash.update(step * timeScale);
+    },
+
+    /**
+     * Pay first-crash costs behind the boot bar: damage mask paint, glass fracture
+     * textures, debris/spark/smoke first draw, and any material variants still cold
+     * after compile(). Shaders for this group are compiled in main's warm stage;
+     * the remaining hitch is CPU paint + first GPU upload of live instance data.
+     * `render` is called once with the wreck live, then crash+damage are reset.
+     */
+    prewarm(render) {
+      if (active) crash.reset();
+      // Full damage path first: setLevel hits every threshold (crack / lamps / shatter)
+      // and uploads the scuff + fracture canvases. trigger() alone tops out ~0.5 and
+      // leaves shatter cold for the first real crashbreaker.
+      if (damage && damage.setLevel) damage.setLevel(0.88);
+      const yaw = physics.state.yaw || 0;
+      crash.trigger({
+        speed: 30,
+        dir: new THREE.Vector3(Math.sin(yaw), 0, Math.cos(yaw)),
+        severity: 0.7,
+      });
+      for (let i = 0; i < 4; i++) {
+        crash.update(1 / 60);
+        if (damage && damage.update) damage.update(1 / 60);
+      }
+      if (typeof render === 'function') {
+        try { render(); } catch { /* never fatal */ }
+      }
+      crash.reset();
+      if (damage && damage.reset) damage.reset();
     },
 
     reset() {

@@ -50,7 +50,7 @@ function makeNoop() {
     get ctx() { return null; },
     ready: Promise.resolve(false),
     enabled: false,
-    start: f, stop: f, update: f, crash: f, gearShift: f, boostHit: f,
+    start: f, stop: f, update: f, crash: f, pass: f, gearShift: f, boostHit: f,
     // Same shape as the real api: -1 means "nothing was built". main.js calls this at boot.
     prewarm: () => -1,
     setSpace: f, setListener: f, setEnabled: f, setVolume: f, getVolume: () => 0,
@@ -1584,6 +1584,77 @@ export function createAudio({ enabled = true, volume = 0.62, space = 'city' } = 
       // f1 stays inside the bus high-pass so the thump lands instead of vanishing
       tone(dest, { at: now, dur: 0.35, f0: 150, f1: 72, peak: 0.42 * s });
       tone(dest, { at: now + 0.02, dur: 0.28, f0: 160, f1: 520, peak: 0.10 * s, type: 'sawtooth' });
+    },
+
+    /**
+     * A car flying past: the air it drags with it. Pink noise through a bandpass that
+     * sweeps UP then falls, panned across the head in the same gesture.
+     *
+     * TIMING IS THE WHOLE EFFECT, and it is why this is fired from the pass OPENING rather
+     * than from traffic.js's event queue. That queue fires at closePass(), gated on
+     * clearance re-opening past 3.4 + 1.4 m, which measured 127 ms late at the median and
+     * 225 ms at p90 over a 45 s drive - far enough behind the car that the whoosh reads as
+     * belonging to the next one. Fired at the opening instead, `dur` IS the lead-in: the
+     * band peak lands around the closest point on its own.
+     *
+     * `side` is -1 for a car going by on the left and +1 on the right, already resolved by
+     * the caller - this takes a stereo side and not a world position on purpose, because
+     * the panner rig (busWorld) is for sustained sources that need distance and doppler,
+     * and a 300 ms burst that is over before the geometry moves does not.
+     */
+    pass(intensity = 1, { side = 0, relSpeed = 30 } = {}) {
+      if (!running) return;
+      const now = ctx.currentTime;
+      const I = clamp(intensity, 0, 1);
+      // Relative speed sets the BRIGHTNESS and the LENGTH: a 50 m/s oncoming pass is a short
+      // bright rip, a 12 m/s overtake is a longer, duller swell. 50 m/s is the measured
+      // median relative speed of a real pass, so it sits mid-range here rather than at a limit.
+      const rel = clamp(relSpeed / 60, 0.1, 1.3);
+      const dur = 0.34 - 0.12 * rel;
+      const fPeak = 620 + 1500 * rel;
+
+      const src = ctx.createBufferSource();
+      src.buffer = noisePink; src.loop = true;
+      // Q 0.6, not 1.1. Air rushing past is BROADBAND - a narrow band on pink noise is both
+      // the wrong shape (it whistles) and lossy enough that the burst measured at or under
+      // the idle engine floor no matter what the gain constant said.
+      const f = mkFilt('bandpass', fPeak * 0.45, 0.6);
+      // Up into the pass and down out of it. Two ramps, not one: a single sweep across the
+      // whole burst gives a siren, and a car going by is symmetrical about the moment it is
+      // beside you.
+      f.frequency.setValueAtTime(fPeak * 0.45, now);
+      f.frequency.exponentialRampToValueAtTime(fPeak, now + dur * 0.45);
+      f.frequency.exponentialRampToValueAtTime(fPeak * 0.40, now + dur);
+
+      const g = mkGain(1e-4);
+      // 2.2 is MEASURED, not guessed (tools/_passlevel.mjs): at full intensity and 50 m/s it
+      // lands the whoosh ~11 dB under a full crash at the master output, and ~1.8x above the
+      // idle engine floor. Both halves matter - an earlier 0.42 sat BELOW the engine, and the
+      // reading that seemed to justify it was measuring the engine itself. Changing the bus or
+      // the filter Q changes this number: re-measure, do not scale it by ear.
+      g.gain.exponentialRampToValueAtTime(2.2 * I, now + dur * 0.45);
+      g.gain.exponentialRampToValueAtTime(1e-4, now + dur);
+
+      let tail = g;
+      if (side && ctx.createStereoPanner) {
+        const p = ctx.createStereoPanner();
+        // Sweeps from slightly ahead-of-centre out to the passing side and back in, which is
+        // what makes it read as movement rather than as a noise burst parked in one ear.
+        p.pan.setValueAtTime(clamp(side * 0.25, -1, 1), now);
+        p.pan.linearRampToValueAtTime(clamp(side * 0.95, -1, 1), now + dur * 0.5);
+        p.pan.linearRampToValueAtTime(clamp(side * 0.35, -1, 1), now + dur);
+        g.connect(p); tail = p;
+      }
+      // busFx, NOT busWind, and the routing is the whole reason this used to be inaudible.
+      // Every bed bus (engine/tyre/wind/boost/rivals) lands on `preMaster`, which is BED_TRIM
+      // = 0.22, about 13 dB down, and then goes through the glue compressor - so a whoosh on
+      // busWind was trimmed 13 dB AND ducked by the engine, at exactly the throttle setting a
+      // pass happens at. A pass is an EVENT, like an impact, so it belongs on the path built
+      // for events: busFx's dry bypasses both via `fxDirect`.
+      tail.connect(busFx.input);
+      src.connect(f); f.connect(g);
+      src.start(now); src.stop(now + dur + 0.02);
+      src.onended = () => { try { tail.disconnect(); g.disconnect(); f.disconnect(); } catch (e) { /* noop */ } };
     },
 
     /**

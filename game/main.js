@@ -76,18 +76,36 @@ export async function boot() {
     canvas, antialias: false, powerPreference: 'high-performance',
     alpha: false, stencil: false, depth: true,
   });
-  // ---- RENDER PIXELS ARE CSS PIXELS. THIS IS A MEASUREMENT CONTRACT, NOT A PREFERENCE.
-  // This is a Retina machine: `devicePixelRatio` is 2, so the old
-  // `min(devicePixelRatio, 2)` made a 1280x720 window render a 2560x1440 buffer —
-  // 4x the pixels — and every frame-rate number taken from it was a lie by that factor.
-  // The pixel ratio is now `resScale` and nothing else, defaulting to 1.0, so the drawing
-  // buffer is exactly `innerWidth x innerHeight` REAL pixels and the canvas's CSS
-  // `width:100%/height:100%` upscales it to fill the window. `#res=<n>` (or the pause
-  // menu) scales it below 1 to buy frames; it is never allowed above 1 because that
-  // reintroduces the same lie by a different name.
+  // ---- RENDER RESOLUTION IS CAPPED (720p or 1080p). CSS PIXELS ARE DISPLAY ONLY.
+  // The drawing buffer fits inside the chosen cap while preserving the window aspect. A
+  // larger window still renders at the cap and the canvas CSS `width/height:100%` upscales
+  // it. A smaller window drops below the cap 1:1 with the CSS size. `devicePixelRatio` is
+  // never applied. `#res=<n>` (or the pause menu) multiplies further below 1; never above 1.
+  // Menu (and `#cap=720|1080`) picks the cap; default is 720p for frame budget.
+  const INTERNAL_CAPS = {
+    720:  { w: 1280, h: 720 },
+    1080: { w: 1920, h: 1080 },
+  };
+  let internalCap = (params.cap === '1080' || params.cap === '1080p') ? 1080 : 720;
+  function maxInternal() {
+    return INTERNAL_CAPS[internalCap] || INTERNAL_CAPS[720];
+  }
+  /** Internal draw size for a CSS viewport. Always aspect-matched; never above the cap. */
+  function internalSize(cssW, cssH) {
+    const { w: maxW, h: maxH } = maxInternal();
+    const fit = Math.min(1, maxW / Math.max(1, cssW), maxH / Math.max(1, cssH));
+    return {
+      w: Math.max(2, Math.floor(cssW * fit)),
+      h: Math.max(2, Math.floor(cssH * fit)),
+      fit,
+    };
+  }
   let resScale = clamp(parseFloat(params.res) || 1, 0.4, 1);
-  renderer.setPixelRatio(shotMode ? 1 : resScale);
-  renderer.setSize(window.innerWidth, window.innerHeight, false);
+  {
+    const ini = internalSize(window.innerWidth, window.innerHeight);
+    renderer.setPixelRatio(shotMode ? 1 : resScale);
+    renderer.setSize(ini.w, ini.h, false);
+  }
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -200,11 +218,26 @@ export async function boot() {
   // shipped game. traffic drains on read, so nothing else may call drainEvents().
   physics.setEventSource(() => traffic.drainEvents());
 
+  // THE PASS-AUDIO JOIN. Intensity is mostly CLEARANCE - what makes a pass thrilling is how
+  // close it was, and a car three lanes over at the same speed should barely register - with
+  // relative speed as the smaller term so a fast pass still reads as more violent than a
+  // crawl. Deliberately not routed through drainEvents(): that queue is the boost economy's,
+  // drain-on-read, single-owner (see the line above), and a second reader would spend it.
+  // The kerb ranks are world.js's population, so traffic.js has to be handed them explicitly
+  // or a run down a parked street is silent. Audio only - they earn no boost.
+  traffic.setStaticBodies(world.parkedCars);
+  traffic.setPassListener(({ side, relSpeed, clearance }) => {
+    const close = Math.max(0, Math.min(1, 1 - clearance / 3.4));
+    const fast = Math.max(0, Math.min(1, (relSpeed - 8) / 40));
+    audio.pass(0.35 + 0.65 * (0.7 * close + 0.3 * fast), { side, relSpeed });
+  });
+
   // ---- post chain ------------------------------------------------------
   await stage('post', 'post-processing');
   const dpr = renderer.getPixelRatio();
-  const rtW = Math.max(2, Math.floor(window.innerWidth * dpr));
-  const rtH = Math.max(2, Math.floor(window.innerHeight * dpr));
+  const bootInternal = internalSize(window.innerWidth, window.innerHeight);
+  const rtW = Math.max(2, Math.floor(bootInternal.w * dpr));
+  const rtH = Math.max(2, Math.floor(bootInternal.h * dpr));
   // ---- ANTI-ALIASING: MSAA SAMPLE COUNT, AND WHY IT IS A HASH PARAMETER NOW ------------
   // 4x MSAA on a 1280x720 HalfFloat target is the single most expensive line in this file:
   // measured 7.34 ms of a 25.5 ms frame, i.e. 29% of the whole frame for edge quality alone
@@ -223,7 +256,7 @@ export async function boot() {
     minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter,
   });
   const composer = new EffectComposer(renderer, rt);
-  composer.setSize(window.innerWidth, window.innerHeight);
+  composer.setSize(bootInternal.w, bootInternal.h);
   composer.addPass(new RenderPass(scene, camera));
   // SSAO before bloom: occlusion is part of the scene's radiance, so the glare pyramid
   // must see the darkened seams rather than blooming over them.
@@ -319,12 +352,13 @@ export async function boot() {
   //
   // THE FALLBACK RULE, AND IT PROTECTS A RECORDED DECISION. Compositing in-frame means the HUD is
   // rasterised into the drawing buffer, so it inherits the buffer's resolution. main.js's
-  // recorded decision (see resize() below) is that dropping `resScale` must NOT soften the HUD.
-  // So the in-frame path is used only while the HUD's backing store and the drawing buffer are
-  // the SAME size; the moment they differ — `resScale` below 1, or `#hudres=2` asking for a
-  // supersampled overlay — `syncHudPath()` puts the canvas back in the document and the old
-  // behaviour returns exactly. That check is a size comparison rather than a guess about which
-  // knobs exist, so a future knob that changes either size is handled without being enumerated.
+  // recorded decision (see resize() below) is that dropping `resScale` / the 720p cap must NOT
+  // soften the HUD. So the in-frame path is used only while the HUD's backing store and the
+  // drawing buffer are the SAME size; the moment they differ — window above 720p, `resScale`
+  // below 1, or `#hudres=2` asking for a supersampled overlay — `syncHudPath()` puts the canvas
+  // back in the document and the old behaviour returns exactly. That check is a size comparison
+  // rather than a guess about which knobs exist, so a future knob that changes either size is
+  // handled without being enumerated.
   const hudTex = new THREE.Texture(hud.canvas);
   hudTex.minFilter = THREE.NearestFilter;
   hudTex.magFilter = THREE.NearestFilter;
@@ -413,10 +447,12 @@ export async function boot() {
   }
 
   function resize() {
-    const w = window.innerWidth, h = window.innerHeight;
-    camera.aspect = w / h;
+    const cssW = window.innerWidth, cssH = window.innerHeight;
+    const { w, h } = internalSize(cssW, cssH);
+    camera.aspect = cssW / cssH;
     camera.updateProjectionMatrix();
     renderer.setPixelRatio(shotMode ? 1 : resScale);
+    // updateStyle=false: keep CSS 100%/100% so the browser upscales the 720p buffer.
     renderer.setSize(w, h, false);
     // EffectComposer keeps its own copy of the pixel ratio (it was read off the
     // renderer in the constructor) and multiplies setSize() by it, so changing the
@@ -431,18 +467,26 @@ export async function boot() {
       const bs = renderer.getDrawingBufferSize(new THREE.Vector2());
       fxaa.material.uniforms.resolution.value.set(1 / bs.x, 1 / bs.y);
     }
-    // The HUD is drawn on its own 2-D canvas that is NOT part of the post chain, so it
-    // always renders at full window resolution: dropping resScale must not soften the
-    // HUD, which is exactly what Burnout does (see reference/INDEX.md hud-overlay-03).
-    hud.resize(w, h);
+    // HUD stays at full CSS window size so resScale / the 720p cap never soften it.
+    // When that differs from the drawing buffer, syncHudPath() falls back to DOM compositing.
+    hud.resize(cssW, cssH);
   }
   window.addEventListener('resize', resize);
 
-  /** Change the render resolution scale at runtime. 1.0 = one render pixel per CSS pixel. */
+  /** Change the render resolution scale at runtime. 1.0 = full internal res (at the cap). */
   function setResScale(s) {
     resScale = clamp(s, 0.4, 1);
     resize();
     return resScale;
+  }
+
+  /** Cap the internal drawing buffer at 720p or 1080p. Larger windows CSS-upscale. */
+  function setInternalCap(p) {
+    const next = (p === 1080 || p === '1080' || p === '1080p') ? 1080 : 720;
+    if (next === internalCap) return internalCap;
+    internalCap = next;
+    resize();
+    return internalCap;
   }
 
   // ---- shared per-frame update ------------------------------------------
@@ -453,10 +497,15 @@ export async function boot() {
     outputPass, toneMode, bloomMode,
     setResScale,
     getResScale: () => resScale,
+    setInternalCap,
+    getInternalCap: () => internalCap,
     /** The buffer the frame is actually rasterised into. Quote this beside every fps figure. */
     renderSize() {
       const v = renderer.getDrawingBufferSize(new THREE.Vector2());
+      const cap = internalSize(window.innerWidth, window.innerHeight);
+      const mx = maxInternal();
       return { w: v.x, h: v.y, cssW: window.innerWidth, cssH: window.innerHeight,
+        internalW: cap.w, internalH: cap.h, maxInternal: [mx.w, mx.h], cap: internalCap,
         pixelRatio: renderer.getPixelRatio(), devicePixelRatio: window.devicePixelRatio || 1 };
     },
     /**
@@ -590,7 +639,15 @@ export async function boot() {
     // crash.js's whole state machine was unreachable from driving; this is the line that makes
     // it reachable. Drained even while a crash is active so a queued wreck cannot fire twice.
     const wreck = physics.drainWreck();
-    if (wreck && !crash.active) crash.trigger(wreck);
+    if (wreck && !crash.active) {
+      crash.trigger(wreck);
+      // The join has to carry the AUDIO too. crash.trigger() is picture only, so a gameplay
+      // wreck was silent while the C-key demo below (which calls both) was not - the wreck
+      // was the one path that dropped the sound. Severity is the impact grade physics already
+      // computed, so a heavy hit is louder than a barely-wrecking one.
+      audio.crash(wreck.severity);
+      hud.banner('WRECKED', 1.4);
+    }
 
     const s = physics.state;
     applyCarTransform();
@@ -1035,6 +1092,29 @@ export async function boot() {
   // ...and one more frame in the SHIPPING visibility state, so the (cheaper) program and buffer
   // set the first real frame actually uses is resident too.
   try { renderFrame(); } catch { /* as above */ }
+
+  // FIRST-CRASH HITCH. compile() + the hidden-subtree draw above warm crash FX programs,
+  // but the freeze on the player's first C / wreck is mostly elsewhere:
+  //   - damage.js paints 1024² scuff/fracture canvases and deforms the body on first impact
+  //   - debris/spark instance buffers only upload live matrices when pieces actually spawn
+  //   - shatter / lamp-out material paths only run past severity thresholds
+  // A silent prewarm runs that whole path once under the boot bar, then restores pristine state.
+  // `#crashwarm=0` skips it for A/B.
+  if (params.crashwarm !== '0' && crash.prewarm) {
+    const warmPos = physics.state.pos.clone();
+    const warmYaw = physics.state.yaw;
+    try {
+      crash.prewarm(renderFrame);
+      const glw = renderer.getContext();
+      if (glw && glw.finish) glw.finish();
+    } catch { /* never fatal */ }
+    physics.reset(warmPos, warmYaw, 0);
+    car.group.rotation.set(0, 0, 0);
+    car.group.position.y = 0;
+    applyCarTransform();
+    try { renderFrame(); } catch { /* as above */ }
+  }
+
   await stage('done', 'ready');
   if (bootBarEl) bootBarEl.style.width = '100%';
   await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));

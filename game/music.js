@@ -41,8 +41,10 @@
 // 4. Respect the same click-to-unlock gesture as everything else. Nothing may
 //    autoplay before `unlock()`.
 //
-// The three files on disk, already present in `game/music/`:
-//   santa-in-a-hurry.mp3, stormy-weather.mp3, bring-me-up-higher.mp3
+// The three files on disk in `game/music/`, ALL CC0 (see music/README.md for sources):
+//   cc0-punk-rock-metal.mp3, cc0-metal-energetic.ogg, cc0-punk-flesh-and-blood.mp3
+// The Epidemic Sound tracks this file was first written against are GONE: that licence covers
+// video, not interactive software. Do not reintroduce them.
 //
 // =============================================================================
 // IMPLEMENTATION — wave-s/menu-music. How each of the four rules is met:
@@ -76,12 +78,17 @@
 // post-gain samples — see `probe()` below and `tools/_musicverify.mjs`.
 // =============================================================================
 
-// Titles are the user's own filenames, title-cased for the menu. `file` is
-// relative to game/index.html, which is what the page's document base is.
+// `file` is relative to game/index.html, which is what the page's document base is.
+// ALL CC0 (public domain), from OpenGameArt, licence verified on each item's own page — see
+// music/README.md for the source URLs. The three Epidemic Sound tracks that were here before are
+// licensed for video, NOT for games, so they could not ship in a playable build at all. CC0 rather
+// than merely royalty-free is deliberate: no attribution obligation to carry, and nothing to
+// re-verify later. Note per-item verification is required on OpenGameArt — of eight rock/metal
+// candidates checked, five were CC-BY and only three were CC0.
 const TRACKS = [
-  { id: 'santa-in-a-hurry', title: 'Santa In A Hurry', file: 'music/santa-in-a-hurry.mp3' },
-  { id: 'stormy-weather', title: 'Stormy Weather', file: 'music/stormy-weather.mp3' },
-  { id: 'bring-me-up-higher', title: 'Bring Me Up Higher', file: 'music/bring-me-up-higher.mp3' },
+  { id: 'cc0-punk-rock-metal', title: 'Punk Rock Metal', file: 'music/cc0-punk-rock-metal.mp3' },
+  { id: 'cc0-metal-energetic', title: 'Metal Energetic', file: 'music/cc0-metal-energetic.ogg' },
+  { id: 'cc0-punk-flesh-and-blood', title: 'Flesh And Blood', file: 'music/cc0-punk-flesh-and-blood.mp3' },
 ];
 
 // Default music level. This is a GAIN on a commercially-mastered MP3, not a

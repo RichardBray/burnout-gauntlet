@@ -189,6 +189,17 @@ function injectStyle() {
 #bgmenu .seg button:hover { background: rgba(232,240,248,0.20); color: #fff; }
 #bgmenu .seg button.on { background: ${AMBER}; color: #241503; }
 #bgmenu .seg button.on.green { background: ${GREEN}; color: #08170a; }
+/* Paint swatches: solid body colour, amber ring when selected. */
+#bgmenu .seg button.paint {
+  min-width: 52px; min-height: 28px; padding: 6px 10px;
+  color: #0a0c10; text-shadow: 0 1px 0 rgba(255,255,255,0.25);
+  border: 2px solid transparent;
+}
+#bgmenu .seg button.paint:hover { filter: brightness(1.08); }
+#bgmenu .seg button.paint.on {
+  color: #0a0c10;
+  box-shadow: 0 0 0 2px ${AMBER}, 0 0 0 4px rgba(4,7,10,0.85);
+}
 
 #bgmenu input[type=range] {
   -webkit-appearance: none; appearance: none; width: 100%; height: 18px;
@@ -275,6 +286,14 @@ const WETS = [[0, 'DRY'], [0.5, 'DAMP'], [1, 'WET']];
 // beams off. Both are screenshot compositions, not places you can drive, and putting them
 // in a player-facing picker would read as the picker being broken. The five below all
 // configure a chase camera and place the car on a path at a cruise speed.
+// Car paint presets offered in the menu. Same three hexes scenes already use (orange / blue /
+// gold). Player choice sticks across scene changes: applyScene re-applies preferredPaint.
+const PAINTS = [
+  [0xd8420f, 'Flame'],
+  [0x1a5fd0, 'Cobalt'],
+  [0xe2b414, 'Sun'],
+];
+
 // Labels are short so the five chips sit on ONE line inside a 435 px card at 720p; the hour
 // each one picks is visible immediately below on the TIME OF DAY chips, so the label does not
 // have to carry it.
@@ -427,6 +446,15 @@ export function createMenu({ ctx, onStart } = {}) {
    * it the other way round leaves the scene's own bloom overriding the sky's, which is a
    * state boot can never produce.
    */
+  // Player paint sticks across scene changes. Scene setup() always calls setPaint for the
+  // shot harness; re-apply after setup so the menu choice wins.
+  let preferredPaint = 0xd8420f;
+  if (ctx.car && ctx.car.paintMat && ctx.car.paintMat.color) {
+    preferredPaint = ctx.car.paintMat.color.getHex(ctx.THREE
+      ? ctx.THREE.SRGBColorSpace
+      : undefined) || preferredPaint;
+  }
+
   function applyScene(id) {
     const sc = SCENES[id];
     if (!sc || !ctx.physics || !ctx.camRig) return;
@@ -443,6 +471,8 @@ export function createMenu({ ctx, onStart } = {}) {
     ctx.physics.clearPath();
     ctx.physics.setInput({ throttle: 0, brake: 0, steer: 0, boost: false, handbrake: false });
     ctx.hud.setVisible(true);
+
+    if (ctx.car && ctx.car.setPaint) ctx.car.setPaint(preferredPaint);
 
     if (ctx.applyWet) ctx.applyWet(sc.wet || 0);
     if (ctx.applyTimeOfDay) ctx.applyTimeOfDay(sc.timeOfDay || 'dusk');
@@ -481,11 +511,42 @@ export function createMenu({ ctx, onStart } = {}) {
   });
   wetRow.appendChild(wetSlider);
 
+  // ---- output cap (720p / 1080p) ----------------------------------------------
+  // Caps the WebGL drawing buffer; CSS still fills the window. 720 is the default budget;
+  // 1080 costs more fill-rate on large monitors but looks sharper when upscaled less.
+  const capRow = addRow('cap', 'Output resolution');
+  const capBtns = segment(capRow, [[720, '720p'], [1080, '1080p']], (v) => {
+    if (ctx.setInternalCap) ctx.setInternalCap(v);
+    if (ctx.frameStats) ctx.frameStats.reset();
+    repaintHud();
+    refresh();
+  });
+  capRow.appendChild(h('div', 'hint',
+    'internal render size; larger windows upscale from this cap.'));
+
+  // ---- car paint -------------------------------------------------------------
+  const paintRow = addRow('paint', 'Car paint');
+  const paintSeg = h('div', 'seg');
+  const paintBtns = PAINTS.map(([hex, label]) => {
+    const b = h('button', 'paint', label);
+    b.type = 'button';
+    b.dataset.value = String(hex);
+    b.style.background = `#${hex.toString(16).padStart(6, '0')}`;
+    b.addEventListener('click', () => {
+      preferredPaint = hex;
+      if (ctx.car && ctx.car.setPaint) ctx.car.setPaint(hex);
+      refresh();
+    });
+    paintSeg.appendChild(b);
+    return { b, value: hex };
+  });
+  paintRow.appendChild(paintSeg);
+
   // ---- resolution scale ------------------------------------------------------
   // This is the frame-rate control, so it shows its own consequence: the REAL drawing
   // buffer from ctx.renderSize() and a live fps figure. A scale slider with no readout is
   // unjudgeable - the player cannot tell 0.7 from 0.5 by looking at a 720p upscale.
-  const resRow = addRow('res', 'Render resolution - lower to buy frames');
+  const resRow = addRow('res', 'Render scale - lower to buy frames');
   const resSlider = document.createElement('input');
   resSlider.type = 'range';
   resSlider.min = '0.4'; resSlider.max = '1'; resSlider.step = '0.05';
@@ -616,11 +677,17 @@ export function createMenu({ ctx, onStart } = {}) {
     for (const { b, value } of wetBtns) b.classList.toggle('on', Math.abs(value - wet) < 0.03);
     if (document.activeElement !== wetSlider) wetSlider.value = String(wet);
 
+    const cap = ctx.getInternalCap ? ctx.getInternalCap() : 720;
+    for (const { b, value } of capBtns) b.classList.toggle('on', value === cap);
+
+    for (const { b, value } of paintBtns) b.classList.toggle('on', value === preferredPaint);
+
     const rs = ctx.getResScale ? ctx.getResScale() : 1;
     if (document.activeElement !== resSlider) resSlider.value = String(rs);
     const sz = ctx.renderSize ? ctx.renderSize() : null;
     resVal.innerHTML = sz
-      ? `<b>${sz.w}×${sz.h}</b> (${rs.toFixed(2)}) &nbsp; window ${sz.cssW}×${sz.cssH}`
+      ? `<b>${sz.w}×${sz.h}</b> cap ${sz.cap || cap}p · scale ${rs.toFixed(2)}`
+        + ` &nbsp; window ${sz.cssW}×${sz.cssH}`
       : `scale ${rs.toFixed(2)}`;
 
     // n >= 8 because the first couple of samples after an open are the rAF gap across

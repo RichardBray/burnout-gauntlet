@@ -74,7 +74,15 @@ if (want('audible')) {
   const files = await page.evaluate(async () => {
     const AC = window.AudioContext;
     const out = [];
-    for (const f of ['music/santa-in-a-hurry.mp3', 'music/stormy-weather.mp3', 'music/bring-me-up-higher.mp3']) {
+    // These filenames are duplicated from music.js's TRACKS, which is not exported and whose
+    // tracks() readout deliberately exposes id/title but not `file`. The soundtrack has already
+    // been replaced wholesale once (Epidemic Sound -> CC0, different names AND a different
+    // extension), so the list is asserted rather than assumed: a missing file throws here instead
+    // of being measured as silence, which would read as an audibility defect in the game.
+    for (const f of ['music/cc0-punk-rock-metal.mp3', 'music/cc0-metal-energetic.ogg',
+      'music/cc0-punk-flesh-and-blood.mp3']) {
+      const head = await fetch(f, { method: 'HEAD' });
+      if (!head.ok) throw new Error(`music file missing: ${f} (${head.status}) — this list is out of sync with music.js TRACKS`);
       const buf = await (await fetch(f)).arrayBuffer();
       const octx = new AC({ sampleRate: 44100 });
       const ab = await octx.decodeAudioData(buf);

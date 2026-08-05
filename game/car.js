@@ -2117,10 +2117,14 @@ export function createCar(rng, { paint = 0xd8420f } = {}) {
   }
 
   // ---- interior buck (dim, read through the glass) -----------------------
+  // Keep every interior solid under the glass. The roof crown peaks ~1.40 and the pane
+  // sits ~11 mm inside that, so anything above ~1.28 at cabin z pokes through the
+  // canopy and reads as a black block on the rear deck in chase cam (seat backs used
+  // to top out at y 1.54; the roll hoop radius 0.60 topped at ~1.55).
   const interior = new THREE.Group();
   shell.add(interior);
-  const tub = new THREE.Mesh(new THREE.BoxGeometry(1.42, 0.62, 2.05), interiorMat);
-  tub.position.set(0, 0.86, -0.25);
+  const tub = new THREE.Mesh(new THREE.BoxGeometry(1.42, 0.55, 2.05), interiorMat);
+  tub.position.set(0, 0.82, -0.25);
   interior.add(tub);
   const dash = new THREE.Mesh(new THREE.BoxGeometry(1.34, 0.20, 0.42), interiorMat);
   dash.position.set(0, 1.02, 0.72);
@@ -2128,10 +2132,11 @@ export function createCar(rng, { paint = 0xd8420f } = {}) {
   interior.add(dash);
   for (const s of [-1, 1]) {
     const base = new THREE.Mesh(new THREE.BoxGeometry(0.44, 0.13, 0.50), seatMat);
-    base.position.set(s * 0.34, 0.98, -0.12);
+    base.position.set(s * 0.34, 0.96, -0.12);
     interior.add(base);
-    const back = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.60, 0.14), seatMat);
-    back.position.set(s * 0.34, 1.24, -0.40);
+    // Top of back ~1.22 at z=-0.38, under the ~1.39 roofline.
+    const back = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.42, 0.14), seatMat);
+    back.position.set(s * 0.34, 1.12, -0.38);
     back.rotation.x = -0.20;
     interior.add(back);
   }
@@ -2139,8 +2144,9 @@ export function createCar(rng, { paint = 0xd8420f } = {}) {
   wheelRim.position.set(0.34, 1.10, 0.50);
   wheelRim.rotation.x = 1.16;
   interior.add(wheelRim);
-  const rollBar = new THREE.Mesh(new THREE.TorusGeometry(0.60, 0.030, 8, 20, Math.PI), trimMat);
-  rollBar.position.set(0, 0.95, -0.60);
+  // Half-hoop under the roof; major radius 0.32 keeps the crest ~1.22.
+  const rollBar = new THREE.Mesh(new THREE.TorusGeometry(0.32, 0.024, 8, 20, Math.PI), trimMat);
+  rollBar.position.set(0, 0.90, -0.55);
   interior.add(rollBar);
 
   // Rigid front-clip props (grille, splitter, lamp pods). These are static children of

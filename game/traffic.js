@@ -109,8 +109,15 @@ const LINE_LAT_MAX = 210; // ignore road lines further sideways than this
 const SPAWN_PER_FRAME = 4;
 
 // ---- lateral behaviour ------------------------------------------------------------------
-const SHY_LAT = 1.2;      // m of shy when the hero comes past from behind
-const EVADE_LAT = 3.2;    // m of shy when the hero comes at me head-on (clamped by the line)
+// TRAFFIC BARELY REACTS TO THE HERO, and that is a deliberate reversal. An earlier round
+// measured max lane error 0.000 m with the whole population coming head-on, called the
+// reaction non-existent, and the fix (SHY 1.2 m, EVADE 3.2 m at 7 m/s of lateral rate) put
+// more than a lane width of dodge under the player - which reads on screen as the traffic
+// swerving out of the way, i.e. the road parting for you. Playing it, that is worse than
+// scenery: it removes the thing you were about to hit. These values keep a flinch that is
+// visible up close and invisible at range; the 0.000 m finding is knowingly re-accepted.
+const SHY_LAT = 0;        // m of shy when the hero comes past from behind - none, by choice
+const EVADE_LAT = 0.8;    // m of shy when the hero comes at me head-on (clamped by the line)
 const OVERTAKE_LAT = 2.6; // m of shy to get round a body that is not going to move
 const OVERTAKE_STALL = 2.0; // s stopped behind that body before I go round it
 const OVERTAKE_HOLD = 4.0;  // s the manoeuvre is held for once armed, so it cannot oscillate
@@ -481,6 +488,8 @@ export function createTraffic(scene, { rng, layout, blocks = [], roadKit } = {})
 
   // ---- state -----------------------------------------------------------------------------
   let night = false;
+  let onPass = null;        // fired at the OPENING of a near-miss pass; see the call site
+  let statics = [];         // world.js's parked bodies, for pass audio only; see update()
   const _hero = new THREE.Vector3();
 
   function writeMatrices() {
@@ -608,6 +617,22 @@ export function createTraffic(scene, { rng, layout, blocks = [], roadKit } = {})
     eventsTotal() { return eventsTotal; },
 
     /**
+     * Called with `{ side, relSpeed, clearance }` the frame a near-miss pass OPENS - the
+     * air-drag whoosh. Push, not pull, and separate from `drainEvents` because that queue is
+     * drain-on-read with physics.js as its single owner; see the call site for both reasons.
+     * Optional: left unset, traffic is silent on passes and nothing else changes.
+     */
+    setPassListener(fn) { onPass = typeof fn === 'function' ? fn : null; },
+
+    /**
+     * The STATIONARY bodies (world.parkedCars) that should also make a pass whoosh. Optional:
+     * left unset, only the moving population is audible. Scanned linearly per frame with a
+     * squared-distance reject, which is why no spatial index ships with it - at the shipped
+     * density this is ~440 bodies and the reject discards nearly all of them.
+     */
+    setStaticBodies(list) { statics = Array.isArray(list) ? list : []; },
+
+    /**
      * Move the live population ceiling at runtime, so the POOL decision can be A/B'd inside one
      * boot instead of being argued from a constant. Clamped to POOL_CAP because that is the
      * instanced capacity the meshes were allocated with.
@@ -665,6 +690,36 @@ export function createTraffic(scene, { rng, layout, blocks = [], roadKit } = {})
       const heroFx = Math.sin(heroYaw), heroFz = Math.cos(heroYaw);
       const step = clamp(dt, 0, 0.05);
       hpx = hx; hpz = hz; hfx = heroFx; hfz = heroFz;
+
+      // ---- passes on the STATIONARY population ---------------------------------------------
+      // The kerb ranks are world.js's, not this pool's, so none of the machinery below sees
+      // them and a run down a parked street was silent. Same trigger and same radius as a
+      // moving pass, so one kerb car and one moving car passed equally close sound alike.
+      //
+      // Deliberately whoosh-only: no 'check', no boost event, no IDM. These are scenery with
+      // a sound, and paying boost for them would re-price the whole economy off a population
+      // that is ~440 bodies dense along every kerb in the city.
+      if (onPass && statics.length && Math.abs(heroSpeed) > EVENT_SPEED_MIN) {
+        for (const b of statics) {
+          const dx = b.x - hx, dz = b.z - hz;
+          // Cheap reject first: everything here is static, so most of the population is
+          // nowhere near the hero on any given frame and never needs the exact test.
+          if (dx * dx + dz * dz > 400) { b.nmOn = false; continue; }
+          // Exact point-to-rotated-box, in the body's own frame. Lateral axis is (fz, -fx),
+          // matching how world.js places the wheels.
+          const along = Math.abs(dx * b.fx + dz * b.fz) - b.halfLen;
+          const lat = Math.abs(dx * b.fz - dz * b.fx) - b.halfWid;
+          const clr = Math.hypot(Math.max(along, 0), Math.max(lat, 0)) - HERO_HALF_W;
+          if (clr < NEAR_MISS_R) {
+            if (!b.nmOn) {
+              b.nmOn = true;
+              // Stationary, so relative speed IS the hero's speed and the side is fixed.
+              const side = Math.sign(dx * -heroFz + dz * heroFx) || 1;
+              onPass({ side, relSpeed: Math.abs(heroSpeed), clearance: Math.max(clr, 0) });
+            }
+          } else if (clr > NEAR_MISS_R + NEAR_MISS_OUT) b.nmOn = false;
+        }
+      }
 
       // ---- retire ------------------------------------------------------------------------
       for (const v of pool) {
@@ -953,7 +1008,23 @@ export function createTraffic(scene, { rng, layout, blocks = [], roadKit } = {})
         const vvz = a0 ? 0 : v.dir * v.speed;
         const rel = Math.hypot(hvx - vvx, hvz - vvz);
         if (clr < NEAR_MISS_R && heroFast) {
-          if (!v.nmOn) { v.nmOn = true; v.nmMin = clr; v.nmRel = rel; v.nmHit = false; v.nmOnc = false; }
+          if (!v.nmOn) {
+            v.nmOn = true; v.nmMin = clr; v.nmRel = rel; v.nmHit = false; v.nmOnc = false;
+            // THE WHOOSH FIRES HERE, at the OPENING of the pass, and deliberately not from
+            // the event queue below. `closePass` is gated on clearance re-opening past
+            // NEAR_MISS_R + NEAR_MISS_OUT, which measures 127 ms late at the median and 225
+            // at p90 - audibly attached to the wrong car. From here the sound's own attack
+            // covers the approach and peaks about where the car actually is.
+            //
+            // This is a plain callback and NOT a second event type on purpose: `drainEvents`
+            // is drain-on-read and physics.js owns the only drain (main.js), so anything
+            // pushed there to make a noise would be silently spent as boost income instead.
+            if (onPass) {
+              // +1 = going by on the driver's right. right = forward x up = (-fz, 0, fx).
+              const side = Math.sign((v.pos.x - hx) * -heroFz + (v.pos.z - hz) * heroFx) || 1;
+              onPass({ side, relSpeed: rel, clearance: clr });
+            }
+          }
           if (clr <= v.nmMin) {
             v.nmMin = clr;
             // against my lane direction at the closest point = an oncoming pass

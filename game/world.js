@@ -2468,6 +2468,13 @@ export function createWorld(scene, { rng, roadKit }) {
   let parkPop = 'rank';
   const parkCounts = { rank: 0, queue: 0, culled: 0 };
 
+  // The stationary population's BODIES, kept on the CPU. Everything else about a parked car
+  // lives only in an InstancedMesh matrix, which the GPU can draw and nothing can query - so
+  // traffic.js's near-miss test, which is what makes a pass audible, could not see any of
+  // them and driving past a kerb rank was silent. 436 bodies at the shipped NPC_DENSITY, so
+  // consumers can scan this linearly per frame and no spatial index is warranted.
+  const parkedBodies = [];
+
   function parkedCar(x, z, ry) {
     parkCounts[parkPop]++;
     const col = rngPick(R, carColors);
@@ -2516,6 +2523,14 @@ export function createWorld(scene, { rng, roadKit }) {
     // wherever a pad outran the body that cast it. 2.5 x 1.0 half-extents give a
     // 5.0 x 2.0 m pad, i.e. the body plus a ~30 cm penumbra, locked to `ry`.
     shadowAt(x, z, 0.05, 2.5, 1.05, ry, 1.0);
+    // Half-extents are the body boxes above, halved: 4.90 x 1.92 van, 4.40 x 1.82 otherwise.
+    // `fx`/`fz` are stored rather than the yaw so a consumer does not repeat the trig, and
+    // the LATERAL axis is (fz, -fx) - the same convention the wheel placement above uses.
+    parkedBodies.push({
+      x, z, fx, fz,
+      halfLen: van ? 2.45 : 2.20,
+      halfWid: van ? 0.96 : 0.91,
+    });
   }
   // Parking geometry, all measured off the road centreline:
   //   road surface +-HALF (10 m), paved shoulder to 11.6, kerb face at 13.
@@ -3060,7 +3075,7 @@ export function createWorld(scene, { rng, roadKit }) {
     group, LAYOUT, paths, blocks, buildings, neons, lampPositions, lamps,
     buildingMats, roadKit, atmo, towers,
     // The STATIONARY vehicle population, split by mechanism. traffic.js owns the moving one.
-    carKit, parkedCounts: parkCounts,
+    carKit, parkedCounts: parkCounts, parkedCars: parkedBodies,
     /** What the spatial chunking pass did, so a harness can assert it actually ran. */
     chunkStats,
     // ---- OBJECTS THE SSAO NORMAL/DEPTH PREPASS MUST NOT SEE -------------------------------

@@ -278,7 +278,12 @@ export const TUNE = {
   // below closes that 2.25x gap from the tyre model's own numbers rather than from a fudge factor.
   minRadius: 11.5,      // m at low speed; measured 11.4 m and 62.6 deg/s at the peak
   steerMax: 0.40,       // rad, the MECHANICAL lock limit (23 deg); normally not the binding one
-  steerRate: 10,        // 1/s the smoothed steer chases the input; keyboard is binary
+  // 10 -> 16 on the user's report that the steering is not sharp enough. This is INPUT smoothing,
+  // not grip: with a binary keyboard the old 10/s spent ~100 ms of every corner entry winding the
+  // virtual wheel, which reads as lag in the hands before the tyre model is even consulted. It
+  // cannot destabilise anything the servo does not already cover, because the steady-state angle
+  // is unchanged - only the time to reach it moves.
+  steerRate: 16,        // 1/s the smoothed steer chases the input; keyboard is binary
   // YAW-RATE SERVO on the steering angle: this is the hands, and it is what a human does that a
   // feed-forward angle cannot. Open loop, the angle is solved for a steady state that does not
   // exist yet, so at 60 m/s the yaw rate (fast) outruns the sideslip (slow), both axles saturate,
@@ -381,9 +386,17 @@ export const TUNE = {
   // approached at `handbrakeAssist` 1/s through the same rHold identity as the drift, so holding
   // Space plus lock gives the same readable ~34 deg slide at 80 km/h and at 250 km/h. The old
   // handbrakeAssist (0.25) was a raw yaw-rate gain; this one is a rate of angle approach in 1/s.
+  // SHARPNESS, on the user's report that the handbrake turn is not sharp enough. The DEPTH is not
+  // the problem and is not touched: 0.55 rad = 31.5 deg matches the 32-35 deg measured in real
+  // play, and deepening it is what produced the 78 deg flat spin documented above. What was slow
+  // is how fast that angle ARRIVES. `handbrakeAssist` 1.60 -> 3.20 halves the time constant from
+  // ~0.6 s to ~0.3 s, and `handbrakeRate` 0.75 -> 1.60 lifts the rate limiter that was the actual
+  // binding constraint on entry - at 0.75 rad/s the first 200 ms closed only about a quarter of
+  // the angle error, so the car rotated into the slide over half a second instead of snapping.
+  // Neither changes the sustained slide, so the anti-pirouette guard and spinDamp are untouched.
   handbrakeSlip: 0.55,      // rad, 31.5 deg at full lock; measured 32-35 deg reached in play
-  handbrakeAssist: 1.60,    // 1/s the slip angle approaches handbrakeSlip
-  handbrakeRate: 0.75,      // rad/s the angle command may add on top of the sustaining rate
+  handbrakeAssist: 3.20,    // 1/s the slip angle approaches handbrakeSlip
+  handbrakeRate: 1.60,      // rad/s the angle command may add on top of the sustaining rate
   handbrakeGain: 9.0,       // yaw-rate servo gain used to achieve the commanded rate
   // OVER-ROTATION DAMPER. Exactly zero while the yaw rate is at or under the rate the car is
   // ENTITLED to, so it cannot touch ordinary cornering, ever — which is the property that makes it
