@@ -56,6 +56,9 @@ const C_READY = { core: '#d4e68e', edge: '#5fc51c', tip: '#ebf5b9', glow: 'rgba(
 const C_BURN = { core: '#e6f4bc', edge: '#8ade2c', tip: '#f8ffe8', glow: 'rgba(236,255,190,1.0)' };
 const C_CHAIN = { core: '#ffb347', edge: '#e2761b', tip: '#fff2cd', glow: 'rgba(255,150,40,0.95)' };
 const C_DEAD = { core: '#4a5560', edge: '#232a31', tip: '#78848f', glow: 'rgba(0,0,0,0)' };
+// Denied flash: a boost press the full-bar rule refused. Amber, not red - it means
+// "not full yet", not "broken".
+const C_DENIED = { core: '#ffcf5e', edge: '#d98a12', tip: '#ffe9b0', glow: 'rgba(255,190,70,0.9)' };
 
 // Additive bloom for the flame: [blur radius as a fraction of the body height,
 // weight]. Radii are relative so the halo keeps its reach at any resolution.
@@ -69,7 +72,11 @@ const C_DEAD = { core: '#4a5560', edge: '#232a31', tip: '#78848f', glow: 'rgba(0
 // behind an opaque body that tail is what the measurement sees.
 const BOOST_BLOOM = [[0.18, 0.20, true], [0.075, 0.14], [0.030, 0.14]];
 
-const READY_AT = 0.34;   // boost fraction at which the bar can be fired
+// Boost fraction at which the bar reads as fireable. WAS 0.34, which lied: physics.js's
+// full-bar rule (boost >= 0.999) is the actual gate, so the bar pulsed "ready" at a third
+// of a tank and the button did nothing - the exact "I press boost and nothing happens"
+// report. 0.97 keeps the smoothstep window while reading full-only.
+const READY_AT = 0.97;
 const STREETS_EW = ['GLANCEY', 'HAMILTON', 'LAMBERT', 'ROOT', 'ANGUS', 'MANNERS', 'NAKAMURA'];
 const STREETS_NS = ['PARADISE', 'MORTON', 'YOUNG', 'HARBER', 'FRY', 'WEBSTER', 'CRAWFORD'];
 // The reference street plate never stands alone: it always carries the objective's
@@ -132,6 +139,7 @@ export function createHud(container, { layout, maxPixelRatio = 1, attached = tru
   let shownBoost = 0;      // 0..1
   let readyPulse = 0;      // 0..1 glow on the charged state
   let burnMix = 0;         // 0..1 blend into the "burning" look
+  let deniedMix = 0;       // 0..1 denied-press flash, driven by physics' boostDenied pulse
   let chainMix = 0;        // 0..1 blend into the burnout-chain look
   let damageMix = 0;       // 0..1 body damage
   let crashMix = 0;        // 0..1 wrecked overlay
@@ -509,6 +517,9 @@ export function createHud(container, { layout, maxPixelRatio = 1, attached = tru
     let c = mixCol(C_CHARGE, C_READY, ready);
     c = mixCol(c, C_BURN, burnMix);
     c = mixCol(c, C_CHAIN, chainMix);
+    // Denied press: flash amber to say "not full yet". Under burn/chain in priority (a denied
+    // press cannot happen while burning, but the mixes decay slower than the pulse rises).
+    c = mixCol(c, C_DENIED, deniedMix * (1 - Math.max(burnMix, chainMix)));
     c = mixCol(c, C_DEAD, crashMix * 0.9);
     return c;
   }
@@ -2756,6 +2767,7 @@ export function createHud(container, { layout, maxPixelRatio = 1, attached = tru
 
     burnMix = damp(burnMix, boosting ? 1 : 0, 12, dt);
     chainMix = damp(chainMix, chain > 1 ? 1 : 0, 8, dt);
+    deniedMix = clamp(s.boostDenied ?? 0, 0, 1);   // physics decays the pulse; no double-smooth
     readyPulse = damp(readyPulse, shownBoost >= READY_AT ? 1 : 0, 8, dt);
 
     const crashed = !!s.crashed;

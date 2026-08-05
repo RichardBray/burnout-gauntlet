@@ -608,6 +608,8 @@ export async function boot() {
     sun.updateMatrixWorld();
   }
 
+  let lastBoostDenied = 0;   // previous frame's boostDenied pulse, for the blip edge
+
   function applyCarTransform() {
     const s = physics.state;
     carRoot.position.set(s.pos.x, s.pos.y, s.pos.z);
@@ -684,9 +686,12 @@ export async function boot() {
     // speedometer shows |v|; so does an engine whose wheels are being dragged sideways.
     const gspd = s.ground !== undefined ? s.ground : Math.abs(s.speed);
     hud.update(dt, {
-      speed: gspd, boost: s.boost, boosting: s.boosting,
+      speed: gspd, boost: s.boost, boosting: s.boosting, boostDenied: s.boostDenied,
       gear: gearOf(gspd), pos: s.pos, yaw: s.yaw, crashed: s.crashed,
     });
+    // Denied boost press: rising edge of physics' pulse -> one refusal blip.
+    if ((s.boostDenied || 0) > 0.9 && lastBoostDenied <= 0.9) audio.boostDenied();
+    lastBoostDenied = s.boostDenied || 0;
     audio.update(dt, {
       rpm01: rpmOf(gspd), load: clamp(0.25 + s.accelG * 0.09, 0, 1),
       throttle: clamp(0.25 + s.accelG * 0.09, 0, 1),

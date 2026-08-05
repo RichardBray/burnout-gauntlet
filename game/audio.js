@@ -1658,6 +1658,31 @@ export function createAudio({ enabled = true, volume = 0.62, space = 'city' } = 
     },
 
     /**
+     * Boost press refused by the full-bar rule: a short two-note "not yet" thunk. Falling
+     * minor-second dyad, low and dry, on busFx like every other event - it has to read as a
+     * deliberate refusal, not a glitch. Quiet by design: it fires on a button the player
+     * just pressed, so no distance or surprise to sell.
+     */
+    boostDenied() {
+      if (!running) return;
+      const now = ctx.currentTime;
+      const g = mkGain(1e-4);
+      g.gain.exponentialRampToValueAtTime(0.55, now + 0.012);
+      g.gain.exponentialRampToValueAtTime(1e-4, now + 0.16);
+      for (const [f0, f1] of [[330, 262], [165, 131]]) {
+        const o = ctx.createOscillator();
+        o.type = 'triangle';
+        o.frequency.setValueAtTime(f0, now);
+        o.frequency.exponentialRampToValueAtTime(f1, now + 0.10);
+        o.connect(g);
+        o.start(now); o.stop(now + 0.18);
+        o.onended = () => { try { o.disconnect(); } catch (e) { /* noop */ } };
+      }
+      g.connect(busFx.input);
+      setTimeout(() => { try { g.disconnect(); } catch (e) { /* noop */ } }, 400);
+    },
+
+    /**
      * Impact: body thud + sub, a bank of metallic resonances, a glass shard cloud and a
      * debris tail, with the CC0 crash layered underneath when it decoded.
      */

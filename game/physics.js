@@ -422,7 +422,23 @@ export const TUNE = {
   handbrakeTapChainWindow: 0.70, // s after a tap during which the next escalates
   handbrakeTapStackStep: 0.55,   // +55% assist/rate per extra tap (1 / 1.55 / 2.1 / 2.65 / 3.2)
   handbrakeTapStackMax: 5,       // hard cap so a mash cannot spin the car free
-  handbrakeTapDepthStep: 0.08,   // +8% commanded slip depth per stack level during the kick
+  handbrakeTapDepthStep: 0.15,   // +15% commanded slip depth per stack level; persists while the
+                                 // command is live (held or lingering), not just during the kick,
+                                 // so each tap in a chain durably tightens the turn radius
+  handbrakeTapDepthMax: 1.80,    // cap on the stack depth multiplier: 0.55 * 1.45 = 0.80 rad
+                                 // (~46 deg) commanded at full lock, still under the rate bound
+                                 // and yawRateMax guards below
+  handbrakeTapTurnRate: 0.85,    // rad/s of EXTRA sustained yaw-rate demand per stack level past
+                                 // the first, in the steer direction, while the command is live.
+                                 // Depth alone deepens the slide but barely changes how far the
+                                 // car ROTATES; this is the term that carries a 5-6 tap chain
+                                 // past 270 deg. It also FLOORS rWant in the steer direction so
+                                 // the slip-error correction cannot swing the servo against the
+                                 // rotation between taps (measured: -1.3 to -2.1 rad/s spikes
+                                 // mid-chain that ate half the heading the taps had earned).
+  handbrakeTapLingerStep: 1.10,  // +45% linger per stack level past the first: a deep chain
+                                 // carries its rotation after the last tap instead of the servo
+                                 // snapping the slide shut 0.36 s after Space comes up.
   // OVER-ROTATION DAMPER. Exactly zero while the yaw rate is at or under the rate the car is
   // ENTITLED to, so it cannot touch ordinary cornering, ever — which is the property that makes it
   // checkable rather than a tuning fudge. CORRECTION, wave-s round 2: the comment here used to say
@@ -657,11 +673,13 @@ export function createPhysics({ blocks = [], bounds = 1400 } = {}) {
     // acknowledge a near miss without having to watch the bar for a step change. Nothing reads it
     // yet; it costs one multiply per tick and it is the hook the boost economy needs to be legible.
     eventEarn: 0,
+    boostDenied: 0,  // 0..1 pulse on a boost press the full-bar gate refused; HUD/audio feedback
   };
 
   let input = { throttle: 0, brake: 0, steer: 0, boost: false, handbrake: false };
   let auto = null;
   let boostLatch = false;   // the full-bar gate: armed only from a full tank, held until empty
+  let boostPrev = false;    // last tick's boost button, for the denied-press edge
   // Seconds of "still in this contact". A boolean was not enough: the resolver puts the car exactly
   // ON the face, so the next substep often finds it a hair outside, the contact reads as released,
   // and the next one re-charges the full impact impulse. With the impulse fired once per genuine
@@ -1138,7 +1156,9 @@ export function createPhysics({ blocks = [], bounds = 1400 } = {}) {
       hbCmd = 1;
     } else {
       if (hbPrev && hbPressT > TUNE.handbrakeTapWindow) hbCmd = 0;
-      hbCmd = Math.max(0, hbCmd - h / TUNE.handbrakeTapLinger);
+      const linger = TUNE.handbrakeTapLinger
+        * (1 + Math.max(0, hbTapStack - 1) * TUNE.handbrakeTapLingerStep);
+      hbCmd = Math.max(0, hbCmd - h / linger);
       hbPressT = 0;
     }
     // Ease kick up, then decay the target and follow it down - never a hard 0→1 step into yaw.
@@ -1182,14 +1202,39 @@ export function createPhysics({ blocks = [], bounds = 1400 } = {}) {
       const rate = TUNE.handbrakeRate * boost;
       const gain = TUNE.handbrakeGain * (1 + (TUNE.handbrakeTapBoost - 1) * kick * 0.25);
       // Depth: full while held; fades with hbCmd after a short tap so linger is not a free deep slide.
-      const depthMul = 1 + Math.max(0, hbTapStack - 1) * TUNE.handbrakeTapDepthStep * kick;
+      // Stack depth rides the COMMAND envelope (held = 1, else the linger), not the kick, so a
+      // chain of taps holds its deeper angle for as long as the command is live - that is the
+      // "more taps = sharper turn" mechanic. Capped at handbrakeTapDepthMax so a mash cannot
+      // command an angle the rate bound below would let overshoot.
+      const depthEnv = handbrake ? 1 : hbCmd;
+      const depthMul = Math.min(TUNE.handbrakeTapDepthMax,
+        1 + Math.max(0, hbTapStack - 1) * TUNE.handbrakeTapDepthStep * depthEnv);
       const depth = TUNE.handbrakeSlip * (handbrake ? 1 : hbCmd) * depthMul;
       const want = depth * clamp(steerAbs, 0.30, 1) * Math.sign(state.steer || 1);
       // The correction is BOUNDED. Unbounded, rHold + assist*error asks for 2.3 rad/s at the moment
       // the e-brake bites, which is above yawRateMax, so the yaw rate saturated, the angle overshot
       // to 52-66 deg, and the scrub at that angle took 91% of the car's speed in two seconds. The
       // bound is the whole difference between a commanded slide and a pirouette.
-      const rWant = rHold + clamp((want - slipNow) * assist, -rate, rate);
+      // Stack turn authority: a sustained yaw-rate ADD in the steer direction, scaled by the
+      // chain level and the live command envelope. This is what turns a 5-6 tap chain past
+      // 180 deg: the depth term above sets how sideways the car is, this sets how fast the
+      // nose keeps coming round. It feeds rWant (servo-tracked, rate-bounded via its own term,
+      // still clipped by yawRateMax downstream), never yawRate directly.
+      // Fade the turn authority as the slip angle exceeds its own commanded depth: yaw the car
+      // is adding past that point is angle, not turn, and unfaded it ran the slip to 88 deg (a
+      // pirouette). Fully out by depth + 0.30 rad, so the chain rotates hard at its commanded
+      // slide angle and no deeper.
+      const slipExcess = clamp((Math.abs(slipNow) - depth) / 0.30, 0, 1);
+      const stackTurn = TUNE.handbrakeTapTurnRate * Math.max(0, hbTapStack - 1)
+        * depthEnv * (1 - slipExcess)
+        * clamp(steerAbs, 0.30, 1) * Math.sign(state.steer || 1);
+      let rWant = rHold + stackTurn + clamp((want - slipNow) * assist, -rate, rate);
+      // Floor: while the chain is live the servo may add rotation on top of stackTurn but never
+      // demand less than it - the slip-error term goes hard negative between taps (the angle
+      // overshoots its own command) and without the floor those corrections cancelled most of
+      // the rotation the chain had bought.
+      if (stackTurn > 0) rWant = Math.max(rWant, stackTurn);
+      else if (stackTurn < 0) rWant = Math.min(rWant, stackTurn);
       // Same feed-forward as the drift branch, and for the same reason: without it the tyre moment
       // is a standing disturbance the servo can only divide down, and with the rear mu cut that
       // moment is PRO-rotation, so the angle overshot its 26 deg command to 54 deg at 80 km/h and
@@ -1379,6 +1424,7 @@ export function createPhysics({ blocks = [], bounds = 1400 } = {}) {
       state.pos.copy(pos); state.yaw = yaw; state.speed = speed;
       state.steer = 0; state.slip = 0; state.lean = 0; state.pitch = 0;
       state.boost = 1; state.boosting = false; state.boostBlend = 0; state.boostKick = 0;
+      state.boostDenied = 0; boostPrev = false;
       state.crashed = false; state.vy = 0; state.airborne = false; state.distance = 0;
       state.vLat = 0; state.yawRate = 0; state.slipAngle = 0; state.drifting = false;
       state.chain = 0; state.impact = 0; state.accelG = 0; state.eventEarn = 0;
@@ -1481,6 +1527,11 @@ export function createPhysics({ blocks = [], bounds = 1400 } = {}) {
       // released; there is no metering a sliver of bar. This is the single change that most
       // alters the rhythm of play: boost becomes a resource you bank and dump.
       if (input.boost && !boostLatch && state.boost >= 0.999 && throttle > 0) boostLatch = true;
+      // Denied press: the button went down but the full-bar gate (or the throttle gate) refused
+      // it. Without this pulse the press is silently eaten and the button reads as broken - the
+      // HUD flashes the bar and audio blips off it. Rising edge only, decays below.
+      if (input.boost && !boostPrev && !boostLatch) state.boostDenied = 1;
+      boostPrev = !!input.boost;
       if (!input.boost || state.boost <= 0) boostLatch = false;
       const boosting = boostLatch && throttle > 0;
       const wasBoosting = state.boosting;
@@ -1492,6 +1543,7 @@ export function createPhysics({ blocks = [], bounds = 1400 } = {}) {
       state.boostKick = boosting
         ? state.boostKick * Math.exp(-dt / TUNE.boostKickTau)
         : Math.max(0, state.boostKick - dt * 4);
+      state.boostDenied = Math.max(0, state.boostDenied - dt * 2.5);   // ~0.4 s flash
 
       const driftAmount = clamp(Math.abs(state.slipAngle) / TUNE.slipRef, 0, 1);
 
