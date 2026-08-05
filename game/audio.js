@@ -1683,6 +1683,70 @@ export function createAudio({ enabled = true, volume = 0.62, space = 'city' } = 
     },
 
     /**
+     * NPC car horn at a head-on hero. Classic dual-tone (F#4/A#4 region) from two slightly
+     * detuned squares through a bandpass - the beat between them is what reads "car horn"
+     * rather than "synth chord". Per-call random detune so a street of honkers is a crowd,
+     * not a loop. `urgency` sets length: a startled blip vs leaning on it. Panned to the
+     * car's side, level scaled down with distance.
+     */
+    horn({ side = 0, urgency = 0.6, dist = 30 } = {}) {
+      if (!running) return;
+      const now = ctx.currentTime;
+      const dur = 0.22 + 0.7 * clamp(urgency, 0, 1);
+      const det = 0.96 + Math.random() * 0.08;              // per-car pitch identity
+      const lvl = 0.5 * clamp(1 - dist / 90, 0.25, 1);
+      const f = mkFilt('bandpass', 780 * det, 1.4);
+      const g = mkGain(1e-4);
+      g.gain.exponentialRampToValueAtTime(lvl, now + 0.02);
+      g.gain.setValueAtTime(lvl, now + dur - 0.06);
+      g.gain.exponentialRampToValueAtTime(1e-4, now + dur);
+      let tail = g;
+      if (side && ctx.createStereoPanner) {
+        const p = ctx.createStereoPanner();
+        p.pan.setValueAtTime(clamp(side * 0.7, -1, 1), now);
+        g.connect(p); tail = p;
+      }
+      for (const f0 of [370, 466]) {
+        const o = ctx.createOscillator();
+        o.type = 'square';
+        o.frequency.setValueAtTime(f0 * det, now);
+        // small downward drift as it goes by - cheap doppler read
+        o.frequency.linearRampToValueAtTime(f0 * det * 0.97, now + dur);
+        o.connect(f);
+        o.start(now); o.stop(now + dur + 0.02);
+        o.onended = () => { try { o.disconnect(); } catch (e) { /* noop */ } };
+      }
+      f.connect(g);
+      tail.connect(busFx.input);
+      setTimeout(() => { try { tail.disconnect(); g.disconnect(); f.disconnect(); } catch (e) { /* noop */ } }, (dur + 0.3) * 1000);
+    },
+
+    /**
+     * Boost bar just reached FULL: a bright rising two-note chime, the inverse of
+     * boostDenied's falling refusal. It answers the full-bar rule - the moment this plays,
+     * the button works. Same dry busFx event path, slightly louder than the refusal because
+     * it fires without a button press to anchor attention.
+     */
+    boostReady() {
+      if (!running) return;
+      const now = ctx.currentTime;
+      const g = mkGain(1e-4);
+      g.gain.exponentialRampToValueAtTime(0.7, now + 0.015);
+      g.gain.exponentialRampToValueAtTime(1e-4, now + 0.30);
+      for (const [f0, f1, dly] of [[523, 659, 0], [1046, 1318, 0.07]]) {
+        const o = ctx.createOscillator();
+        o.type = 'triangle';
+        o.frequency.setValueAtTime(f0, now + dly);
+        o.frequency.exponentialRampToValueAtTime(f1, now + dly + 0.09);
+        o.connect(g);
+        o.start(now + dly); o.stop(now + dly + 0.24);
+        o.onended = () => { try { o.disconnect(); } catch (e) { /* noop */ } };
+      }
+      g.connect(busFx.input);
+      setTimeout(() => { try { g.disconnect(); } catch (e) { /* noop */ } }, 600);
+    },
+
+    /**
      * Impact: body thud + sub, a bank of metallic resonances, a glass shard cloud and a
      * debris tail, with the CC0 crash layered underneath when it decoded.
      */
