@@ -1689,7 +1689,10 @@ export function createPhysics({ blocks = [], bounds = 1400 } = {}) {
         : Math.max(0, state.boostKick - dt * 4);
       state.boostDenied = Math.max(0, state.boostDenied - dt * 2.5);   // ~0.4 s flash
 
-      const driftAmount = clamp(Math.abs(state.slipAngle) / TUNE.slipRef, 0, 1);
+      // Only a FORWARD drift earns: reversing with the wheel cranked reads as a huge slip
+      // angle, so without the gate you could sit in a circle in reverse and farm the bar.
+      const driftAmount = state.speed > 1
+        ? clamp(Math.abs(state.slipAngle) / TUNE.slipRef, 0, 1) : 0;
 
       // ---- EVENT EARN. Paid whether or not the player is boosting, because in Paradise a near
       // miss taken mid-burn feeds a chain. Defensive about the payload on purpose: traffic.js is a

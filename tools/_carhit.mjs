@@ -74,6 +74,27 @@ const npc = (x, z, yaw, speed = 0) =>
   assert(Math.abs(a.state.speed - b.state.speed) < 1e-9, 'empty bodies list changes nothing');
 }
 
+// 4. Reverse drifting earns no drift boost: full lock in reverse for 4 s must not out-earn
+//    the plain cruise trickle of the same duration driven forward slowly.
+{
+  const run = (sign) => {
+    const p = createPhysics({ blocks: [], bounds: 1e9 });
+    p.state.boost = 0;
+    let earned = 0;
+    for (let t = 0; t < 3; t += DT) {
+      // hold the car in a deep slide by force each tick, forward or reverse
+      p.state.speed = 8 * sign; p.state.vLat = 8; p.state.slipAngle = 0.8 * sign;
+      const b0 = p.state.boost;
+      p.step(DT, { throttle: sign, brake: 0, steer: 1, boost: false, handbrake: false });
+      earned += Math.max(0, p.state.boost - b0);
+    }
+    return earned;
+  };
+  const fwdEarn = run(1), revEarn = run(-1);
+  assert(fwdEarn > revEarn * 2 && revEarn < fwdEarn,
+    `reverse slide earns far less than forward drift (fwd ${fwdEarn.toFixed(4)}, rev ${revEarn.toFixed(4)})`);
+}
+
 console.log('carhit: all checks passed');
 
 function assert(cond, label) {
