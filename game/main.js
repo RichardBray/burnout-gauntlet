@@ -910,17 +910,13 @@ export async function boot() {
   ctx.devtune = createDevTune({ physics, camRig });
 
   // ---- crash feel ------------------------------------------------------------
-  // Two knobs, named rather than inlined as magic numbers, and declared BEFORE the
-  // keydown listener below: boot still yields frames after that listener is registered,
-  // so a `const` declared later would be in its temporal dead zone if the player
-  // pressed C during the last few stages of loading.
-  //
   // CRASH_HOLD_S is how long the wreck replay runs before control returns.
-  // CRASH_DEMO_SEVERITY scales the C-key demo crash only: `severity` multiplies debris
-  // launch velocity, body spin on all three axes, the damage level and the camera kick
-  // (crash.js:1409-1428), so one number governs how BIG the wreck reads.
+  //
+  // CRASH_DEMO_SEVERITY used to sit here beside it, scaling the C-key demo crash. The C key was
+  // a development affordance for judging the crash effect and is gone (TASKS.md T17), and it was
+  // that constant's only caller, so it went with it. Real crashes are unaffected: they carry
+  // their own severity out of the physics contact (`physics.drainWreck()`), and always did.
   const CRASH_HOLD_S = 2.2;
-  const CRASH_DEMO_SEVERITY = 0.55;
 
   const keys = Object.create(null);
   const down = (e) => {
@@ -932,24 +928,13 @@ export async function boot() {
       traffic.reset(physics.state.pos);
       camRig.configure({ mode: 'chase' });
     }
-    if (e.code === 'KeyC' && !crash.active) {
-      const yaw = physics.state.yaw;
-      // The 30 m/s floor meant the demo crash was violent even from a standstill, which is
-      // why it read as oversized. Use the real speed, with a small floor so C still does
-      // something visible when parked.
-      crash.trigger({
-        speed: Math.max(12, Math.abs(physics.state.speed)),
-        dir: new THREE.Vector3(Math.sin(yaw), 0, Math.cos(yaw)),
-        severity: CRASH_DEMO_SEVERITY,
-      });
-      audio.crash(CRASH_DEMO_SEVERITY);
-      hud.banner('WRECKED', 1.4);
-      camRig.configure({
-        mode: 'orbit', orbitRadius: 10, orbitHeight: 3.2, orbitSpeed: 0.35,
-        orbitTarget: new THREE.Vector3(physics.state.pos.x, 0.95, physics.state.pos.z),
-        fov: 50, shake: 0.4,
-      });
-    }
+    // The KeyC manual-crash handler was here (TASKS.md T17). It fired crash.trigger(),
+    // audio.crash(), the WRECKED banner and an orbit camera on demand. The first three are
+    // SHARED with the genuine crash path below (the `physics.drainWreck()` join), so only the
+    // key handler itself was removed — deleting anything it called would break crashing outright.
+    // The ORBIT CAMERA was not shared, contrary to what T17 assumes: this block held the only
+    // `mode: 'orbit'` in the file, and the real wreck join leaves the camera to crash.js. So a
+    // real crash never orbited, and it still does not. Verified against f095b88 before deleting.
     if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space'].includes(e.code)) e.preventDefault();
   };
   const up = (e) => { keys[e.code] = false; };

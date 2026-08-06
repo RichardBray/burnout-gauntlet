@@ -797,7 +797,26 @@ export function createPhysics({ blocks = [], bounds = 1400 } = {}) {
       // to be pushed, not re-detected there: this resolver has already separated the
       // bodies and matched the speeds by the time traffic.update() runs, so its own
       // overlap test never sees the contact, let alone the pre-impact closing speed.
-      if (o) o.heroHit = { rel: Math.hypot(rvx, rvz), sev, kx: rvx, kz: rvz };
+      // THE STAMP NOW CARRIES THE CONTACT GEOMETRY, not just the relative velocity. traffic.js
+      // was reconstructing a shove from `(kx, kz)` alone, which is the FULL relative velocity —
+      // it has no way to tell a square rear-end from a corner clip, so every promoted car got
+      // the same push and a random spin sign. What a struck body actually needs is the split:
+      //   * `closing` — the component along the contact normal. This is the shove, and it is
+      //     what a momentum exchange is computed from. `rel` includes the tangential scrub,
+      //     which does not push the car away, so sizing the impulse off `rel` over-reads a
+      //     glancing blow and under-reads nothing.
+      //   * `nx, nz` — the normal, pointing from the body toward the hero. The body goes -n.
+      //   * `off` — where along the struck face the contact landed, as -1..1 of the face's own
+      //     half-extent. 0 is dead centre (pure shove), +-1 is a corner (maximum lever arm).
+      //     This is the term that makes a corner clip spin the car and a square hit not.
+      if (o) {
+        const tx = -nz, tz = nx;
+        const halfT = nx !== 0 ? hz : hx;   // half-extent ACROSS the struck face
+        o.heroHit = {
+          rel: Math.hypot(rvx, rvz), sev, kx: rvx, kz: rvz,
+          closing, nx, nz, off: clamp((dx * tx + dz * tz) / halfT, -1, 1),
+        };
+      }
       if (onTrafficHit) {
         // Contact point: the hero's face toward the body. Outgoing direction: the
         // tangential remainder of the relative velocity (what shunt() keeps), falling

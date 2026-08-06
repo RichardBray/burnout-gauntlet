@@ -143,6 +143,44 @@ const WRECK_REL = 13;       // m/s relative speed at contact that turns a shunt 
 const WRECK_HERO = 22.4;    // m/s (~50 mph) of hero speed above which any contact wrecks
 const WRECK_FRICTION = 6.5; // m/s^2 a sliding wreck sheds; ~2 s from a 13 m/s kick to rest
 const WRECK_SPIN_DECAY = 1.4; // 1/s exponential decay on a wreck's spin rate
+// ---- what a struck parked car receives ------------------------------------------------------
+// The user's report was "a parked car hit at driving speed does not move". It was not the
+// promotion path failing — that fires. MEASURED (tools/_t1-repro.mjs, before this block): a car
+// promoted at a 10 m/s closing speed travelled 1.55 m, and at 6 m/s it travelled 0.43 m, which
+// on screen is indistinguishable from bolted to the road. The old impulse was
+// `hit.kx * (0.35 + 0.35 * clamp(rel/30, 0, 1))`, i.e. between 35% and 70% of the relative
+// velocity, chosen by hand, with a RANDOM spin sign bolted on.
+//
+// It is a 1-D momentum exchange along the contact normal instead, which needs no tuning to be
+// roughly right and which makes the mass ratio legible:
+//     v_body = (1 + e) * m_hero / (m_hero + m_body) * closing
+// At the values below that is 0.70 of the closing speed, so a 10 m/s hit sends the car off at
+// 7.0 m/s and it slides 3.8 m before WRECK_FRICTION stops it, in 1.1 s.
+const HERO_MASS = 1500;     // TUNE.mass in physics.js. Duplicated as a constant rather than
+                            // imported: traffic.js must not depend on physics.js (main.js is the
+                            // only place the two are joined). Keep them in step by hand.
+const PARKED_MASS = 1400;   // a saloon; the hero is a little heavier, so it wins the exchange
+const PARKED_MASS_VAN = 1900;
+const WRECK_RESTITUTION = 0.35;  // 0 = perfectly inelastic. Sheet metal is not bouncy, but a
+                                 // fully inelastic exchange under-reads the shove a player expects
+                                 // from an arcade racer, and this is the knob for that.
+// Fraction of the TANGENTIAL relative velocity dragged into the car, so a side swipe scrubs the
+// car along its flank instead of only punching it square out.
+const WRECK_TANGENT = 0.35;
+// rad/s of spin per m/s of shove, at a full-corner contact (|off| = 1). A dead-square hit has
+// off = 0 and therefore no spin at all, which is the point: the rotation now comes from WHERE the
+// car was struck rather than from a coin flip.
+// 0.55 -> 0.30, measured, not guessed: at 0.55 a 10 m/s corner clip peaked at 183 deg/s and put
+// the car through 202 deg — more than a half-turn from one clip, which reads as a helicopter
+// rather than a shunt, and at WRECK_SPIN_DECAY it was still turning past the 2 s settle the task
+// asks for. 0.30 gives ~100 deg/s and about a quarter-turn, which reads as struck.
+const WRECK_SPIN_GAIN = 0.30;
+// Closing speed below which a contact does not promote the car at all. Was `hit.rel < 4`, which
+// is 14.4 km/h — the whole of the user's "a slow nudge does nothing" complaint lived under that
+// gate, and it was testing `rel` (which includes tangential scrub) rather than the closing speed
+// that actually shoves. 1.2 m/s is a parking-manoeuvre touch: below it the car should stay put,
+// and above it a 3 m/s nudge now moves it 34 cm, which reads.
+const PROMOTE_MIN_CLOSING = 1.2;
 const EVENT_CAP = 96;       // queue ceiling, so an undrained queue cannot grow without bound
 
 // ---- IDM (Treiber) ----------------------------------------------------------------------
@@ -886,7 +924,10 @@ export function createTraffic(scene, { rng, layout, blocks = [], roadKit } = {})
       for (const b of statics) {
         if (!b.heroHit) continue;
         const hit = b.heroHit; b.heroHit = null;
-        if (b.gone || !b.hide || hit.rel < 4) continue;
+        // `closing` is absent only on a stamp written by an older physics.js; fall back to `rel`
+        // so a mismatched pair degrades to the previous behaviour rather than to no promotion.
+        const closing = hit.closing !== undefined ? hit.closing : hit.rel;
+        if (b.gone || !b.hide || closing < PROMOTE_MIN_CLOSING) continue;
         // A dead slot if one exists; otherwise STEAL the farthest live non-wrecked car —
         // in normal play the pool is usually full, and "no slot free" must not read as a
         // parked car bolted to the road. The stolen car is far away by construction, so
@@ -915,10 +956,25 @@ export function createTraffic(scene, { rng, layout, blocks = [], roadKit } = {})
         slot.nmOn = false; slot.ctOn = true;  // already in contact; don't double-fire
         slot.endHold = 0; slot.stallT = 0; slot.otT = 0; slot.shove = 0; slot.shoveT = 0;
         slot.jIdx = -1; slot.jDist = 1e9; slot.hornT = 0;
-        const kick = clamp(hit.rel / 30, 0, 1);
-        slot.wvx = hit.kx * (0.35 + 0.35 * kick);
-        slot.wvz = hit.kz * (0.35 + 0.35 * kick);
-        slot.wspin = (rngRange(R, 0, 1) < 0.5 ? -1 : 1) * (1.0 + 3.0 * kick);
+        // ---- the impulse. See the WRECK_* block at the top of this file for the derivation.
+        // Normal component: a 1-D momentum exchange. The body leaves along -n, i.e. directly
+        // away from the hero, at a fixed share of the closing speed.
+        const mB = b.van ? PARKED_MASS_VAN : PARKED_MASS;
+        const vN = closing * (1 + WRECK_RESTITUTION) * HERO_MASS / (HERO_MASS + mB);
+        // Tangential component: whatever of the hero's relative velocity ran ALONG the struck
+        // face, dragged in at WRECK_TANGENT. This is what makes a side swipe slide the car down
+        // its own flank rather than punching it square off the kerb.
+        const nx = hit.nx || 0, nz = hit.nz || 0;
+        const tx = -nz, tz = nx;
+        const vT = (hit.kx * tx + hit.kz * tz) * WRECK_TANGENT;
+        slot.wvx = -nx * vN + tx * vT;
+        slot.wvz = -nz * vN + tz * vT;
+        // Spin from the LEVER ARM, not from a coin flip. `off` is where along the struck face
+        // the contact landed, -1..1 of that face's half-extent, so a dead-square rear-end has
+        // off = 0 and does not rotate the car at all while a corner clip spins it hard. The sign
+        // is the y-component of r x F: with r = t*off and F = -n*vN, and t = (-nz, nx), that
+        // reduces to -off*vN.
+        slot.wspin = -(hit.off || 0) * vN * WRECK_SPIN_GAIN;
         if (bodyMesh.instanceColor && b.col !== undefined) {
           tmpC.setHex(b.col, THREE.SRGBColorSpace);
           bodyMesh.setColorAt(slot.k * 2, tmpC);
