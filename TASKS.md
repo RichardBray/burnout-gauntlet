@@ -87,9 +87,22 @@ else without saying so.
   (`domLayer=true` at all three sizes above, since the buffer is capped and the window is not). The
   single-layer in-frame path only ever engages at a 720p window with `resScale` 1. Whether that is
   worth having at all is a question nobody has asked yet.
-- **`daytime-downtown` times out in `tools/shot.mjs`.** `window.__ready` never goes true, 60 s
-  timeout. Whether this predates wave 2 was NOT established - it wants a bisect. It blocks the
-  visual regression gate for that scene, which matters for T2.
+- ~~**`daytime-downtown` times out in `tools/shot.mjs`.**~~ **FIXED, wave 3.** It was never a
+  bisect job and it was never only one scene - `hud-overlay` was failing the same way and nobody
+  had noticed, because nothing renders all seven scenes in one go.
+
+  Cause: `--shot` boots with `createAudio({ enabled: false })`, which returns the headless no-op
+  shim in `audio.js`. That shim hand-listed its methods and had fallen behind the real api, so
+  `traffic.js`'s horn callback hit `audio.horn is not a function` at tick ~355 of 360 and killed
+  boot before `__ready`. Both failing scenes are `city`-path drives that get close enough to
+  oncoming traffic to trigger a honk; the other five never fire one.
+
+  It presented as a bare timeout because `index.html:56-59` catches boot failures into a hidden
+  `#err` div instead of rethrowing, so `shot.mjs` saw an empty error list and a stalled flag.
+  **That swallowing is the reason this looked unexplained for a whole wave.** `shot.mjs` now reads
+  `#err` on failure and prints the real stack, and the shim is a `Proxy` that answers any name
+  with a no-op so it cannot drift from the api again. `tools/_audio-shim-check.mjs` guards it.
+  All seven scenes in `scenes.js` render. **T2 is unblocked.**
 
 ### CARRIED-FORWARD WARNING: what T1 cost, and why
 

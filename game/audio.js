@@ -44,19 +44,34 @@ const SPEED_OF_SOUND = 343;
 // ---------------------------------------------------------------------------
 function makeNoop() {
   const f = () => {};
-  return {
+  // This used to hand-list every method, and it drifted: `horn()` was added to the real
+  // api and not to the shim, so every headless boot threw "audio.horn is not a function"
+  // mid-tick. index.html swallows boot errors into a hidden #err div, so the symptom was
+  // `tools/shot.mjs` timing out on daytime-downtown and hud-overlay with no error at all.
+  // A Proxy answers any name with a no-op, so the shim cannot fall behind the api again.
+  // Only the members whose RETURN VALUE is load-bearing are spelled out.
+  const known = {
     get running() { return false; },
     get suspended() { return true; },
     get ctx() { return null; },
     ready: Promise.resolve(false),
     enabled: false,
-    start: f, stop: f, update: f, crash: f, pass: f, gearShift: f, boostHit: f,
     // Same shape as the real api: -1 means "nothing was built". main.js calls this at boot.
     prewarm: () => -1,
-    setSpace: f, setListener: f, setEnabled: f, setVolume: f, getVolume: () => 0,
-    addRival: () => null, updateRival: f, removeRival: f,
+    getVolume: () => 0,
+    addRival: () => null,
     info: () => ({ mode: 'noop', running: false, state: 'closed', space: 'open', samples: 0, rivals: 0, sampleRate: 0 }),
   };
+  return new Proxy(known, {
+    get(t, k) {
+      if (k in t) return t[k];
+      // Never answer `then` with a function: that makes the shim thenable and any
+      // `await audio` would hang forever. Same for probes like Symbol.toPrimitive.
+      if (typeof k === 'symbol' || k === 'then') return undefined;
+      return f;
+    },
+    has: () => true,
+  });
 }
 
 // ---------------------------------------------------------------------------

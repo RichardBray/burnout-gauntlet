@@ -61,6 +61,11 @@ try {
 } catch (e) {
   failed = true;
   console.error(`FAILED ${scene}: ${e.message}`);
+  // index.html catches boot failures and writes them to a hidden #err div rather than
+  // rethrowing, so a boot that dies mid-tick presents here as a bare 60 s timeout with an
+  // empty error list. Read that div before giving up - it holds the real stack.
+  const boot = await page.evaluate('document.querySelector("#err")?.textContent || ""').catch(() => '');
+  if (boot.trim()) console.error(`boot error (#err):\n${boot.trim()}`);
 } finally {
   if (errors.length) console.error('page errors:\n' + errors.slice(0, 20).join('\n'));
   await browser.close();
