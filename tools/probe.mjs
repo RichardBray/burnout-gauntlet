@@ -42,7 +42,10 @@ const browser = await chromium.launch({
 const page = await browser.newPage({ viewport: { width: W, height: H }, deviceScaleFactor: 1 });
 page.on('console', (m) => console.log('[console]', m.text()));
 page.on('pageerror', (e) => console.log('[error]', String(e)));
-await page.goto(`http://127.0.0.1:${port}/index.html#scene=${scene}&shot=1`, { waitUntil: 'load' });
+// --hash appends extra URL-hash params verbatim, e.g. --hash cap=1080. Same flag, same meaning
+// as tools/shot.mjs's; the three harnesses are deliberately kept in sync.
+const extra = args.hash ? `&${String(args.hash).replace(/^[#&]/, '')}` : '';
+await page.goto(`http://127.0.0.1:${port}/index.html#scene=${scene}&shot=1${extra}`, { waitUntil: 'load' });
 await page.waitForFunction('window.__ready === true', null, { timeout: 60000 });
 const out = await page.evaluate(args.expr || '1');
 console.log(JSON.stringify(out, null, 2));

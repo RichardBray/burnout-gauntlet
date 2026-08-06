@@ -712,7 +712,27 @@ class SsaoPass extends Pass {
     //
     // What it WOULD cost, if it is ever pushed lower: at 0.25 the blur footprint reaches 16 screen
     // pixels and the contact term at the kerb line starts to bleed over the kerb.
-    const AO_SCALE = 0.5;
+    //
+    // ---- T10: THE SCALE IS PINNED TO AN ABSOLUTE HEIGHT, NOT TO A FRACTION OF THE OUTPUT. ----
+    // A constant 0.5 is the one term in this whole post chain that is genuinely sized in a
+    // FRACTION OF THE RENDER TARGET, and T10's audit is what found it. The AO buffer carries a 4x4
+    // rotation dither immediately box-blurred over that same 4x4, so the finest thing in the
+    // signal is 4 AO texels by construction. At a constant 0.5 that footprint is 8 screen pixels
+    // whatever the output size, which is 1.11% of frame height at 720p and 0.74% at 1080p: the
+    // SAME configuration produced a contact term half again as wide, relative to the picture, at
+    // the lower resolution. That is exactly the defect class the task describes, and it was the
+    // only member of the class in the build - the PCSS radius is in shadow-map texels off a
+    // fixed 4096 map, the bloom pyramid's offsets are in source-mip UV, and the sun halo is an
+    // analytic pow() on dot(view, sun). None of those three can see the render size at all.
+    //
+    // Pinning the AO buffer to a fixed HEIGHT makes its spatial content a fixed fraction of the
+    // frame instead. This is not a per-resolution fudge factor, it is the same principle as
+    // expressing a blur radius as an angle: one configuration, correct at both sizes. 1080p is
+    // unchanged (540/1080 = the old 0.5); 720p goes from 640x360 to 960x540, which is where the
+    // extra sharpness comes from. The clamp keeps it from ever exceeding full resolution on a
+    // window smaller than the target.
+    const AO_TARGET_H = 540;
+    const AO_SCALE = Math.min(1, AO_TARGET_H / Math.max(1, Math.round(height)));
     this._fullW = Math.max(1, Math.round(width));
     this._fullH = Math.max(1, Math.round(height));
     const w = Math.max(1, Math.round(width * AO_SCALE));
