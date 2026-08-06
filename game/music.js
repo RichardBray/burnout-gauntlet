@@ -41,8 +41,9 @@
 // 4. Respect the same click-to-unlock gesture as everything else. Nothing may
 //    autoplay before `unlock()`.
 //
-// The three files on disk in `game/music/`, ALL CC0 (see music/README.md for sources):
-//   cc0-punk-rock-metal.mp3, cc0-metal-energetic.ogg, cc0-punk-flesh-and-blood.mp3
+// The nine files on disk in `game/music/`, ALL CC0 and all loudness-normalised (see
+// music/README.md for sources, artists and the per-track figures): three rock, three electronic,
+// three pop. T7 added the pop and electronic sets and re-encoded everything to Ogg Vorbis.
 // The Epidemic Sound tracks this file was first written against are GONE: that licence covers
 // video, not interactive software. Do not reintroduce them.
 //
@@ -84,11 +85,38 @@
 // licensed for video, NOT for games, so they could not ship in a playable build at all. CC0 rather
 // than merely royalty-free is deliberate: no attribution obligation to carry, and nothing to
 // re-verify later. Note per-item verification is required on OpenGameArt — of eight rock/metal
-// candidates checked, five were CC-BY and only three were CC0.
+// candidates checked, five were CC-BY and only three were CC0. T7 hit the same rate and worse:
+// OpenGameArt's own advanced-search CC0 FILTER RETURNS CC-BY ITEMS, so the filter is a shortlist
+// and the licence has to be read off each item's page. Six of ten shortlisted candidates were
+// CC-BY 3.0/4.0 or OGA-BY and were dropped.
+//
+// T7 ADDED POP AND ELECTRONIC, three each, so no genre is a single song. Ordering interleaves the
+// genres rather than grouping them: the playlist advances linearly, and three punk tracks in a row
+// followed by three pop ones is a mixtape with two mood cliffs in it.
+//
+// EVERY FILE IS NOW .ogg AND EVERY FILE IS LOUDNESS-NORMALISED. See music/README.md for the
+// per-track figures; the short version is that the nine tracks arrived spread across 9.4 LU
+// (-8.4 to -17.8 LUFS integrated), which is the difference between a track that buries the engine
+// and one nobody can hear, and they now sit inside 1.2 LU of -12 LUFS.
 const TRACKS = [
-  { id: 'cc0-punk-rock-metal', title: 'Punk Rock Metal', file: 'music/cc0-punk-rock-metal.mp3' },
-  { id: 'cc0-metal-energetic', title: 'Metal Energetic', file: 'music/cc0-metal-energetic.ogg' },
-  { id: 'cc0-punk-flesh-and-blood', title: 'Flesh And Blood', file: 'music/cc0-punk-flesh-and-blood.mp3' },
+  { id: 'cc0-punk-rock-metal', title: 'Punk Rock Metal', artist: 'Kim Lightyear', genre: 'rock',
+    file: 'music/cc0-punk-rock-metal.ogg' },
+  { id: 'cc0-elec-night-prowler', title: 'Night Prowler', artist: 'section31', genre: 'electronic',
+    file: 'music/cc0-elec-night-prowler.ogg' },
+  { id: 'cc0-pop-jay', title: 'Jay', artist: 'Pro Sensory', genre: 'pop',
+    file: 'music/cc0-pop-jay.ogg' },
+  { id: 'cc0-metal-energetic', title: 'Metal Energetic', artist: 'Kim Lightyear', genre: 'rock',
+    file: 'music/cc0-metal-energetic.ogg' },
+  { id: 'cc0-elec-cyberpunk-moonlight-sonata', title: 'Cyberpunk Moonlight Sonata', artist: 'Joth',
+    genre: 'electronic', file: 'music/cc0-elec-cyberpunk-moonlight-sonata.ogg' },
+  { id: 'cc0-pop-lay-low', title: 'Lay Low', artist: 'Pro Sensory', genre: 'pop',
+    file: 'music/cc0-pop-lay-low.ogg' },
+  { id: 'cc0-punk-flesh-and-blood', title: 'Flesh And Blood', artist: 'Kim Lightyear', genre: 'rock',
+    file: 'music/cc0-punk-flesh-and-blood.ogg' },
+  { id: 'cc0-elec-back-in-the-80s', title: 'Back In The 80s', artist: 'HoliznaCC0',
+    genre: 'electronic', file: 'music/cc0-elec-back-in-the-80s.ogg' },
+  { id: 'cc0-pop-happy-dance', title: 'Happy Dance', artist: 'HoliznaCC0', genre: 'pop',
+    file: 'music/cc0-pop-happy-dance.ogg' },
 ];
 
 // Default music level. This is a GAIN on a commercially-mastered MP3, not a
@@ -261,14 +289,14 @@ export function createMusic() {
     // ---- readouts -----------------------------------------------------------
     tracks() {
       return TRACKS.map((t, i) => ({
-        id: t.id, title: t.title,
+        id: t.id, title: t.title, artist: t.artist, genre: t.genre,
         seconds: unlocked && i === index && el && Number.isFinite(el.duration) ? el.duration : undefined,
       }));
     },
     current() {
       const t = TRACKS[index];
       return {
-        index, id: t.id, title: t.title,
+        index, id: t.id, title: t.title, artist: t.artist, genre: t.genre,
         // `playing` is read off the ELEMENT, never off our intent flag: a stalled
         // or failed load must not report itself as playing.
         playing: !!(unlocked && el && !el.paused && !el.ended),
@@ -281,7 +309,7 @@ export function createMusic() {
       return {
         stub: false,
         unlocked, unlockCount, playing: c.playing,
-        index: c.index, id: c.id, title: c.title,
+        index: c.index, id: c.id, title: c.title, artist: c.artist,
         time: c.time, duration: c.duration,
         volume: vol,
         gainValue: musicGain ? musicGain.gain.value : 0,

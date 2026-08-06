@@ -16,7 +16,7 @@ import { extname, join, dirname, resolve } from 'node:path';
 import { chromium } from 'playwright';
 
 const root = resolve(dirname(new URL(import.meta.url).pathname), '../game');
-const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.json': 'application/json', '.png': 'image/png', '.jpg': 'image/jpeg', '.hdr': 'application/octet-stream', '.mp3': 'audio/mpeg' };
+const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.json': 'application/json', '.png': 'image/png', '.jpg': 'image/jpeg', '.hdr': 'application/octet-stream', '.mp3': 'audio/mpeg', '.ogg': 'audio/ogg' };
 const server = createServer(async (req, res) => {
   try {
     const rel = decodeURIComponent(req.url.split('?')[0].split('#')[0]);

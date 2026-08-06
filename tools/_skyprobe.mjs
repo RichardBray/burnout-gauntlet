@@ -13,7 +13,7 @@ const scene = args.scene || 'dusk-highway-chase';
 const root = resolve(dirname(new URL(import.meta.url).pathname), '../game');
 const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/javascript',
   '.css': 'text/css', '.json': 'application/json', '.png': 'image/png', '.jpg': 'image/jpeg',
-  '.glb': 'model/gltf-binary', '.mp3': 'audio/mpeg', '.wav': 'audio/wav', '.svg': 'image/svg+xml' };
+  '.glb': 'model/gltf-binary', '.mp3': 'audio/mpeg', '.ogg': 'audio/ogg', '.wav': 'audio/wav', '.svg': 'image/svg+xml' };
 const server = createServer(async (req, res) => {
   try {
     const p = decodeURIComponent(req.url.split('?')[0]);

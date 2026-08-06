@@ -24,7 +24,7 @@ const root = resolve(here, '../game');
 const outDir = resolve(here, '../shots/audio');
 await mkdir(outDir, { recursive: true });
 
-const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.mp3': 'audio/mpeg' };
+const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.mp3': 'audio/mpeg', '.ogg': 'audio/ogg' };
 const server = createServer(async (req, res) => {
   try {
     const p = decodeURIComponent(req.url.split('?')[0]);

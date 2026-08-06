@@ -5,7 +5,7 @@ import { extname, join, dirname, resolve } from 'node:path';
 import { chromium } from 'playwright';
 
 const root = resolve(dirname(new URL(import.meta.url).pathname), '../game');
-const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.mp3': 'audio/mpeg', '.png': 'image/png' };
+const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.mp3': 'audio/mpeg', '.ogg': 'audio/ogg', '.png': 'image/png' };
 const server = createServer(async (req, res) => {
   try {
     const p = decodeURIComponent(req.url.split('?')[0]);

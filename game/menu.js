@@ -258,9 +258,19 @@ function injectStyle() {
 }
 #bgmenu .trans button:hover { background: rgba(232,240,248,0.22); color: #fff; }
 #bgmenu .trans button.wide { min-width: 96px; text-align: center; }
+/* T7 now-playing panel. It replaced a row of one chip per track, which does not survive a
+   playlist growing from three tracks to nine: the chips wrapped to three lines and the block
+   stopped being a control and started being a table of contents. */
 #bgmenu .now { font: 700 11px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
   color: rgba(232,240,248,0.86); }
 #bgmenu .now b { color: ${AMBER_HOT}; }
+#bgmenu .np { display: flex; align-items: baseline; gap: 8px; margin: 2px 0 0; min-height: 17px; }
+#bgmenu .np .t { font: 800 13px/1.3 "Helvetica Neue", Helvetica, Arial, sans-serif;
+  color: ${AMBER_HOT}; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#bgmenu .np .a { font: 600 11px/1.3 "Helvetica Neue", Helvetica, Arial, sans-serif;
+  color: rgba(232,240,248,0.62); white-space: nowrap; }
+#bgmenu .np .g { margin-left: auto; font: 800 9px/1 "Helvetica Neue", Helvetica, Arial, sans-serif;
+  letter-spacing: 0.16em; text-transform: uppercase; color: rgba(232,240,248,0.45); }
 #bgmenu .seg button.sc { text-transform: none; letter-spacing: 0.06em; }
 `;
   document.head.appendChild(el);
@@ -551,10 +561,15 @@ export function createMenu({ ctx, onStart } = {}) {
 
   inner.appendChild(h('div', 'rule'));
   const musRow = addRow('music', 'Soundtrack');
-  // Track chips. The value is the playlist INDEX, so this list is generated from
-  // music.tracks() and cannot drift from what the module will actually play.
-  const trackBtns = segment(musRow, music.tracks().map((t, i) => [i, t.title]),
-    (i) => { music.unlock(); music.play(i); refresh(); }, 'sc');
+  // T7: ONE TRACK SHOWN AT A TIME, reached with prev/play/next. The row of per-track chips that
+  // used to live here was fine for three tracks and is wrong for nine - it wrapped onto three
+  // lines and turned a transport into an index. Nothing is lost: the playlist wraps in both
+  // directions, so every track is still reachable from here.
+  const npTitle = h('div', 't', '');
+  const npArtist = h('div', 'a', '');
+  const npGenre = h('div', 'g', '');
+  const np = h('div', 'np');
+  np.append(npTitle, npArtist, npGenre);
   const trans = h('div', 'trans');
   const bPrev = h('button', null, '◀◀');
   const bPlay = h('button', 'wide', 'Play');
@@ -567,7 +582,7 @@ export function createMenu({ ctx, onStart } = {}) {
   bNext.addEventListener('click', () => { music.unlock(); music.next(); refresh(); });
   bPlay.addEventListener('click', () => { music.unlock(); music.toggle(); refresh(); });
   const nowVal = h('div', 'now');
-  musRow.append(trans, nowVal);
+  musRow.append(np, trans, nowVal);
 
   // ---- volumes: TWO sliders, deliberately -------------------------------------
   // Music runs on its own AudioContext and its own gain straight to `destination`
@@ -660,7 +675,9 @@ export function createMenu({ ctx, onStart } = {}) {
     // ---- soundtrack. Read from music.js's own state, never from what we last clicked ----
     const cur = music.current();
     const inf = music.info();
-    for (const { b, value } of trackBtns) b.classList.toggle('on', value === cur.index);
+    npTitle.textContent = cur.title || '';
+    npArtist.textContent = cur.artist ? `- ${cur.artist}` : '';
+    npGenre.textContent = cur.genre || '';
     bPlay.textContent = cur.playing ? 'Pause' : 'Play';
     if (!inf.unlocked) {
       nowVal.innerHTML = 'starts on <b>DRIVE</b> - browsers need a click first';

@@ -10,7 +10,7 @@ import { chromium } from 'playwright';
 
 const here = dirname(new URL(import.meta.url).pathname);
 const root = resolve(here, '../game');
-const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.mp3': 'audio/mpeg', '.png': 'image/png', '.md': 'text/plain' };
+const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.mp3': 'audio/mpeg', '.ogg': 'audio/ogg', '.png': 'image/png', '.md': 'text/plain' };
 const server = createServer(async (req, res) => {
   try {
     const p = decodeURIComponent(req.url.split('?')[0]);

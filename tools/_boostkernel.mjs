@@ -11,7 +11,7 @@ const root = resolve(dirname(new URL(import.meta.url).pathname), '../game');
 const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css',
   '.json': 'application/json', '.png': 'image/png', '.jpg': 'image/jpeg', '.hdr': 'application/octet-stream',
   '.exr': 'application/octet-stream', '.glb': 'model/gltf-binary', '.ktx2': 'application/octet-stream',
-  '.mp3': 'audio/mpeg', '.svg': 'image/svg+xml' };
+  '.mp3': 'audio/mpeg', '.ogg': 'audio/ogg', '.svg': 'image/svg+xml' };
 const server = createServer(async (req, res) => {
   try {
     const p = decodeURIComponent(req.url.split('?')[0]);
