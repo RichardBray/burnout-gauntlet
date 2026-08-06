@@ -235,20 +235,22 @@ Gated only on wave 1 landing:
 
 ### Wave 3 - polish. T10 DONE, the rest NOT STARTED.
 
-- **T15**, gamepad. NOT STARTED. After T14, since it hooks the same capture-phase key handling.
-  **The user has no pad available.** TASKS' own acceptance criteria say an untested gamepad
-  implementation is worthless, and that stands: whoever builds this either gets a pad or ships it
-  explicitly marked unverified. Do not let it land quietly as "done".
+- **T15**, gamepad. **DEFERRED, not skipped - asked and answered 2026-08-06.** The user was put
+  the choice directly (build it unverified, or leave it) and chose to leave it. It stays blocked on
+  hardware, not on anyone's time. Do not pick it up opportunistically: the acceptance criteria are
+  all "verify by driving on a pad", so there is nothing an agent can honestly close here. Revisit
+  when the user has a pad.
 - **T10**, lighting sharpness. **DONE** (`3160cb2`), and it mostly refuted its own brief. Three of
   the four suspects cannot see the render size at all: PCSS's radius is in shadow-map texels off a
   fixed 4096 map, the bloom pyramid's offsets are in source-mip UV, and the sun halo is an
   analytic `pow(dot(view, sun))`. One real hit - the SSAO buffer was a constant fraction of the
   render target, now pinned to an absolute height so its footprint is a fixed fraction of the
   FRAME. Cost 9.61 -> 10.05 ms p50 at 720p. The blur the user reported is the display upscale.
-- **T2**, geometry cleanup. NOT STARTED. Has a user approval gate in the middle, so it will stall
-  waiting on a reply. Start it when there is slack, not when it blocks something.
-  **Blocked in part by the `daytime-downtown` shot timeout above** - T2's whole method is
-  re-rendering every scene and comparing, and one scene currently cannot be rendered at all.
+- **T2**, geometry cleanup. **IN PROGRESS, at the approval gate with a PARTIAL list.** The shot
+  timeout that blocked it is fixed, and all seven scenes render. What the evidence pass found so
+  far is written up under T2 below - one finding is code-confirmed and ready to delete, one is
+  photographed but NOT yet attributed to a cause. The list is not complete: only
+  `wet-night-asphalt` and `dusk-highway-chase` have been read closely.
 
 ### Wave 4 - the map, then what sits on it
 
@@ -353,6 +355,81 @@ deleted.**
 
 Focus areas named by the user: the skyline (`sky.js`) and the street lamps (`world.js` poles,
 `polefall.js`).
+
+**Note on `sky.js`: there is no skyline geometry in it.** It is an analytic atmosphere - a baked
+384x192 sky-view LUT plus two analytic cloud decks and a radial sun lobe. Nothing in it can be
+"deleted" as stray geometry. The distant city silhouette is built in `world.js`. Do not go looking
+for meshes in `sky.js`; that half of the brief is a misdirection.
+
+### EVIDENCE PASS, 2026-08-06 - findings so far, for approval
+
+Method: `node tools/shot.mjs` over all seven scenes at 1920x1080, then crops via
+`tools/_cropimg.mjs`. Two scenes read closely so far (`wet-night-asphalt`, `dusk-highway-chase`).
+**Nothing has been deleted. Nothing will be until the user approves the list.**
+
+#### FINDING 1 - overhead wires attach to nothing, and some end in mid-air. CONFIRMED IN CODE.
+
+`world.js:2286-2308`. This is exactly the "does not line up with the lamps" the user reported, and
+it is visible against open sky in `wet-night-asphalt` around x 700-1200, y 260-300: two wires with
+clean cut ends hanging over the street, anchored to nothing at either end.
+
+The wire endpoints and the lamp positions are computed from the same grid but never from each
+other:
+
+| | lateral offset from road centre | height |
+|---|---|---|
+| street lamp (`world.js:2233-2234`) | `HALF + 2.4` | pole spans y 0.2 to **8.8** |
+| wire (`world.js:2304-2306`) | `HALF + 3.0` | y **9.4 / 8.9 / 8.6**, sag 1.1-1.4 |
+
+So every wire runs 0.6 m to the SIDE of the pole line and, for the y 9.4 run, 0.6 m ABOVE the top
+of the poles it is meant to be strung between. They are near the lamps and joined to none of them.
+
+Separately, the along-road runs overshoot. The loop is `for (x = -EX + 30; x <= EX; x += 62)`, and
+inside it line 2306 draws a wire from `x + 31` to `x + 93` - so the final iteration lays wire up to
+**93 m past `EX`**, over ground that has no poles at all. Line 2305 overshoots by 62 m the same way.
+Those are the free ends in the screenshot.
+
+Proposed fix, for approval - this is a REPAIR, not a deletion, because the user asked for geometry
+that does not belong to go, and a wire strung pole-to-pole does belong:
+
+1. Draw wires from the recorded lamp positions instead of from re-derived grid maths, so the two
+   can never drift apart again. `streetLight()` already pushes to `lampPositions`.
+2. End each run at the last pole, killing the overshoot.
+3. If a run has no pole at one end, do not draw it.
+
+If the user would rather simply delete the wires, that is one line and also fine - but they are
+carrying real thin shadows and the reference (`daytime-downtown-01`, "prop density is high ... and
+the wires cast their own thin shadows") wants them present.
+
+#### FINDING 2 - a hard-edged flat quad over the road. PHOTOGRAPHED, CAUSE NOT YET FOUND.
+
+`wet-night-asphalt`, roughly x 1150-1900, y 830-990: a dull flat region with a razor-straight
+horizontal top edge and a straight diagonal right edge, lying over the wet road to the car's
+lower-right and occluding the reflection streaks that surround it. It reads as a stray plane.
+
+**Do not act on this yet - three hypotheses have been tested and all three are REFUTED:**
+
+- not the sun/moon shadow - `g.sky.sun.castShadow = false` leaves it pixel-unchanged;
+- not a contact-shadow pad - hiding the `contactShadows` mesh leaves it pixel-unchanged;
+- not ordinary scene geometry - `scene.overrideMaterial = MeshNormalMaterial` recolours the car
+  and leaves this region untouched, so whatever draws it is not being drawn by that pass.
+
+That last result is the informative one: it is drawn outside the main scene-graph pass, which
+points at the post chain or the road's planar reflection (`road.js` `PLANE_Y = 0.03`, and the
+header at `road.js:4` describes "an additive light-smear quad on the tarmac (used for wet-night
+reflections)"). That quad is the strongest remaining suspect and is where the next session should
+start.
+
+Raycasting was tried and abandoned: `tools/_pickpx.mjs` returns hits whose screen positions do not
+agree with the picture, so its camera mapping is wrong somewhere. Fix it or do not trust it.
+
+#### Tools built for this pass, kept because the next session needs them
+
+- `tools/_pickpx.mjs` - names the geometry under a screen pixel. **Camera mapping is suspect, see
+  above.**
+- `tools/_abtoggle.mjs` - screenshots a scene, applies a toggle expression against `window.__game`,
+  re-renders and screenshots again. This is what refuted all three hypotheses above, and it is the
+  cheap way to ask "is this thing responsible" without editing the tree.
 
 ### Acceptance criteria
 
@@ -1811,4 +1888,117 @@ not the bare URL.
 - `rel="noopener noreferrer"` present.
 - No layout shift in either mode at 1280x720, where the card is already over-full (measured 956 px
   of content against 702 px of card, `menu.js:619`). State the new content height.
+- `bash tools/lint.sh` clean.
+
+---
+
+## T25 - Dev tuning panel: bring it back, with a camera tab
+
+**Mode: solo.**
+**Depends on: nothing mechanically. Read the warning below before starting.**
+**Requested by the user 2026-08-06, alongside T26.**
+
+### What the user asked
+
+> "In the dev mode with the slider, I would like a new tab with the option to adjust the game
+> camera."
+
+### Read this first: the panel does not exist any more
+
+T9 built `game/devtune.js`, the user tuned with it, the six moved figures were applied in
+`2082b36`, and the panel was then DELETED on purpose - the module, its `main.js` import,
+`tools/_devtune-check.mjs` and the `export` on `camera.js`'s `FRAME` all went. T9's own closing
+note says do not resurrect it to tune something else "without saying so".
+
+**The user has now said so.** That is what this task is: a deliberate, recorded resurrection.
+Recover the module from `f095b88` rather than rewriting it from scratch - it already carries the
+green-versus-amber "differs from the code default" colouring, and that colouring is precisely what
+made the last tuning session cheap to read back from two screenshots.
+
+### Scope
+
+- Restore `game/devtune.js` and its single `main.js` import, still behind `?dev=1` / backtick, so
+  it can never appear in normal play and costs nothing when off.
+- Restore the `export` on `camera.js`'s `FRAME` that the panel reads.
+- **Add a CAMERA tab.** T9 already had camera sliders mixed into one long list; the user is asking
+  for them to be their own tab. At minimum: chase distance, height, `lookAhead`, `lookHeight`,
+  fov and `fovSpeed`, the yaw/look stiffnesses (`stiffness`, `lookStiffness`, `yawLag`), and the
+  slip terms (`slipAim`, `steerLead`, `slipSwing`).
+- **`lookAhead` is the trap.** It is set per scene in `scenes.js`, not in `camera.js`, and
+  `dusk-highway-chase` IS the play camera (`main.js` defaults `sceneId` to it). A slider that
+  writes `camera.js`'s default will appear to do nothing. Write through to the live rig and say in
+  the panel which file the final figure has to land in.
+
+### Relationship to T23
+
+**T23 is the reason this is worth doing now.** T23 says the chase camera reads too far back at all
+speeds, which is a BASE POSE error, and a base pose is exactly what a slider finds in a minute and
+a static screenshot argues about for an hour. Do T25 first, then settle T23 on the panel.
+
+### Acceptance criteria
+
+- Panel appears only under `?dev=1` / backtick. Zero per-frame work when off - confirm it, do not
+  assume it.
+- Camera tab changes take effect instantly while driving, no reload.
+- Every slider shows its live numeric value, and green/amber "differs from default" colouring is
+  preserved.
+- Live readouts for speed, yaw rate and slip angle are still present - tuning a camera blind is
+  guesswork in the same way tuning drift blind was.
+- Still removable in one commit: one module plus one import.
+- `bash tools/lint.sh` clean.
+
+---
+
+## T26 - A pannable map in the menu
+
+**Mode: solo.**
+**Depends on: T3. This is a view onto the map, so there has to be a map worth panning.**
+**Requested by the user 2026-08-06, alongside T25.**
+
+### What the user asked
+
+> "In the menu, there needs to be a map option for the player to pan around and see what else
+> there is."
+
+### Scope
+
+- A MAP entry in the pause menu opening a full-card view of the road network, drawn from the same
+  `game/map/` graph JSON T3 makes the durable artefact. Do not author a second map representation;
+  if the minimap in `hud.js` and this view disagree, the graph is the one that is right.
+- Pan by drag, zoom by wheel, both clamped to the map's bounds so it cannot be lost off-screen.
+- Show the hero's current position and heading.
+- Close returns to the pause menu with the game still paused and no input leaked to `main.js` -
+  respect the capture-phase key handling at `menu.js:873`.
+
+### The hard constraint this collides with: NO FAST TRAVEL
+
+T6 states it flatly - no teleport to a marker, no menu entry that relocates the hero, "the drive
+between events IS the game". A pannable map is one click away from becoming a travel affordance,
+so **the map is READ-ONLY**. Nothing on it is clickable-to-go. It answers "what is out there",
+which is the question the user actually asked, and nothing else.
+
+### What may be shown on it, and what may not
+
+T6 is equally explicit that discovery is the point: after the first guided event, nothing is
+listed or waypointed for the player. So the map shows the ROAD NETWORK and the things the player
+has already found or completed - not an index of everything that exists.
+
+- Show: roads, districts and named landmarks; time attacks already completed, with their earned
+  medal; billboards already smashed; the first-run guided event while it is still pending.
+- Do not show: undiscovered time attacks, unsmashed billboards, ramps, or any "N of M collected"
+  counter that turns discovery into a checklist.
+
+If the user wants full disclosure later that is a one-line change, but shipping it that way by
+default would quietly overrule T6.
+
+### Acceptance criteria
+
+- Opens from the pause menu, pans and zooms smoothly, clamped to bounds.
+- Hero position and heading are correct - verify against `physics.state.pos` after driving.
+- Nothing on the map moves the hero. Grep for position writes as T6 requires and state what
+  you found.
+- Undiscovered content is not revealed.
+- No frame-time cost while the map is closed. The game is paused while it is open, so its own
+  cost is not a 60 fps concern, but state what it is.
+- Readable at 1280x720, where the menu card is already over-full (`menu.js:619`).
 - `bash tools/lint.sh` clean.
