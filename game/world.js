@@ -2497,7 +2497,7 @@ export function createWorld(scene, { rng, roadKit }) {
   // the reference stills. The stills are a regression gate now, not a target, and a person who
   // has driven the city outranks a still that cannot be driven. If it does read empty, raise
   // this rather than reintroducing a second population.
-  const NPC_DENSITY = 0.32;  // was 0.40; -20% parked/stationary population on user request
+  const NPC_DENSITY = 0.16;  // was 0.32; -50% parked/stationary population on user request
 
   let parkPop = 'rank';
   const parkCounts = { rank: 0, queue: 0, culled: 0 };
@@ -2579,7 +2579,17 @@ export function createWorld(scene, { rng, roadKit }) {
         dummy.rotation.set(0, 0, 0);
         dummy.scale.set(1e-6, 1e-6, 1e-6);
         dummy.updateMatrix();
-        for (const [m, i] of used) { m.setMatrixAt(i, dummy.matrix); m.instanceMatrix.needsUpdate = true; }
+        // The chunk cut at the bottom of this file re-homes every baked instance into a
+        // `pool:chunk` copy and zeroes the source pool, so the [m, i] recorded at bake time
+        // points at a mesh that no longer draws. chunkRemap says where the instance went;
+        // writing to the source was the bug that left a phantom parked car on screen
+        // (visible, no collider) while its promoted wreck slid away.
+        for (const [m, i] of used) {
+          const r = chunkRemap.get(m);
+          const [tm, ti] = (r && r.get(i)) || [m, i];
+          tm.setMatrixAt(ti, dummy.matrix);
+          tm.instanceMatrix.needsUpdate = true;
+        }
       },
     });
   }
@@ -3006,6 +3016,10 @@ export function createWorld(scene, { rng, roadKit }) {
   // CHUNK is a real trade and was measured, not guessed: smaller cells cull more triangles and
   // cost more draw calls (one per occupied cell per pool). See the verdict for the sweep.
   let chunkStats = null;
+  // (source mesh -> (source index -> [chunk mesh, chunk index])), filled by the chunk cut
+  // below. Any code that edits a baked instance after boot must route through this, or it
+  // edits a pool that no longer draws. Currently the only such editor is parkedCar().hide().
+  const chunkRemap = new Map();
   const CHUNK = 200;
   // Below this many instances a pool is left exactly as it was. A 60-instance pool cannot pay
   // back the extra draw calls chunking it would add, and the whole point is to spend calls
@@ -3060,8 +3074,9 @@ export function createWorld(scene, { rng, roadKit }) {
           // elements[12]/[14] are the translation x/z of a column-major mat4.
           const key = `${Math.floor(_m.elements[12] / CHUNK)},${Math.floor(_m.elements[14] / CHUNK)}`;
           let b = cells.get(key);
-          if (!b) cells.set(key, b = { mats: [], cols: [] });
+          if (!b) cells.set(key, b = { mats: [], cols: [], refs: [] });
           b.mats.push(_m.clone());
+          b.refs.push([src, i]);
           // A source with no instanceColor in a bucket where another source has one must
           // contribute white, or its instances would come out black.
           if (anyColor) {
@@ -3081,6 +3096,13 @@ export function createWorld(scene, { rng, roadKit }) {
         for (let k = 0; k < cell.mats.length; k++) {
           im.setMatrixAt(k, cell.mats[k]);
           if (anyColor) im.setColorAt(k, cell.cols[k]);
+          // Where this source instance now draws from, so a later per-instance edit
+          // (parkedCar's hide()) can land on the copy that is actually on screen: the
+          // source pool below gets count = 0, so writing to it changes nothing visible.
+          const [sm, si] = cell.refs[k];
+          let r = chunkRemap.get(sm);
+          if (!r) chunkRemap.set(sm, r = new Map());
+          r.set(si, [im, k]);
         }
         im.instanceMatrix.needsUpdate = true;
         if (im.instanceColor) im.instanceColor.needsUpdate = true;
