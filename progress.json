@@ -1,5 +1,5 @@
 {
-  "generated": "2026-08-04T05:17:37.088Z",
+  "generated": "2026-08-06T11:04:39.578Z",
   "waves": [
     "wave-k",
     "wave-l",
@@ -16,10 +16,10 @@
     {
       "piece": "perf",
       "goal": "holds 60 fps at 1280x720 real pixels",
-      "rounds": 3,
-      "verdict": "PARTIAL",
-      "waves": "s* s s* s s* s s*",
-      "building": true,
+      "rounds": 4,
+      "verdict": "judged, call not stated",
+      "waves": "s* s s* s s* s s* s",
+      "building": false,
       "metrics": [
         {
           "k": "cruise",
