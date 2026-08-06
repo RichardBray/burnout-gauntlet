@@ -141,6 +141,9 @@ export function createHud(container, { layout, maxPixelRatio = 1, attached = tru
   let burnMix = 0;         // 0..1 blend into the "burning" look
   let deniedMix = 0;       // 0..1 denied-press flash, driven by physics' boostDenied pulse
   const earnPops = [];     // live earn popups: {text, t, life}; newest replaces oldest past 4
+  let driftMetres = 0;     // metres in the current slide; freezes briefly on the exit edge
+  let driftLive = false;
+  let driftHold = 0;
   // Burnout 1's oncoming meter: yards accumulate WHILE the hero is in the oncoming lane and
   // the count freezes the moment he leaves, lingering briefly so the final figure is readable.
   let oncomingYd = 0;      // yards banked in the current oncoming stint
@@ -1087,19 +1090,29 @@ export function createHud(container, { layout, maxPixelRatio = 1, attached = tru
     // Stacked above the bar in the burnout-chain type style: amber, slanted, glowing. Each
     // rises a little and fades over its life; newest sits closest to the bar.
     //
-    // The oncoming yard meter REPLACES the old 'ONCOMING LANE +2%' pulse popups (advance()
-    // filters those out of the feed): it holds the popup stack's bottom slot, ticking up
-    // live in the same type, freezing when the hero leaves the lane, then fading out.
+    // The oncoming and drift distance meters replace their old passive pulse popups. Each holds
+    // one stable stack slot, ticks up live, freezes on exit, then fades without spawning rows.
     let slot0 = 0;
-    if (oncomingYd >= 1) {
+    if (driftLive || driftHold > 0) {
       slot0 = 1;
       ctx.save();
-      ctx.globalAlpha = oncomingHold < 0.5 ? oncomingHold / 0.5 : 1;
-      drawType(`ONCOMING ${Math.floor(oncomingYd)} YDS`, x - 28 * S, y - 62 * S - 14 * S, {
+      ctx.globalAlpha = driftLive || driftHold >= 0.5 ? 1 : driftHold / 0.5;
+      drawType(`DRIFT: ${Math.floor(driftMetres)} m`, x - 28 * S, y - 62 * S - 14 * S, {
         size: 20 * S, weight: 800, track: 1.8 * S, slant: 0.22,
         fill: AMBER_HOT, glow: 'rgba(255,150,30,0.5)',
       });
       ctx.restore();
+    }
+    if (oncomingYd >= 1) {
+      ctx.save();
+      ctx.globalAlpha = oncomingHold < 0.5 ? oncomingHold / 0.5 : 1;
+      drawType(`ONCOMING ${Math.floor(oncomingYd)} YDS`, x - 28 * S,
+        y - 62 * S - slot0 * 24 * S - 14 * S, {
+        size: 20 * S, weight: 800, track: 1.8 * S, slant: 0.22,
+        fill: AMBER_HOT, glow: 'rgba(255,150,30,0.5)',
+      });
+      ctx.restore();
+      slot0++;
     }
     for (let i = 0; i < earnPops.length; i++) {
       const p = earnPops[earnPops.length - 1 - i];
@@ -2806,23 +2819,27 @@ export function createHud(container, { layout, maxPixelRatio = 1, attached = tru
     deniedMix = clamp(s.boostDenied ?? 0, 0, 1);   // physics decays the pulse; no double-smooth
 
     // ---- earn popup feed --------------------------------------------------
-    // physics.state.earnFeed is per-tick; each entry becomes a popup above the boost bar in
-    // the burnout-chain type style. Passive chunks (drift/speeding) get a shorter life so a
-    // long slide reads as a pulse train, not a standing label.
+    // physics.state.earnFeed is per-tick. Event entries become popups above the boost bar; drift
+    // records update one standing distance row instead, so a slide cannot create a popup train.
     if (s.earnFeed && s.earnFeed.length) {
       const NAMES = {
         nearMiss: 'NEAR MISS', oncoming: 'ONCOMING', check: 'TRAFFIC CHECK',
         drift: 'DRIFT', speeding: 'ONCOMING LANE',
       };
       for (const e of s.earnFeed) {
+        if (e.type === 'drift') {
+          driftMetres = Math.max(0, Number(e.metres) || 0);
+          driftLive = e.active === true;
+          driftHold = 0.9;
+          continue;
+        }
         // the oncoming yard meter replaces the 'ONCOMING LANE +n%' pulse popups outright
         if (e.type === 'speeding') continue;
         const name = NAMES[e.type] || String(e.type).toUpperCase();
         const mult = e.mult > 1 ? ` x${e.mult}` : '';
-        const passive = e.type === 'drift' || e.type === 'speeding';
         earnPops.push({
           text: `${name}${mult} +${Math.max(1, Math.round((e.earn || 0) * 100))}%`,
-          t: 0, life: passive ? 0.9 : 1.5,
+          t: 0, life: 1.5,
         });
         if (earnPops.length > 4) earnPops.shift();
       }
@@ -2830,6 +2847,10 @@ export function createHud(container, { layout, maxPixelRatio = 1, attached = tru
     for (let i = earnPops.length - 1; i >= 0; i--) {
       earnPops[i].t += dt;
       if (earnPops[i].t >= earnPops[i].life) earnPops.splice(i, 1);
+    }
+    if (!driftLive && driftHold > 0) {
+      driftHold = Math.max(0, driftHold - dt);
+      if (driftHold === 0) driftMetres = 0;
     }
     readyPulse = damp(readyPulse, shownBoost >= READY_AT ? 1 : 0, 8, dt);
 
@@ -2871,6 +2892,9 @@ export function createHud(container, { layout, maxPixelRatio = 1, attached = tru
      * number moves.
      */
     get generation() { return gen; },
+    /** Integer metres currently painted in the single drift row; null once it has faded. */
+    get driftMetres() { return driftLive || driftHold > 0 ? Math.floor(driftMetres) : null; },
+    get driftPopupCount() { return driftLive || driftHold > 0 ? 1 : 0; },
 
     banner(text, secs = 2) {
       bannerText = text || '';

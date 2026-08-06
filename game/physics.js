@@ -153,7 +153,7 @@ export const TUNE = {
   // style, and every earn (event or chunked passive) lands in state.earnFeed for the HUD.
   earnChainWindow: 3.0,   // s between events that keeps the multiplier alive
   earnChainMax: 4,        // x4 cap
-  earnChunk: 0.02,        // passive earn (drift/speeding) pops a feed entry per 2% of bar
+  earnChunk: 0.02,        // passive speeding earn pops a feed entry per 2% of bar
   boostEarnDanger: 0.045, // bar/s at vMax; ramps in above 50% of vMax - speeding now earns,
                           // because an earn the player can see (feed + bar) needs to exist
   // Drift is a legitimate earn and always was: Paradise pays for a drift by distance-in-slide.
@@ -683,6 +683,12 @@ export function createPhysics({ blocks = [], bounds = 1400 } = {}) {
     boostDenied: 0,  // 0..1 pulse on a boost press the full-bar gate refused; HUD/audio feedback
     earnFeed: [],    // this tick's boost earns for the HUD: {type, mult, earn}; cleared each step
     earnMult: 1,     // current event-chain multiplier, x1..earnChainMax
+    // T12: metres travelled in the CURRENT slide, for the HUD's live `DRIFT: 142 m` row. Display
+    // only — the boost a drift earns is still time-based at TUNE.boostEarnDrift and is computed
+    // separately below. Declared here rather than sprung into existence mid-update so the shape
+    // of `state` stays readable; `driftFeedActive` is the edge detector that ends the row.
+    driftMetres: 0,
+    driftFeedActive: false,
     // Held-contact grinding, for the spark trail: 0..1 intensity while the car is scraping
     // along a wall or another car (the contact-hold branch of the resolvers), with the
     // contact point and the slide direction. Purely cosmetic; main.js feeds it to crash.js.
@@ -694,7 +700,8 @@ export function createPhysics({ blocks = [], bounds = 1400 } = {}) {
   let boostLatch = false;   // the full-bar gate: armed only from a full tank, held until empty
   let boostPrev = false;    // last tick's boost button, for the denied-press edge
   let earnChainT = 1e9;     // s since the last chainable event
-  let driftEarnAcc = 0;     // passive drift earn banked toward the next earnChunk feed entry
+  // (driftEarnAcc lived here: drift earn banked toward the next earnChunk feed entry. T12
+  // replaced the chunked drift popup with a live metres row, so nothing reads it any more.)
   let dangerEarnAcc = 0;    // same, for speeding
   // Seconds of "still in this contact". A boolean was not enough: the resolver puts the car exactly
   // ON the face, so the next substep often finds it a hair outside, the contact reads as released,
@@ -1573,7 +1580,11 @@ export function createPhysics({ blocks = [], bounds = 1400 } = {}) {
       state.boost = 1; state.boosting = false; state.boostBlend = 0; state.boostKick = 0;
       state.boostDenied = 0; boostPrev = false;
       state.earnFeed.length = 0; state.earnMult = 1;
-      earnChainT = 1e9; driftEarnAcc = 0; dangerEarnAcc = 0;
+      earnChainT = 1e9; dangerEarnAcc = 0;
+      // The T12 drift-distance display is live state, so it has to be cleared here too: without
+      // this, pressing R mid-slide left the counter armed and the next drift resumed from the
+      // abandoned total instead of from zero.
+      state.driftMetres = 0; state.driftFeedActive = false;
       state.crashed = false; state.vy = 0; state.airborne = false; state.distance = 0;
       state.vLat = 0; state.yawRate = 0; state.slipAngle = 0; state.drifting = false;
       state.chain = 0; state.impact = 0; state.accelG = 0; state.eventEarn = 0;
@@ -1728,6 +1739,27 @@ export function createPhysics({ blocks = [], bounds = 1400 } = {}) {
       // tick would take the whole game down. An unknown type is worth nothing rather than being an
       // error, so a future 'air' or 'takedown' event costs a tuning line here and not a crash.
       state.earnFeed.length = 0;   // feed is per-tick; consumers read between steps
+      // Display distance uses the exact full-drift threshold documented by boostEarnDrift. Ground
+      // is the true velocity magnitude; speed is only the longitudinal component and under-counts
+      // a slide. One live feed record updates one HUD row, with a final record on the exit edge.
+      const driftActive = Math.abs(state.slipAngle) >= TUNE.slipRef;
+      const driftWasActive = state.driftFeedActive === true;
+      if (driftActive) {
+        if (!driftWasActive) state.driftMetres = 0;
+        state.driftMetres = (state.driftMetres || 0) + state.ground * dt;
+        state.driftFeedActive = true;
+        const feed = state.driftDistanceFeed || (state.driftDistanceFeed = { type: 'drift' });
+        feed.metres = state.driftMetres;
+        feed.active = true;
+        state.earnFeed.push(feed);
+      } else if (driftWasActive) {
+        const feed = state.driftDistanceFeed || (state.driftDistanceFeed = { type: 'drift' });
+        feed.metres = state.driftMetres || 0;
+        feed.active = false;
+        state.earnFeed.push(feed);
+        state.driftFeedActive = false;
+        state.driftMetres = 0;
+      }
       earnChainT += dt;
       if (earnChainT >= TUNE.earnChainWindow) state.earnMult = 1;
       if (eventSource) {
@@ -1783,14 +1815,10 @@ export function createPhysics({ blocks = [], bounds = 1400 } = {}) {
         const dangerEarn = input.oncoming ? TUNE.boostEarnDanger * danger * dt : 0;
         const earn = TUNE.boostEarnCruise * (0.35 + 0.65 * sn) * dt + driftEarn + dangerEarn;
         state.boost = clamp(state.boost + earn, 0, 1);
-        // Passive earn is continuous, so it pops a feed entry per banked earnChunk instead of
-        // per tick - "DRIFT +2%" every couple of seconds of sliding, not 120 popups a second.
-        driftEarnAcc += driftEarn;
+        // Speed earn is continuous, so it pops a feed entry per banked earnChunk instead of per
+        // tick. Drift display feedback is the live metres record emitted above; its boost earn
+        // remains the unchanged time-based driftEarn calculation.
         dangerEarnAcc += dangerEarn;
-        if (driftEarnAcc >= TUNE.earnChunk) {
-          state.earnFeed.push({ type: 'drift', mult: 1, earn: TUNE.earnChunk });
-          driftEarnAcc -= TUNE.earnChunk;
-        }
         if (dangerEarnAcc >= TUNE.earnChunk) {
           state.earnFeed.push({ type: 'speeding', mult: 1, earn: TUNE.earnChunk });
           dangerEarnAcc -= TUNE.earnChunk;
