@@ -10,29 +10,86 @@ must not be raised.
 
 ---
 
-## STATUS as of 2026-08-06. READ THIS BEFORE PICKING A TASK.
+## STATUS as of 2026-08-06, end of wave 2. READ THIS BEFORE PICKING A TASK.
 
 | task | status | landed in |
 |---|---|---|
 | **T1** struck parked/stopped cars | **DONE** for parked; the STOPPED-TRAFFIC half is UNVERIFIED | `80477c4`, `b3c69d4`, `3a417d3` |
-| **T9** dev tuning menu | **DONE**, and TEMPORARY - still awaiting the user's figures | `f095b88` |
+| **T4** off-road speed penalty | **DONE** | `084894c` |
+| **T7** soundtrack, genres + player UI | **DONE** | `489aad2`, `adcd0aa` |
+| **T9** dev tuning menu | **DONE and DELETED** - figures applied, task closed | `f095b88`, `2082b36` |
+| **T10** lighting sharpness | **DONE**, and the premise was mostly REFUTED - read below | `3160cb2` |
+| **T11** BOOST OK! centre banner | **DONE** | `f1a5b63` |
 | **T12** drift counter in metres | **DONE** | `45e7e6c` |
+| **T13** full-bar burn is a burnout | **DONE** | `657dc3d` |
 | **T14** menu cleanup, Enter starts | **DONE** | `c5770d7` |
 | **T16** near misses in the boost feed | **DONE**, economy number outstanding | `77339f3` |
 | **T17** remove the C key | **DONE** | `80477c4`, `7330f1a` |
-| T2-T8, T10, T11, T13, T15 | not started | - |
+| T2, T3, T5, T6, T8, T15, T18 | not started | - |
 
 Full write-ups with measured numbers are in `verdicts/wave-s/`. Do not re-derive what is there.
+For the wave-2 tasks the numbers are in the commit messages, which are long on purpose.
+
+### The tuned handling figures, applied and closed (`2082b36`)
+
+The T9 panel came back with six knobs moved; everything else was still on its code default.
+
+| knob | was | now | where |
+|---|---|---|---|
+| `handbrakeSteerGain` | 1.94 | **2.30** | `physics.js` TUNE |
+| `absHold` | 0.985 | **0.768** | `physics.js` TUNE |
+| `stiffness` | 6.5 | **4.98** | `camera.js` DEFAULTS |
+| `lookStiffness` | 8.0 | **5.96** | `camera.js` DEFAULTS |
+| `yawLag` | 3.02 | **5.24** | `camera.js` DEFAULTS |
+| `lookAhead` | 14 | **7.65** | `scenes.js` `dusk-highway-chase` |
+
+`lookAhead` is edited in `scenes.js` and not in `camera.js` because **`dusk-highway-chase` IS the
+play camera** - `main.js` defaults `sceneId` to it. Anything that scene configures is what the
+player drives with, and that scene's reference still moves when it is touched.
+
+`game/devtune.js`, its `main.js` import, `tools/_devtune-check.mjs` and the `export` on
+`camera.js`'s `FRAME` are all gone. T9 is finished; do not resurrect the panel to tune something
+else without saying so.
 
 ### Open decisions the user owns
 
-- **T9's closing step.** The dev menu is deleted once the user reports final handling figures.
-  Until then `game/devtune.js` stays and is not to be tidied away.
 - **T16's boost economy.** An empty bar filled in 56.2 s before T16 and 13.9 s after, which is
   too generous. Halving `NPC_DENSITY` has since taken it to 21.3 s. `boostPerNearMiss` is
   deliberately UNCHANGED at 0.060 - retuning is the user's call, not an agent's.
 - **T1's stopped-traffic half.** `traffic.js`'s `wasStopped` fix (commit `7028fff`) is correct on
   inspection and was never demonstrated. No probe in the tree exercises it. Treat as open.
+- **The 720p cap.** T10 established that the softness the user reported is the browser upscaling a
+  720p buffer to the window, not a mis-sized shader term. The 1080p cap in the pause menu is the
+  fix and it costs frames. Which one ships as the default is a taste-versus-budget call.
+
+### OPEN DEFECTS reported by the user and NOT yet explained
+
+- **A ~1 s hitch when BOOST OK! first fires.** Reported 2026-08-06, after T11 landed.
+  **It is not the banner.** Measured on a 2560x1440 HUD canvas: median frame 0.70 ms with no
+  banner, 0.80 ms with one up, 1.2 ms on the first draw, 2.7 ms worst of 40 frames. There is no
+  image asset involved - the banner is drawn from `torn()` and `drawType()` like the rest of the
+  HUD, so "reduce the image resolution" and "preload it" do not apply.
+  Something else fires at the same moment as the first full bar and has not been found. Next step
+  is a real-session profile (not the `hud-overlay` harness, which does not reproduce it): record a
+  `performance` trace across the first fill and look at what allocates or compiles there. Suspect
+  first-use costs that merely COINCIDE with the first full bar - a shader variant, a texture
+  upload, or `audio.boostReady()`'s first voice.
+- **The HUD canvas is CSS-window-sized, not capped at 1080p.** Raised by the user, on the
+  reasonable suspicion that a 2560x1440 HUD is absurd for a game that renders at 1280x720.
+  It is deliberate - `main.js`'s recorded decision is that dropping `resScale` or the 720p cap must
+  NOT soften the HUD, and HUD text upscaled from 720p is exactly the mush T10 was chasing.
+  **Measured, and it is not a cost worth chasing:** `hud.update()` p50 is 0.50 ms at 2560x1440
+  (3.69 Mpx), 0.50 ms at 1920x1080 (2.07 Mpx) and 0.50 ms at 1280x720 (0.92 Mpx). Flat. HUD cost is
+  path and type work, not fill area, so a 4x pixel count buys 0 ms. It is therefore NOT the source
+  of the BOOST OK! hitch either.
+  The real consequence of the size mismatch is the COMPOSITING PATH, not the pixels: whenever the
+  HUD backing store differs from the drawing buffer, `syncHudPath()` falls back to DOM compositing
+  (`domLayer=true` at all three sizes above, since the buffer is capped and the window is not). The
+  single-layer in-frame path only ever engages at a 720p window with `resScale` 1. Whether that is
+  worth having at all is a question nobody has asked yet.
+- **`daytime-downtown` times out in `tools/shot.mjs`.** `window.__ready` never goes true, 60 s
+  timeout. Whether this predates wave 2 was NOT established - it wants a bisect. It blocks the
+  visual regression gate for that scene, which matters for T2.
 
 ### CARRIED-FORWARD WARNING: what T1 cost, and why
 
@@ -119,7 +176,35 @@ lessons for the next wave:
 - **The ownership table above is wrong about T16.** T16's fix lives in `traffic.js`, which the
   table gives to agent A. B and A would have collided. T16 was resequenced to run after T1 landed.
 
-### Wave 2 - two items gated on the user's figures, the rest on wave 1
+### Wave 2 - COMPLETE (2026-08-06)
+
+All four items landed. What actually happened, against what was planned:
+
+- The tuning figures arrived as two screenshots of the panel, covering the drift/handbrake and
+  camera groups only. The green-versus-amber colouring in `devtune.js` is what made that
+  sufficient: green means "differs from the code default", so the unphotographed groups could be
+  confirmed unchanged with one question rather than another tuning session.
+- **T4 shipped with TWO surface classes, not four.** The world's ground is a single flat plane of
+  one colour - there is no grass, sand or soil in the tree to classify, so rows for them would be
+  configuration nothing could return. `world.js`'s `surfaceAt()` and `physics.js`'s `SURFACES` are
+  both keyed so that T3's map can add them as data with no caller edits.
+- **T4's wheel dust/spray is NOT done**, and was not quietly dropped: `crash.js` owns the only
+  dust system and it is internal to the crash cinematic, so this is a new emitter, and it has
+  nothing to throw up until there is terrain to throw. It belongs with the surfaces it depicts.
+- **T11's primitive was genuinely reused by T13**, no copy-paste: colourway, badge art, text and
+  precedence are parameters. Precedence had to be explicit because a burnout refills the bar to
+  full, which is itself a rising edge into `READY_AT` - without it BOOST OK! stamped over the
+  burnout that caused it.
+- **T7 cost more than expected for one reason: OpenGameArt's CC0 search filter returns CC-BY
+  items.** Six of ten shortlisted candidates were CC-BY 3.0/4.0 or OGA-BY once their own pages
+  were read, including every obvious pick for a driving game. Read the page, every time. The trap
+  is written up in `game/music/README.md`.
+- Every music file is now Ogg and loudness-normalised to -12 LUFS; they had arrived spread across
+  9.4 LU. Fifteen harnesses under `tools/` needed `.ogg` adding to their MIME tables - a media
+  element silently refuses `application/octet-stream`, which presents as "the music does not play"
+  with nothing in the console.
+
+### Wave 2 - two items gated on the user's figures, the rest on wave 1 (ORIGINAL PLAN)
 
 Gated on the tuning figures arriving:
 
@@ -135,13 +220,22 @@ Gated only on wave 1 landing:
 - **T7**, soundtrack. No conflicts with anything. Can run any time from now, including during
   wave 1 if there is a spare agent.
 
-### Wave 3 - polish
+### Wave 3 - polish. T10 DONE, the rest NOT STARTED.
 
-- **T15**, gamepad. After T14, since it hooks the same capture-phase key handling.
-- **T10**, lighting sharpness. No file conflict, but it contends for the perf harness and wants
-  the frame budget to be stable first.
-- **T2**, geometry cleanup. Has a user approval gate in the middle, so it will stall waiting on a
-  reply. Start it when there is slack, not when it blocks something.
+- **T15**, gamepad. NOT STARTED. After T14, since it hooks the same capture-phase key handling.
+  **The user has no pad available.** TASKS' own acceptance criteria say an untested gamepad
+  implementation is worthless, and that stands: whoever builds this either gets a pad or ships it
+  explicitly marked unverified. Do not let it land quietly as "done".
+- **T10**, lighting sharpness. **DONE** (`3160cb2`), and it mostly refuted its own brief. Three of
+  the four suspects cannot see the render size at all: PCSS's radius is in shadow-map texels off a
+  fixed 4096 map, the bloom pyramid's offsets are in source-mip UV, and the sun halo is an
+  analytic `pow(dot(view, sun))`. One real hit - the SSAO buffer was a constant fraction of the
+  render target, now pinned to an absolute height so its footprint is a fixed fraction of the
+  FRAME. Cost 9.61 -> 10.05 ms p50 at 720p. The blur the user reported is the display upscale.
+- **T2**, geometry cleanup. NOT STARTED. Has a user approval gate in the middle, so it will stall
+  waiting on a reply. Start it when there is slack, not when it blocks something.
+  **Blocked in part by the `daytime-downtown` shot timeout above** - T2's whole method is
+  re-rendering every scene and comparing, and one scene currently cannot be rendered at all.
 
 ### Wave 4 - the map, then what sits on it
 
