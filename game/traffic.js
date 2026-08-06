@@ -1305,6 +1305,15 @@ export function createTraffic(scene, { rng, layout, blocks = [], roadKit } = {})
               // and it SHUNTS. physics.js does not collide with traffic yet (routed, round 1),
               // so this is one-sided until it does, but a car that is hit has to move: it is
               // knocked toward the hero's own speed and shoved out of his line.
+              // THE ORDERING MATTERS AND IT WAS WRONG. The stopped-car clause in the wreck test
+              // below reads `v.speed`, and the line after this one OVERWRITES `v.speed` with the
+              // shunted value - knocked up toward the hero's speed. So by the time the test ran,
+              // a car that had been stationary no longer looked stationary and `v.speed < 2` was
+              // effectively never true. The mitigation written for exactly this case was dead
+              // code, and the symptom is the one the comment below predicts: a stopped car takes
+              // the shunt, IDM brakes it back to rest within a frame, and it reads as bolted to
+              // the road. That is the user's "stopped cars do not move" report.
+              const wasStopped = v.speed < 2;
               v.speed = Math.max(0, v.speed * 0.55 + Math.max(0, heroAlong) * 0.45);
               v.shove = away * CHECK_SHUNT; v.shoveT = 0.7;
               // Above WRECK_REL the shunt is not enough: the car is knocked OUT of the lane
@@ -1316,7 +1325,7 @@ export function createTraffic(scene, { rng, layout, blocks = [], roadKit } = {})
               // rest within a frame and reads as bolted down — so it wrecks on a much lighter
               // hit than a flowing one.
               if (rel0 > WRECK_REL || Math.abs(heroSpeed) > WRECK_HERO
-                  || (v.speed < 2 && rel0 > 6)) {
+                  || (wasStopped && rel0 > PROMOTE_MIN_CLOSING)) {
                 v.wrecked = true;
                 const kick = clamp(rel0 / 30, 0, 1);
                 // The impulse direction: the stamp's own relative velocity when the hit came
@@ -1324,10 +1333,32 @@ export function createTraffic(scene, { rng, layout, blocks = [], roadKit } = {})
                 // stale), else the live hero velocity.
                 const kx = hit && hit.kx !== undefined ? hit.kx : hvx;
                 const kz = hit && hit.kz !== undefined ? hit.kz : hvz;
-                v.wvx = (a0 ? v.dir * v.speed : 0) * 0.5 + kx * (0.35 + 0.35 * kick);
-                v.wvz = (a0 ? 0 : v.dir * v.speed) * 0.5 + kz * (0.35 + 0.35 * kick);
-                const side = Math.sign((v.pos.x - hx) * -heroFz + (v.pos.z - hz) * heroFx) || 1;
-                v.wspin = -side * (1.5 + 3.5 * kick);
+                // The car keeps half its own momentum along its lane, and takes the hero's
+                // contribution from the SAME momentum exchange the parked path uses (see the
+                // WRECK_* block at the top of this file). A stopped car and a parked car are the
+                // same object to a player, so they must not be shoved by two different formulas -
+                // the old `0.35 + 0.35 * kick` here is what made a stopped car budge less than a
+                // parked one at identical speed.
+                const ownX = (a0 ? v.dir * v.speed : 0) * 0.5;
+                const ownZ = (a0 ? 0 : v.dir * v.speed) * 0.5;
+                if (hit && hit.closing !== undefined) {
+                  const mB = v.van ? PARKED_MASS_VAN : PARKED_MASS;
+                  const vN = hit.closing * (1 + WRECK_RESTITUTION) * HERO_MASS / (HERO_MASS + mB);
+                  const nx = hit.nx || 0, nz = hit.nz || 0;
+                  const tx = -nz, tz = nx;
+                  const vT = (kx * tx + kz * tz) * WRECK_TANGENT;
+                  v.wvx = ownX - nx * vN + tx * vT;
+                  v.wvz = ownZ - nz * vN + tz * vT;
+                  v.wspin = -(hit.off || 0) * vN * WRECK_SPIN_GAIN;
+                } else {
+                  // No stamp: a crash-shell sweep or a contact physics did not resolve. Fall back
+                  // to the old shape, including the side-of-the-line spin sign, because there is
+                  // no contact normal to derive a lever arm from.
+                  v.wvx = ownX + kx * (0.35 + 0.35 * kick);
+                  v.wvz = ownZ + kz * (0.35 + 0.35 * kick);
+                  const side = Math.sign((v.pos.x - hx) * -heroFz + (v.pos.z - hz) * heroFx) || 1;
+                  v.wspin = -side * (1.5 + 3.5 * kick);
+                }
               }
             }
           } else if (clr > 0.6) v.ctOn = false;
