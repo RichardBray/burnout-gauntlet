@@ -15,7 +15,7 @@ import { makeRng, clamp, lerp } from './util.js';
 import { createSsaoPass, createBloomPass, createOutputPass } from './post.js';
 import { createSky } from './sky.js';
 import { createRoadKit } from './road.js';
-import { createWorld } from './world.js';
+import { createWorld, surfaceAt } from './world.js';
 import { createCar } from './car.js';
 import { createPhysics } from './physics.js';
 import { createCamRig } from './camera.js';
@@ -225,6 +225,9 @@ export async function boot() {
   // traffic.js keeps owning the NPC side of the same contact — the knock-forward and shove.
   // A wreck-grade hit surfaces through the existing drainWreck() path below.
   physics.setTrafficBodies(() => traffic.vehicles);
+  // T4. The road network is the grid in world.LAYOUT, so the surface class is arithmetic rather
+  // than a raycast; physics.js takes it injected so it stays ignorant of the world layout.
+  physics.setSurfaceQuery(surfaceAt);
   physics.setParkedBodies(world.parkedCars);
   // Cosmetic side of the same join: sparks + grit at the contact point of a survivable
   // traffic hit. Wreck-grade contacts get the full cinematic through drainWreck() instead,
@@ -760,7 +763,7 @@ export async function boot() {
       brake: clamp(-s.accelG * 0.10, 0, 1),
       speed: gspd, boost: s.boostBlend, slip: Math.abs(s.slip),
       gear: gearOf(gspd), boosting: s.boosting, airborne: s.airborne,
-      wet: cfg.wet || 0,
+      wet: cfg.wet || 0, offRoad: s.offRoad || 0,
       listener: {
         pos: camera.position,
         fwd: camera.getWorldDirection(_camFwd),

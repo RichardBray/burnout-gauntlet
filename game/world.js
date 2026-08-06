@@ -22,6 +22,43 @@ export const LAYOUT = {
   walkW: 7.0,         // pavement depth between the kerb and the building line
 };
 
+// ---- surface classification (T4) -------------------------------------------------------------
+// Which surface the car is standing on, answered from LAYOUT rather than from a raycast. The road
+// network IS the grid, so this is a couple of comparisons against the nearest grid line and one
+// against the interstate ribbon: no geometry query, no per-frame allocation, no dependence on
+// anything world.js built. physics.js takes it as an injected function so it never imports us.
+//
+// PAVED means "the player is not being punished here". That is deliberately WIDER than the painted
+// road: the ribbon is +-roadW/2, the paved shoulder runs to 11.6 m and the kerb face stands at
+// 13 m (see the parked-rank block below), and the acceptance criterion is that clipping a kerb or
+// cutting a junction is still tarmac. So the whole paved corridor out to the kerb face counts, and
+// a junction is covered for free because it is the intersection of two corridors.
+const PAVED_HALF = 13.0;              // m from a road centreline to the kerb face
+const HIGHWAY_HALF = LAYOUT.highwayW / 2 + 2.2;   // to the guardrail line at world.js:2804
+
+/**
+ * @returns {'tarmac'|'dirt'} the surface class at a world position.
+ *
+ * ONLY TWO CLASSES EXIST TODAY, and that is a property of the world, not a shortcut. The ground is
+ * a single flat plane (`groundMat`, one colour, one roughness) — there is no grass, no sand and no
+ * soil anywhere in the tree to classify. Adding 'grass'/'sand' rows to the table in physics.js
+ * before that terrain exists would be configuration nothing can ever return. When T3's map brings
+ * real terrain, this function grows the classes and SURFACES grows the matching rows; nothing
+ * else has to change, because every caller already switches on the returned key.
+ */
+export function surfaceAt(x, z) {
+  if (Math.abs(z - LAYOUT.highwayZ) <= HIGHWAY_HALF) return 'tarmac';
+  const EX = LAYOUT.extent;
+  // A grid road along Z is drivable only within the network's extent, and vice versa.
+  if (Math.abs(z) <= EX) {
+    for (const g of LAYOUT.grid) if (Math.abs(x - g) <= PAVED_HALF) return 'tarmac';
+  }
+  if (Math.abs(x) <= EX) {
+    for (const g of LAYOUT.grid) if (Math.abs(z - g) <= PAVED_HALF) return 'tarmac';
+  }
+  return 'dirt';
+}
+
 // ---------------------------------------------------------------------------
 // paths
 // ---------------------------------------------------------------------------

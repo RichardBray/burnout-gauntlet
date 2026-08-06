@@ -1078,11 +1078,18 @@ export function createAudio({ enabled = true, volume = 0.62, space = 'city' } = 
 
     return {
       out,
-      set(now, { slip, brake, handbrake, speed01, wet }) {
+      set(now, { slip, brake, handbrake, speed01, wet, offRoad = 0 }) {
         const lock = clamp(Math.max(slip, brake * 0.75, handbrake ? 0.85 : 0), 0, 1);
         const moving = clamp(speed01 * 3, 0, 1);
+        // OFF-ROAD (T4) is a reshaping of this same voice, not a new one. Two changes, and both
+        // are what the physical difference actually is: loose ground cannot squeal, because the
+        // screech is a tarmac stick-slip cycle and there is nothing for the tread to stick to; and
+        // the rolling roar gets louder and much broader, because the tyre is throwing grit rather
+        // than rolling on a smooth surface. Doing it here rather than as a separate bus means one
+        // set of nodes, one ramp, and no crossfade to click at the kerb.
+        const off = clamp(offRoad, 0, 1);
         // squeal only past the grip threshold, and standing water kills it
-        const squeal = clamp((lock - 0.22) / 0.6, 0, 1) * moving * (1 - wet * 0.55);
+        const squeal = clamp((lock - 0.22) / 0.6, 0, 1) * moving * (1 - wet * 0.55) * (1 - off * 0.9);
         ramp(scrubG.gain, (lock * 2.0 + wet * moving * 0.34) * moving, now, 0.05);
         ramp(scrubF.frequency, 400 + lock * 500 + speed01 * 300, now, 0.06);
         ramp(sqG.gain, squeal * squeal * 8.0, now, 0.05);
@@ -1091,8 +1098,9 @@ export function createAudio({ enabled = true, volume = 0.62, space = 'city' } = 
         ramp(f1.frequency, 640 + lock * 160 + speed01 * 120, now, 0.07);
         ramp(f2.frequency, 1500 + lock * 380, now, 0.07);
         ramp(warb.frequency, 4.5 + lock * 9, now, 0.1);
-        ramp(rollG.gain, moving * (0.10 + speed01 * 0.16), now, 0.08);
-        ramp(rollF.frequency, 90 + speed01 * 190, now, 0.1);
+        ramp(rollG.gain, moving * (0.10 + speed01 * 0.16) * (1 + off * 1.6), now, 0.08);
+        ramp(rollF.frequency, 90 + speed01 * 190 + off * 260, now, 0.1);
+        ramp(rollF.Q, 0.9 - off * 0.55, now, 0.1);
       },
     };
   }
@@ -2000,7 +2008,7 @@ export function createAudio({ enabled = true, volume = 0.62, space = 'city' } = 
       const bEnv = boostVoice.set(now, dt || 0, boostAmt, speed01);
       ramp(engine.duck.gain, 1 - clamp(bEnv, 0, 1) * 0.28, now, 0.08);
 
-      tyreVoice.set(now, { slip, brake, handbrake: !!s.handbrake, speed01, wet });
+      tyreVoice.set(now, { slip, brake, handbrake: !!s.handbrake, speed01, wet, offRoad: s.offRoad || 0 });
       windVoice.set(now, s.airborne ? speed01 * 1.15 : speed01, boostAmt);
 
       if (s.listener) api.setListener(s.listener.pos, s.listener.fwd, s.listener.up, s.listener.vel);

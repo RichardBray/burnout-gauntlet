@@ -303,12 +303,46 @@ That path is both a browser-performance dead end and a rights problem.
 5. **Rewire the dependent systems.** `traffic.js` lane lines, `world.js` parked ranks and
    signals, `physics.js` blocks and bounds, minimap in `hud.js`, spawn points in `scenes.js`.
 6. **Free roam.** No invisible walls inside the map (see T5 for the perimeter).
+7. **Every road connects.** The graph must be one connected component. No orphaned edge, no
+   road that dead-ends into nothing, no segment reachable only by driving off-road.
+   ADDED BY THE USER, 2026-08-06.
+
+### Road connectivity - a hard constraint, not a nice-to-have
+
+The user's rule: **no road may go nowhere.** Every drivable segment is reachable from every
+other drivable segment by driving on road only.
+
+This is a property of the DATA, so it is enforced on the data, at build time, not eyeballed:
+
+- Write a validator alongside the graph - `game/map/validate.mjs` or similar - that loads the
+  JSON and runs a flood fill from any node across the edge list. It must report: number of
+  connected components (required: 1), the count of degree-1 nodes, and the coordinates of every
+  one of them.
+- **Degree-1 nodes are the failure mode to hunt.** A cul-de-sac that ends in a turning circle is
+  legitimate and the user is not banning it; a road that simply stops mid-block because the
+  digitising missed a junction is the bug. The validator cannot tell these apart, so every
+  degree-1 node needs an explicit `deadEnd: true` flag in the JSON, set deliberately. Any
+  degree-1 node WITHOUT that flag fails the check.
+- Same for one-way flags: a one-way edge can strand a region that is reachable going in but not
+  coming out. Run the flood fill a second time RESPECTING direction, and require strong
+  connectivity too. A district you can drive into and never leave is exactly the orphan the user
+  is describing.
+- Run the validator in `tools/lint.sh` so a hand-edited graph cannot land broken.
+
+Chunk streaming must not create the problem it is meant to hide: an edge crossing a chunk
+boundary has to exist as one continuous drivable surface, not two segments that nearly meet.
+Assert on the generated collision geometry as well as on the graph, because the graph can be
+connected while the built road has a gap the car falls through.
 
 ### Acceptance criteria
 
 - 60 fps sustained at 1280x720 real pixels while driving across district boundaries, p99 stated.
 - No hitch above 30 ms at a chunk boundary. Streaming work must be amortised or off-thread.
 - The road graph is recognisably Paradise City when the minimap is compared to the source map.
+- The connectivity validator reports exactly one component, both undirected and directed, and
+  every degree-1 node is explicitly flagged `deadEnd`. It runs inside `tools/lint.sh`.
+- A drive probe crosses every chunk boundary on at least one route per district without the car
+  dropping through a seam.
 - Memory stable over a 10-minute drive across the whole map. No chunk leak.
 - Traffic, parked cars, signals and the boost event stream all work anywhere on the map.
 - Visual regression gate holds for every scene in `scenes.js` (respawn them onto the new map).
@@ -409,6 +443,29 @@ Do not add drivable NPC racers.
 
 The user chose the full loop with saved results.
 
+### First-run guidance, then hands off. ADDED BY THE USER, 2026-08-06.
+
+On a fresh save the player is pointed at ONE event and nothing else:
+
+- The first time attack is marked on the map and the minimap.
+- Text sits in the **top right** of the HUD telling the player to go there. Keep it short - the
+  event name and a distance readout is enough. It is a directive, not a tutorial box.
+- Once that first event has been completed - finished, not merely started - the pointer text is
+  gone for good and never returns.
+
+After that the player is free to roam and to FIND things: further time attacks, billboards (T8),
+ramps (T8), whatever else gets placed. Nothing is listed for them, nothing is waypointed for
+them, and there is no "next objective" prompt. Discovery is the point.
+
+Persist the "first event done" flag in the same `localStorage` schema as the best times, so
+clearing storage puts a returning player back at the guided start.
+
+**No fast travel. Anywhere. Ever.** No teleport to a marker, no "restart at event" shortcut that
+moves the car across the map, no menu entry that relocates the hero. The drive between events IS
+the game. This constrains T6's quit path too: quitting an event returns the player to free roam
+AT THE PLACE THEY QUIT, not back at the marker. The only position reset in the game stays the
+existing `KeyR` recovery, which must not be repurposed into a travel affordance.
+
 ### Race lifecycle
 
 1. Marker sits on the map with a visible circle and a HUD/world label.
@@ -433,6 +490,7 @@ The user chose the full loop with saved results.
 | piece | owner |
 |---|---|
 | event definitions and marker placement on the map graph | one builder |
+| first-run pointer: top-right HUD text, distance, retire-on-completion | one builder (owns `hud.js`) |
 | trigger, dwell countdown, race state machine, quit path | one builder |
 | route arrows: placement along the route, look, animation | one builder |
 | results UI, medals, `localStorage` schema | one builder |
@@ -444,8 +502,13 @@ The user chose the full loop with saved results.
 - Gold/silver/bronze times are actually achievable and correctly spaced. The critic must set
   each gold time by driving it, not by estimating.
 - Arrows are readable at 70 m/s, well before the turn.
-- Quitting mid-race from the pause menu returns cleanly to free roam with no residual state.
+- Quitting mid-race from the pause menu returns cleanly to free roam with no residual state,
+  and leaves the car where it was, not back at the marker.
 - Best times survive a reload.
+- A fresh save shows the top-right pointer at the first event; completing that event removes it
+  permanently, and it stays gone across a reload.
+- Nothing in the game moves the hero across the map. Grep the tree for any position write that
+  is not physics, `KeyR` recovery, or initial spawn, and state what you found.
 - No frame-time regression while a race is running.
 
 ---
@@ -1067,3 +1130,578 @@ visible caller would break crashing outright.
 - No dead constants or unreferenced helpers left behind.
 - Menu control list no longer mentions C, if it did.
 - `bash tools/lint.sh` clean and the game boots.
+
+---
+
+## T18 - Wrecked NPC cars should clear themselves away
+
+**Mode: solo.**
+**Depends on: nothing. Shares `traffic.js` with T1 and T16 - do not run alongside either.**
+
+### What the user reported
+
+> "I noticed that crashed cars, so NPC cars, stay still, they don't disappear. Is it better for
+> them to disappear?"
+
+Yes. They should go, on a timer, and the user is right that the current behaviour is wrong.
+
+### Why they persist today
+
+Wrecks already despawn, but only BY DISTANCE. `traffic.js:1053` says as much: a wreck "stays
+where it stops as a live obstacle ... it despawns by distance like anyone else", and the retire
+test is `v.pos.distanceTo(_hero) > DESPAWN_R` with `DESPAWN_R = 345`.
+
+So a wreck that comes to rest anywhere near where the player is driving lives forever. Two costs,
+and the first is the one that matters:
+
+1. **It holds a pool slot.** `POOL = 24` is a hard ceiling the user set and it is not to be
+   raised. A wreck parked in the middle of the district the player is circling permanently
+   subtracts from the live traffic budget, and the promotion path at `traffic.js:979` already
+   STEALS the farthest live car when no dead slot exists. Wrecks accumulating means the map
+   quietly empties of moving traffic while the player racks up crashes.
+2. Visual litter. A road strewn with static wrecks stops reading as a living city.
+
+### What to build
+
+A wreck retires on a timer, not only on distance:
+
+- Start a per-vehicle timer when a wreck's speed reaches rest (`hypot(wvx, wvz)` at ~0 and
+  `wspin` decayed out), not at the moment of impact. A wreck still sliding is part of the crash
+  and must not evaporate mid-slide.
+- Around 15 s at rest, then retire. Take the exact figure as tunable and state what you picked.
+- **Never vanish in view.** `traffic.js` already has the machinery for exactly this: `inHeroView`
+  and the `endHold` deferral at `traffic.js:879` exist so a line-end retire cannot pop in front
+  of the player. Reuse that pattern rather than inventing a second one - hold the retire while
+  the wreck is in the hero's view frustum, up to an `END_HOLD_MAX`-style ceiling so a player
+  parked and staring at a wreck does not pin the slot forever.
+- Prefer a short fade or sink-out over an instant cut, but only as the retire actually fires,
+  i.e. off-screen or past the hold ceiling. If a fade cannot be done without a new material path,
+  skip it and just retire - the slot mattering more than the flourish.
+
+### Careful about
+
+Retiring a wreck must clear the same state a distance retire clears: `live`, `wrecked`, `wvx`,
+`wvz`, `wspin`, `nmOn`, `ctOn`, `endHold`. `traffic.js:757` and `traffic.js:475` are the two
+existing places that reset this set - match them, and do not add a third partial reset.
+
+A wreck the player is still batting around must not retire. Re-contact with the hero already
+re-kicks it (`traffic.js:1087`); that has to reset the at-rest timer.
+
+Do not let the retire fire while the wreck is inside the hero's collision reach, or the car will
+pass through the space a solid object occupied a frame earlier.
+
+### Acceptance criteria
+
+- **Assert on the render side, not on `traffic.vehicles`.** See the carried-forward warning at
+  the top of this file. The claim is "the wreck disappears", so the check is the submitted
+  instance count or the instance matrix, not the simulation array. A `vehicles` check stays green
+  under the exact bugs T1 kept hiding behind.
+- A wreck left at rest off-screen is gone within the chosen timeout, and its pool slot is
+  measurably reusable afterwards - show a live count recovering, not just a flag flipping.
+- No wreck ever disappears while on screen and within the hold ceiling. Demonstrate by staring
+  at one across the timeout.
+- Crashing repeatedly in one small area does not reduce the moving traffic around the player.
+  State live-car counts before and after ten crashes in the same block.
+- No frame-time regression. State the per-frame cost of the timer pass.
+- `bash tools/lint.sh` clean.
+
+---
+
+## T19 - Gauntlet: delegate instead of sleeping when every account is limited
+
+**Mode: solo. Touches `run-gauntlet.sh` and `PROMPT.md` only, never `game/`.**
+**Depends on: nothing.**
+
+### What the user asked
+
+> "For the gauntlet script, would it make sense to add the ability to keep an eye on my Claude
+> usage? Or delegate to other models with the delegation skill where necessary instead of using a
+> subagent if usage is high?"
+
+**Usage monitoring: no. Delegation on lockout: yes.**
+
+### Why not usage monitoring
+
+`run-gauntlet.sh` already handles limits, and it handles them the right way - reactively, off the
+CLI's own signal. `reset_epoch_from_log` parses `usage limit reached|<epoch seconds>` straight out
+of the round log, `blocked_until[]` records when each account recovers, and `pick_account`
+rotates between `~/.claude-work` and `~/.claude`.
+
+A proactive usage watcher would be a poller for a number that only changes the behaviour at the
+moment the script is already being told the answer for free. It is a second source of truth that
+can disagree with the first. Do not build it.
+
+Note the guard already learned the hard way at `run-gauntlet.sh:105`: a lockout ALWAYS exits
+non-zero, and without that check the pattern match hits the driver reading its own log and
+punishes a healthy round with a five-hour sleep. Any change here must keep that guard.
+
+### The real gap
+
+`pick_account` blocks when EVERY account is limited:
+
+```
+log "all ${#ACCOUNTS[@]} accounts limited - sleeping ${wait}s"
+sleep "$wait"
+```
+
+That can be hours of a wave doing nothing. That is the only place where reaching for another
+model beats waiting, and it is worth doing.
+
+### What to build
+
+When all accounts are blocked and the wait exceeds some threshold (start at 20 minutes):
+
+- Run the round through a courier instead of sleeping through it. The `delegate` skill holds the
+  routing table and the invocation mechanics for glm-5.2 (`opencode`), gpt (`codex exec`) and the
+  Cursor/Grok runners - use it rather than hand-rolling a CLI call.
+- Route by task shape, which is what the routing table is for: clear-spec mechanical work goes to
+  glm-5.2, investigation and review to gpt. A wave's builder rounds are usually the former.
+- Log the delegated round to `logs/` in the same shape as a normal round, with the model named in
+  the filename, so `watch.sh` and the verdict trail still read straight.
+- Fall back to the existing sleep if no courier is configured or the delegate exits non-zero. A
+  missing `opencode` binary must not kill the loop.
+
+**Delegated rounds are still bound by every rule in `PROMPT.md` and `STATE.md`**, including the
+visual regression gate and the ban on raising `POOL` or `NPC_DENSITY`. Say so in the prompt handed
+to the courier, because that model has none of this context and will not infer it.
+
+### Careful about
+
+Do NOT swap subagents for other models during a normal round. The user's question raises it as an
+option; the answer is that a healthy account should use its own subagents, because the delegation
+is worth its coordination cost only when the alternative is a stalled loop.
+
+A delegated round writes to the same tree. Two rounds must never run at once - the delegate call
+replaces the `sleep`, it does not run beside a live round.
+
+### Acceptance criteria
+
+- With both accounts artificially marked blocked, the driver runs a delegated round instead of
+  sleeping, and the log lands in `logs/` naming the model.
+- With a normal account available, behaviour is byte-identical to today. No delegation path taken.
+- Killing the courier binary from `PATH` makes the driver fall back to sleeping, not crash.
+- The `status != 0` lockout guard at `run-gauntlet.sh:105` still behaves: a healthy round that
+  merely MENTIONS a rate limit in its log is not punished.
+
+---
+
+## T20 - Loading screen art pass
+
+**Mode: solo.**
+**Depends on: nothing. Best done AFTER T3, so the logo can carry the map's identity - but it
+does not block and does not conflict with anything.**
+**Owns `game/index.html`'s boot block and the `stage()` helper in `main.js`. Nothing else.**
+
+### What the user wants
+
+The reference the user gave is Burnout Paradise's Big Surf Island loading screen:
+
+    https://i.ytimg.com/vi/s_6XYEHBKoQ/sddefault.jpg
+    saved to reference/loading/paradise-big-surf-island-loading.jpg
+
+Read the saved copy before building. What is in it, top to bottom:
+
+- Black letterbox bars top and bottom. The art occupies a band across the middle, not the
+  whole screen.
+- The band is dark grey asphalt/concrete, heavily textured, with tyre skid marks streaked
+  across it and a lighter scuffed patch behind the centre.
+- A centred badge-style logo: a crest with a city skyline rising out of it, a ribbon banner
+  across, warm orange and teal against the grey. It has a soft reflection beneath it, as if the
+  surface is wet.
+- The word "Loading" low and right of centre, in a light plain sans, with a small circular
+  spinner glyph beside it.
+
+**The user wants a loading LINE, not that spinner.** That is the one deliberate departure from
+the reference.
+
+### What already exists
+
+There is no spinner in the tree today - `game/index.html` already has a real progress bar, and
+it is driven by real work, not a fake timer:
+
+- `#boot` is a flex column: the word "loading", `#boottrack` (2px, `#1b222c`) holding `#bootbar`
+  (`#e8863a`, `width` transitioned `.18s linear`), and `#bootlabel`.
+- `main.js:143` `STAGE_MS` holds MEASURED per-stage costs (sky 337, road 654, world 154, car 231,
+  sim 124, post 93, warm 78, measured 2026-08-03 via `?bootlog=1` in headless chromium at
+  1280x720). `stage()` at `main.js:159` advances `#bootbar` by that weighting and yields two
+  frames so the bar actually paints.
+
+**Keep all of that.** The bar is already honest about progress; this task is an art pass over it,
+not a rewrite of the mechanism. Do not replace measured weighting with a fake animation, and if
+T3's chunk streaming adds a boot stage, add it to `STAGE_MS` with a measured figure rather than a
+guess.
+
+### Scope
+
+1. Letterboxed band with a dark textured road surface and skid marks. Generate it - CSS gradients,
+   an inline SVG, or a small canvas - rather than shipping a photo. It has to look deliberate at
+   both 720p and 1080p and must not be a stretched bitmap.
+2. Our own badge logo, centred, with the reflection beneath. **Our own art and our own name.** Do
+   not reproduce the Paradise crest, its wordmark, or its typography - the reference is a
+   composition and mood reference, exactly as T3 treats the map. Same rights line as T3.
+3. Keep the loading line. Restyle it to sit in the composition - the reference's "Loading" text is
+   low and right of centre, so the natural place for the line is under or beside that text rather
+   than floating mid-screen. `#bootlabel`'s stage text stays; it is useful.
+4. Keep the `.gone` opacity fade-out into the game.
+
+### Careful about
+
+`shotMode` returns from `stage()` immediately (`main.js:160`) because the screenshot harness wants
+no extra frames. Whatever is added must stay invisible to that path, or every visual regression
+still gains a loading overlay and the whole gate goes red.
+
+`#boot` is plain DOM above the canvas, and it must stay that way. Do not move it into `hud.js`'s
+canvas or into the three.js scene - it has to render before any of that exists, which is the
+entire point of it.
+
+No web fonts and no network fetch on the boot path. The screen's job is to be up instantly; a
+font that arrives late is a screen that flashes. `system-ui` is already what the boot block uses.
+
+### Acceptance criteria
+
+- Screenshot at 1280x720 and at 1920x1080, both attached to the verdict. The band, the badge, the
+  reflection and the line all sit correctly at both; nothing is stretched or clipped.
+- The line still tracks real boot stages. Show it at rest mid-boot at a stage boundary, not just
+  at 0% and 100%.
+- Boot time is not measurably longer. State before and after with `?bootlog=1`.
+- The visual regression gate is unchanged for every scene in `scenes.js` - i.e. `shotMode` never
+  sees the new screen.
+- Nothing on the boot path fetches from the network.
+- No Paradise wordmark, crest or typeface reproduced. State in the verdict what the logo is
+  instead.
+- `bash tools/lint.sh` clean.
+
+---
+
+## T21 - Pausing with Esc must silence music and SFX
+
+**Mode: solo.**
+**Depends on: nothing. Owns `main.js`'s pause block, `audio.js` and `music.js`.**
+
+### What the user reported
+
+> "When I pause with Esc all music and SFX should pause."
+
+### Why it happens today
+
+`main.js:1055` is the whole story:
+
+```js
+if (paused) { renderFrame(); requestAnimationFrame(frame); return; }
+```
+
+The paused path returns before `physics`, before `tick()`, and therefore before anything that
+drives audio. That is correct for the simulation and wrong for sound, because nothing in
+`audio.js` is told to stop - it is simply never told anything again. The engine synth's `set()`
+stops being called, so every oscillator and gain HOLDS at its last value and the engine becomes a
+flat drone for as long as the menu is open. Music is a separate `<audio>` element (`music.js`) that
+is not on the frame loop at all, so it just keeps playing.
+
+`ctx.setPaused` (`main.js:1009`) currently does one thing - clears the key map. It is the hook.
+
+### What to build
+
+- Silence on pause, restore on resume, through `ctx.setPaused`. Do not scatter audio calls through
+  `menu.js`; `setPaused` is already the single choke point and both the Esc path (`menu.js:738`)
+  and the resume (`menu.js:756`) go through it.
+- **Music pauses and resumes from position**, not from the start. It is an `<audio>` element, so
+  `el.pause()` / `el.play()` already do exactly that. Do not reimplement it.
+- **SFX stop, they do not freeze.** Ramp the engine bus to zero rather than cutting it dead - a
+  hard gain cut on a running oscillator bank clicks. `audio.js` already has a `ramp()` helper and
+  the engine's own `set()` has a `gainMul`; use them. A short ramp (~60-80 ms, the same order as
+  the existing envelope times) is enough.
+- On resume the engine must come back at the CURRENT rpm and load, not at whatever it held when
+  the menu opened.
+- Prefer suspending the `AudioContext` outright over muting every node individually, if it
+  restores cleanly. It is one call, it stops the CPU cost of the whole graph, and it cannot leave
+  a node un-muted by omission. Ramp first, then suspend, or the suspend itself clicks.
+
+### Careful about
+
+`tools/shot.mjs` never constructs an `AudioContext` (`audio.js:38`), and `audio.js` is written to
+never throw in that path. Anything added here must hold that: no unguarded `ctx.suspend()` on a
+null context.
+
+Browsers suspend an `AudioContext` on their own when a tab is backgrounded, and require a user
+gesture to resume. Resuming must be robust to the context already being suspended or already
+running - check `ctx.state` rather than assuming.
+
+`music.js` reads `playing` off the element, never off an intent flag (`music.js:272`), precisely so
+a stalled load cannot lie about itself. Keep that - pause must not introduce a separate "we think
+it is playing" boolean that can drift from the element.
+
+If the player pauses while muted, or with music already stopped, resume must not start music that
+was not playing.
+
+### Acceptance criteria
+
+- Esc during play: music stops and all SFX go quiet within ~100 ms. No held engine drone, no click.
+- Resume: music continues from where it stopped, and the engine returns at the correct rpm.
+- Pausing with music already off leaves it off on resume.
+- Pause/resume ten times in a row: no drift, no doubled playback, no orphaned oscillator.
+- `tools/shot.mjs` unaffected, visual regression gate green.
+- `bash tools/lint.sh` clean.
+
+---
+
+## T22 - Drivable pavements, and knockable street props
+
+**Mode: solo.**
+**Depends on: nothing, but RE-VERIFY after T3 - the map rewrites the block layout this reads.**
+**Owns `physics.js` `collide()`, `polefall.js`, and `world.js`'s prop placement.**
+
+### What the user reported
+
+> "The collision on buildings in downtown should be reduced so I can drive on sidewalks, and small
+> low fences are collidable like street lamps."
+
+Two things. The first is a bug with a one-word fix; the second is new work.
+
+### Part 1 - the invisible wall is at the kerb, not at the building
+
+`world.js:1186` stores TWO extents per block, and has all along:
+
+```js
+blocks.push({ cx, cz, w, d, bw: w - LAYOUT.walkW * 2, bd: d - LAYOUT.walkW * 2 });
+```
+
+`w`/`d` is the paved block, **kerb to kerb**. `bw`/`bd` is the **building line**, held back by
+`LAYOUT.walkW = 7.0` m so there is real pavement for props and awnings (`world.js:1184`).
+
+`physics.js:862` `collide()` uses `b.w / 2` and `b.d / 2`. So the collision box is the kerb line,
+and the car is stopped by a wall standing 7 m out in the open air from any actual facade. That is
+exactly what the user is hitting.
+
+`camera.js:265` already handles this correctly - `b.bw !== undefined ? b.bw : b.w` - so the camera
+has been using the building line while physics used the kerb. Physics should match.
+
+**The fix is to collide against `bw`/`bd`, with the same `!== undefined` fallback camera.js uses**,
+so a block from anywhere that has not set them still behaves.
+
+**No kerb penalty. The user's call: driving up onto the pavement is free.** No bump, no grip loss,
+no speed cap. Do not add one, and do not fold pavements into T4's off-road surface.
+
+Watch out for:
+
+- The `+ 1.0` hero half-width in `collide()` stays; it is the car's radius, not part of the block.
+- Parked cars and street furniture sit ON the pavement. Everything placed between `bw/2` and `w/2`
+  is now somewhere the hero can reach, which is what part 2 is about.
+- Traffic and parked ranks are placed off the kerb line elsewhere. Confirm nothing else in the
+  tree assumed `w`/`d` was the drivable boundary - grep for `.w / 2` and `.d / 2` across `game/`
+  and state what you found.
+- The visual regression gate will not catch this because it is invisible geometry. Prove it by
+  driving: the car reaches a facade and stops AT the facade.
+
+### Part 2 - low props knock down like street lamps
+
+`polefall.js` already does exactly what is wanted, for street lamps and traffic lights: on contact
+the baked instanced prop is hidden via `world.js`'s `hide()`, a dynamic copy from a pool of 6
+topples in the hero's direction hinged at its base, rests, sinks through the road and is released.
+**The hero is deliberately unaffected - no shunt, no speed loss.** Contact is a 1.3 m disc test
+against the hero's centre.
+
+**The user confirmed: the low props get the SAME treatment. No effect on the car at all.** Plough
+through, prop topples, speed unchanged.
+
+The user's "small low fences" means the props already in the tree, not a new fence type. Do not add
+fences. The candidates are placed in `world.js:2274`'s street-props block:
+
+bollards, parking meters, hydrants (body + cap), bins, benches (seat + legs), planters (+ shrub),
+palms (trunk + fronds).
+
+Judgement calls the builder owns, and must state:
+
+- **Bollards, meters, hydrants, bins** are unambiguously in. They are small, low and exactly what
+  the user described.
+- **Benches and planters** are heavier and read as fixed. Include them, but say how they look
+  toppling - a planter that flips like a bollard will look wrong.
+- **Palms** topple as trees, not as poles. If reusing the pole hinge makes a palm look like a
+  falling lamppost, leave palms out and say so rather than shipping it broken.
+
+### Scope for part 2
+
+1. Extend `polefall.js` to take more prop kinds rather than writing a second system. It already
+   re-poses its slot children per kind at knock time; that is the extension point.
+2. `POOL = 6` was sized for lamps. Driving a pavement clips props in quick succession, so raise it,
+   and state the count and its cost. Keep the oldest-stolen behaviour.
+3. **`hide()` must route through `chunkRemap` in `world.js`.** This is the exact bug that cost T1
+   three rounds: `hide()` wrote to a source instance pool the chunk cut had already zeroed, so it
+   edited a mesh that no longer draws, and the prop stayed on screen. See the carried-forward
+   warning at the top of this file. Every prop kind added here has the same failure mode.
+4. `HIT_R = 1.3` is a lamp radius. A bench is wider than a bollard - per-kind radii, not one
+   constant.
+
+### Acceptance criteria
+
+- The car drives freely onto and along the pavement anywhere in downtown, and is stopped only at
+  the building facade. Show a position trace or a screenshot at the facade with the wall reached.
+- No kerb penalty: speed across the kerb is unchanged. State the before/after speed.
+- **Assert on the render side.** A knocked prop must be gone from the PICTURE - instance matrix or
+  submitted instance count - not merely flagged hidden in an array. A simulation-side check stays
+  green under the `chunkRemap` bug and this task is full of that bug's shape.
+- Clipping ten props in a row leaves none stuck upright and none rendered twice.
+- Hero speed is provably unchanged through every prop kind added.
+- No frame-time regression. State the per-frame cost of the widened contact scan and confirm it is
+  bounded by proximity, not by the size of the prop list.
+- `bash tools/lint.sh` clean.
+
+---
+
+## T23 - Chase camera sits further back than Burnout's
+
+**Mode: solo. One file, one measured number, no fan-out.**
+**Depends on: nothing. Do it BEFORE T20's screenshots and before any new visual reference work,
+because every scene shot in `scenes.js` reframes if this moves.**
+
+### What the user reported
+
+> "Compare the camera view to the view of Burnout Paradise - I think Burnout's camera is a bit
+> closer."
+
+**The user confirmed it reads too far AT ALL SPEEDS, including at rest.** That matters: it points
+at the BASE POSE, not at the speed-varying terms. `distSpeed` is already `0.0` and `distBoost` only
+`0.08`, so a rest-pose error cannot be coming from them.
+
+### Do not start by tuning. Start by measuring.
+
+This rig is already calibrated against Paradise, in unusual detail, and the calibration is
+documented at `camera.js:10-27`. Read that block before touching anything. Measured off
+`reference/dusk-highway-chase-02.jpg` and `-03.jpg` at native resolution, with the horizon solved
+from the guardrail vanishing point (-02) and from two equal-height streetlamps (-03):
+
+| quantity | Paradise reference |
+|---|---|
+| hero height in frame, **to the roof panel** | 19.1-20.5% |
+| same, including scoop/wing appendages | 20.9-21.7% |
+| contact line | 0.769-0.771 of frame height |
+| roof-to-horizon gap | 7.8-8.8% |
+| horizon | 48-50% |
+| camera height | ~2.1 m |
+| down-tilt | 1-2 deg on a 42-44 deg lens |
+| **DEPRESSION** = (roof - horizon) / (contact - horizon) | **0.29-0.30** |
+
+DEPRESSION is the load-bearing number and the one to trust. It is a ratio of two vertical offsets
+from the same horizon, so focal length, resolution and aspect all cancel out of it - confirmed by
+an empirical sweep. **The retired 0.21-0.22 target came from measuring -03's roof SCOOP as if it
+were the roofline. `camera.js:24` says do not resurrect it. Do not resurrect it.**
+
+**The user's call: re-measure the current build against these existing stills first.** The question
+to answer before changing a single constant is whether the build still HITS its own documented
+target. A rig that has drifted off 19-20% is a bug with a known fix; a rig sitting exactly on
+19-20% that still feels far means the target is wrong, and that is a different task with a
+different justification.
+
+### How to measure - it already exists
+
+`tools/_cammeas.js` is the harness. It projects every car vertex through the live camera at
+1920x1080, takes the roofline from the body mesh only (`a.count > 1000`, the lofted shell - not the
+wing) and the contact point from the lowest projected vertex, which is exactly the roof-panel
+distinction the reference numbers depend on. `tools/_heromask.mjs` is the pixel-side cross-check.
+
+Do not write a third measurement script. Two already disagreeing would be worse than either.
+
+Measure at rest first, since that is where the user reports the problem, then across a speed sweep
+to confirm the pose holds - `camera.js:27` claims that since r8 it holds at every speed rather than
+only at the speed it was solved at, and that claim should be re-verified, not assumed.
+
+### The knobs, in the order to reach for them
+
+- `FRAME.distScale` (`camera.js:44`, currently `1.293`, "~5.6 m of clear air behind the rear
+  bumper, per the stills"). The direct one. Note it was RAISED from 1.16 to hold the r7 pose once
+  `distSpeed` stopped inflating it - so it is already carrying compensation for another change, and
+  moving it moves the whole pose.
+- `FRAME.heightScale` (`camera.js:66`, currently `1.029`). **Height is what sets DEPRESSION**
+  (`camera.js:67`). Change distance and height together or DEPRESSION walks off its band while the
+  car happens to look the right size.
+- The scene triple at `camera.js:137`: `distance: 7.4`, `height: 1.75`, `fov: 44`.
+
+Leave `distSpeed` at `0.0`. `camera.js:46` records why it is zero: a positive value stacked with
+the FOV swing and the height droop to shrink the car by 24% and walk the contact line 0.085 of
+frame height between rest and speed. That was a real regression, it was diagnosed, and it is not to
+be reintroduced to solve a rest-pose complaint.
+
+### Careful about
+
+**Every scene in `scenes.js` inherits this framing** - that is the entire point of FRAME reshaping
+the distance/height/lookHeight triple. Moving the camera moves every visual regression baseline at
+once. Expect the gate to go red across the board, and treat that as the change being real rather
+than as a failure to be suppressed. Re-baseline deliberately, in one commit, with the numbers
+stated.
+
+`camera.js:265` uses the block building line for its occlusion raycast. T22 changes what physics
+considers solid; these two are independent and must stay independent - do not "fix" one via the
+other.
+
+The user said "a bit closer". A bit. Land inside the documented band and stop; do not chase a feel
+past the measurement, because the measurement is the only thing here that is not an opinion.
+
+### Acceptance criteria
+
+- Measured before/after for the FULL table above, at rest, via `tools/_cammeas.js`. Not a
+  screenshot and a claim.
+- DEPRESSION inside 0.29-0.30 after the change, and stated.
+- Hero at 19.1-20.5% of frame height to the roof panel at rest.
+- A speed sweep showing the pose holds from rest to vMax and through a boost - state the drift in
+  frame-height percent and in contact-line position.
+- If the build was ALREADY inside the band before the change, say so explicitly and stop for the
+  user's call rather than moving it anyway. That result means the reference target is what needs
+  revisiting, and that is the user's decision, not a builder's.
+- `camera.js`'s framing note updated with whatever the new numbers are. It is the only record of
+  how this rig was derived and a stale one has already cost a round.
+- Visual regression baselines re-taken for every scene, in one commit, with the reason in the
+  message.
+- `bash tools/lint.sh` clean.
+
+---
+
+## T24 - Source link in the menu
+
+**Mode: solo. Trivial.**
+**Depends on: nothing. Shares `menu.js` with T15 - do not run alongside it.**
+
+### What the user wants
+
+A link to the game's repository in the menu, at the bottom, with a sensible name:
+
+    https://github.com/RichardBray/burnout-gauntlet
+
+### Where it goes
+
+`menu.js:609` already has the element to sit next to:
+
+```js
+const foot = h('div', 'foot', 'options apply live to the frame behind');
+inner.appendChild(foot);
+```
+
+`foot` is the last child of `inner` and stays last in both modes - `orderCard()` (`menu.js:629`)
+moves the controls block around it, never past it. So the footer is genuinely the bottom of the
+card in both the start and the pause menu, which is what the user asked for.
+
+Put the link in that footer. "Source on GitHub" or similar - the user asked for a sensible name,
+not the bare URL.
+
+### Careful about
+
+- `target="_blank"` and `rel="noopener noreferrer"`. Without it the link navigates AWAY from a
+  running game and the player loses their session. `noopener` is not optional on a `_blank` link.
+- The menu owns its own DOM and its own styles in the `<style>` block built at `menu.js:98`. Add
+  the anchor rule there with the rest, do not inline a `style=` attribute.
+- The card is pointer-driven and sits over the canvas. Confirm the anchor is actually clickable -
+  the HUD layer is `pointer-events: none` but the menu card is not, so this should just work;
+  verify rather than assume.
+- The start menu's click is the only legitimate user gesture on the boot path and is what unlocks
+  WebAudio (`menu.js:6`). Clicking the link must not be mistaken for the DRIVE click or swallow it.
+- Style it as a quiet footer link, not a button. The footer is deliberately low-emphasis and
+  nothing in this task justifies competing with DRIVE for attention.
+
+### Acceptance criteria
+
+- The link appears at the bottom of BOTH the start and the pause menu, below the controls block in
+  each.
+- Clicking opens the repo in a new tab and the running game is untouched - still driving, still
+  paused, whichever it was.
+- `rel="noopener noreferrer"` present.
+- No layout shift in either mode at 1280x720, where the card is already over-full (measured 956 px
+  of content against 702 px of card, `menu.js:619`). State the new content height.
+- `bash tools/lint.sh` clean.

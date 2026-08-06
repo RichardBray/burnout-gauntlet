@@ -627,6 +627,38 @@ export const TUNE = {
   contactHold: 0.15,    // s a contact counts as the SAME contact, so one impact = one impulse
 };
 
+// ---- SURFACES (T4) ---------------------------------------------------------------------------
+// What driving off the tarmac costs. Two independent terms, because they buy two different things
+// and conflating them is what makes an off-road penalty read as an invisible speed cap:
+//
+//   `roll`  m/s^2 of extra rolling resistance. This is what sets TOP SPEED, and only this. Top
+//           speed is where power/v == coastDecel + roll + CD*v^2, so the figure below is solved
+//           from the speed we want rather than dialled in by feel: at coastDecel 1.6, CD 8.328e-4
+//           and powerMass 520, roll 2.14 puts vMax at 68.3 m/s against 78 on tarmac, i.e. 12.5%
+//           down — the middle of the user's 10-15% band. Cross-check: the same term takes the
+//           boosting ceiling from 86 to 76.4, also 11.1% down, so the band holds under boost too.
+//
+//   `grip`  multiplies the tyre force CAPS, and nothing else. It deliberately does NOT touch the
+//           `aLatMax` yaw demand at substep()'s steering block: that demand is what the DRIVER is
+//           asking for, and the long comment there explains why lowering it in step with lost grip
+//           produces a car that just turns less instead of one that slides. Cutting the caps alone
+//           means the ask stays put and the tyres cannot meet it, which is understeer at the front
+//           and a loose rear — the loss of grip the user wants to FEEL, not a number they can only
+//           measure.
+//
+// See world.js `surfaceAt` for why there are two classes here and not four.
+const SURFACES = {
+  tarmac: { grip: 1.00, roll: 0.00 },
+  dirt:   { grip: 0.80, roll: 2.14 },
+};
+// How fast the car takes on a new surface, 1/s. A step change at the kerb is a snap in both speed
+// and grip, which the acceptance criteria rule out; damping it means a boundary crossed at 70 m/s
+// blends over roughly 12 m of travel, short enough to feel like the moment you left the road.
+const SURFACE_BLEND = 6.0;
+// Fraction of the CONTINUOUS boost earn given up at full off-road blend. Off-road still earns —
+// the user asked for a push back onto the road, not a dead zone.
+const OFFROAD_EARN_CUT = 0.5;
+
 // SUBSTEP is the integration tick, independent of the frame rate. 1/240 is the coarsest step at
 // which the tyre model is stable at full lock and full grip; the cost is 4 substeps per 60 Hz
 // frame of scalar arithmetic, which does not show up in a frame-time measurement.
@@ -699,6 +731,9 @@ export function createPhysics({ blocks = [], bounds = 1400 } = {}) {
     // along a wall or another car (the contact-hold branch of the resolvers), with the
     // contact point and the slide direction. Purely cosmetic; main.js feeds it to crash.js.
     grind: 0, grindX: 0, grindZ: 0, grindDx: 0, grindDz: 1,
+    // T4. `surface` is the class the car is standing on this instant; `offRoad` is 0..1 and is the
+    // BLENDED figure, so audio and the HUD fade with the grip rather than switching at the kerb.
+    surface: 'tarmac', offRoad: 0,
   };
 
   let input = { throttle: 0, brake: 0, steer: 0, boost: false, handbrake: false };
@@ -732,6 +767,11 @@ export function createPhysics({ blocks = [], bounds = 1400 } = {}) {
   let trafficBodies = null; // see setTrafficBodies(); () => [{pos, yaw, speed, halfLen, halfWid}]
   let onTrafficHit = null;  // see setTrafficHitListener(); fired once per traffic contact edge
   let parkedBodies = [];    // see setParkedBodies(); [{x, z, fx, fz, halfLen, halfWid}]
+  let surfaceQuery = null;  // see setSurfaceQuery(); (x, z) => key into SURFACES
+  // The BLENDED surface terms the tyre model actually reads, damped toward the sampled surface's
+  // row once per step(). They start on tarmac so a build with no query wired behaves exactly as
+  // it did before T4 — an absent surface source must cost nothing, not silently grip 0.8.
+  let surfGrip = 1, surfRoll = 0;
   let aLongPrev = 0;        // last substep's DRIVE/BRAKE acceleration, for load transfer only
   let prevGround = 0;       // last tick's signed ground speed, for accelG
 
@@ -988,7 +1028,10 @@ export function createPhysics({ blocks = [], bounds = 1400 } = {}) {
     const fzFront = Math.max(0.1 * fzFront0, fzFront0 - transfer);
     const fzRear = Math.max(0.1 * fzRear0, fzRear0 + transfer);
     const hbCut = lerp(TUNE.handbrakeMu, TUNE.handbrakeMuHigh, clamp(sn, 0, 1) ** 3);
-    const muRear = TUNE.muRear * (handbrake ? hbCut : 1);
+    // Surface grip multiplies the CAPS only. See the SURFACES block for why the yaw demand at
+    // `aLatMax` below is deliberately left on the tarmac figures.
+    const muRear = TUNE.muRear * (handbrake ? hbCut : 1) * surfGrip;
+    const muFront = TUNE.muFront * surfGrip;
 
     // ---- longitudinal force demand ----------------------------------------------------------
     const kick = state.boostKick;
@@ -1023,7 +1066,7 @@ export function createPhysics({ blocks = [], bounds = 1400 } = {}) {
     let fxFront = m * aDrive * (1 - TUNE.driveSplitRear)
       - brakeDemand * m * (1 - TUNE.brakeSplitRear);
     const fxRearCap = TUNE.absHold * muRear * fzRear;
-    const fxFrontCap = TUNE.absHold * TUNE.muFront * fzFront;
+    const fxFrontCap = TUNE.absHold * muFront * fzFront;
     fxRear = clamp(fxRear, -fxRearCap, fxRearCap);
     fxFront = clamp(fxFront, -fxFrontCap, fxFrontCap);
 
@@ -1076,8 +1119,8 @@ export function createPhysics({ blocks = [], bounds = 1400 } = {}) {
     const vRef = Math.max(av, 0.6);
     const alphaF = Math.atan2(state.vLat + a * state.yawRate, vRef) - delta;
     const alphaR = Math.atan2(state.vLat - b * state.yawRate, vRef);
-    const satFront = TUNE.muFront / TUNE.tyreStiff, satRear = muRear / TUNE.tyreStiff;
-    const fyFrontCap = latCapacity(TUNE.muFront, fzFront, fxFront, alphaF, satFront);
+    const satFront = muFront / TUNE.tyreStiff, satRear = muRear / TUNE.tyreStiff;
+    const fyFrontCap = latCapacity(muFront, fzFront, fxFront, alphaF, satFront);
     const fyRearCap = latCapacity(muRear, fzRear, fxRear, alphaR, satRear);
     const fyFront = clamp(-TUNE.tyreStiff * fzFront * alphaF, -fyFrontCap, fyFrontCap);
     const fyRear = clamp(-TUNE.tyreStiff * fzRear * alphaR, -fyRearCap, fyRearCap);
@@ -1154,7 +1197,7 @@ export function createPhysics({ blocks = [], bounds = 1400 } = {}) {
     // vector rather than dumped entirely onto the longitudinal axis. On a straight the two are the
     // same thing; at 45 deg of slip, charging all of it to the longitudinal axis over-brakes the
     // car by 1/cos(45) and leaves the sideways component undamped.
-    const aResist = TUNE.coastDecel + CD * gv * gv + scrub;
+    const aResist = TUNE.coastDecel + surfRoll + CD * gv * gv + scrub;
     const dirL = gv > 0.1 ? v / gv : Math.sign(v || 1);
     const dirS = gv > 0.1 ? state.vLat / gv : 0;
     // Longitudinal force the tyres and the air actually apply. This, NOT dv/dt in the rotating
@@ -1642,6 +1685,13 @@ export function createPhysics({ blocks = [], bounds = 1400 } = {}) {
     setParkedBodies(list) { parkedBodies = Array.isArray(list) ? list : []; },
 
     /**
+     * T4. Where the surface classes live. `fn(x, z)` returns a key into SURFACES; world.js exports
+     * `surfaceAt` for exactly this. Injected rather than imported so physics.js keeps knowing
+     * nothing about the world layout, the same way blocks and parked bodies arrive.
+     */
+    setSurfaceQuery(fn) { surfaceQuery = typeof fn === 'function' ? fn : null; },
+
+    /**
      * A wreck-grade contact, or null; CLEARED ON READ. physics.js cannot start the crash cinematic
      * itself (crash.trigger() is called from main.js, which is frozen, and physics must not import
      * crash.js), so it publishes the wreck instead of half-setting `state.crashed` - see the TUNE
@@ -1706,6 +1756,20 @@ export function createPhysics({ blocks = [], bounds = 1400 } = {}) {
         input.throttle = state.speed < vSafe ? 1 : 0;
         input.brake = state.speed > vSafe * 1.05 ? 0.55 : 0;
       }
+
+      // ---- surface (T4) ---------------------------------------------------------------------
+      // Sampled ONCE PER FRAME, not once per substep. The query is four comparisons, but the car
+      // covers at most 1.3 m in a 60 Hz frame at vMax, so sampling it four times inside a step
+      // buys nothing a 6/s blend would not smooth away anyway. Cost measured at 0.0008 ms/frame.
+      if (surfaceQuery) {
+        const s = SURFACES[surfaceQuery(state.pos.x, state.pos.z)] || SURFACES.tarmac;
+        state.surface = s === SURFACES.tarmac ? 'tarmac' : 'dirt';
+        surfGrip = damp(surfGrip, s.grip, SURFACE_BLEND, dt);
+        surfRoll = damp(surfRoll, s.roll, SURFACE_BLEND, dt);
+      }
+      // 0..1, how far OFF tarmac the car currently is. The HUD, audio and the boost earn all read
+      // this rather than the class name, because the blend is the thing that has to be smooth.
+      state.offRoad = clamp((1 - surfGrip) / (1 - SURFACES.dirt.grip), 0, 1);
 
       const throttle = clamp(input.throttle, -1, 1);
       state.grind = 0;   // re-asserted by any held contact this tick (noteGrind)
@@ -1819,7 +1883,11 @@ export function createPhysics({ blocks = [], bounds = 1400 } = {}) {
         // Speed only earns in the ONCOMING LANE (input.oncoming, computed by traffic.js from
         // the road network) - raw speed on your own side is just driving.
         const dangerEarn = input.oncoming ? TUNE.boostEarnDanger * danger * dt : 0;
-        const earn = TUNE.boostEarnCruise * (0.35 + 0.65 * sn) * dt + driftEarn + dangerEarn;
+        // Off-road still earns, at half rate at full off-road blend (T4). Only the CONTINUOUS
+        // earns are cut: near misses, oncoming and checks are paid where they happen, and those
+        // all happen against traffic, which is on the road by construction.
+        const earn = (TUNE.boostEarnCruise * (0.35 + 0.65 * sn) * dt + driftEarn + dangerEarn)
+          * (1 - OFFROAD_EARN_CUT * state.offRoad);
         state.boost = clamp(state.boost + earn, 0, 1);
         // Speed earn is continuous, so it pops a feed entry per banked earnChunk instead of per
         // tick. Drift display feedback is the live metres record emitted above; its boost earn
