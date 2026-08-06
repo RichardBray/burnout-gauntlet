@@ -35,7 +35,9 @@ const V_REF = 78;         // m/s — physics TUNE.vMax, the speed all curves nor
 const LOOKH_REF = 1.05;   // the lookHeight the pitch model is calibrated at
 
 /** Reshapes scene config into the measured Burnout pose. See FRAMING NOTE. */
-const FRAME = {
+// `export` is here only so the TEMPORARY game/devtune.js can slide these live. Drop the keyword
+// when devtune.js is deleted (TASKS.md T9's closing step).
+export const FRAME = {
   // Standoff, expressed against the scene's BASE lens: the counter-zoom below multiplies it down
   // as the lens opens (0.941 at the 44.4 deg cruise lens), so 1.293 here is the 1.217 the pose was
   // solved at. Raised from 1.16 purely to hold the r7 pose once distSpeed stopped inflating it.

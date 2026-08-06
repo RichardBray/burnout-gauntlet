@@ -29,6 +29,7 @@ import { createPoleFall } from './polefall.js';
 import { createMenu } from './menu.js';
 import { createMusic } from './music.js';
 import { getScene } from './scenes.js';
+import { createDevTune } from './devtune.js';   // TEMPORARY, see TASKS.md T9. Delete with the file.
 
 const FIXED_DT = 1 / 60;
 
@@ -903,6 +904,10 @@ export async function boot() {
   physics.clearPath();
   hud.setVisible(true);
   hud.banner('BURNOUT GAUNTLET', 2.5);
+
+  // TEMPORARY tuning panel. Backtick toggles it, ?dev=1 opens it on boot. It drives its own rAF
+  // loop only while open, so there is no per-frame cost here. Delete this line with the file.
+  ctx.devtune = createDevTune({ physics, camRig });
 
   // ---- crash feel ------------------------------------------------------------
   // Two knobs, named rather than inlined as magic numbers, and declared BEFORE the
