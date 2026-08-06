@@ -246,11 +246,14 @@ Gated only on wave 1 landing:
   analytic `pow(dot(view, sun))`. One real hit - the SSAO buffer was a constant fraction of the
   render target, now pinned to an absolute height so its footprint is a fixed fraction of the
   FRAME. Cost 9.61 -> 10.05 ms p50 at 720p. The blur the user reported is the display upscale.
-- **T2**, geometry cleanup. **IN PROGRESS, at the approval gate with a PARTIAL list.** The shot
-  timeout that blocked it is fixed, and all seven scenes render. What the evidence pass found so
-  far is written up under T2 below - one finding is code-confirmed and ready to delete, one is
-  photographed but NOT yet attributed to a cause. The list is not complete: only
-  `wet-night-asphalt` and `dusk-highway-chase` have been read closely.
+- **T2**, geometry cleanup. **PARKED PART-DONE, deliberately, at the user's instruction.** The shot
+  timeout that blocked it is fixed and all seven scenes render. Two scenes were read closely
+  (`wet-night-asphalt`, `dusk-highway-chase`); the other five have NOT been audited, so the delete
+  list is incomplete and T2 is not closed.
+  What came out of the pass: the overhead wires were confirmed unattached to any pole, approved by
+  the user, and **deleted**; the second suspect turned out not to be geometry at all and was split
+  out as **T27**. Both write-ups are under T2 below - read the tooling note there before running
+  any A/B, it is the reason four findings were nearly recorded wrongly.
 
 ### Wave 4 - the map, then what sits on it
 
@@ -401,35 +404,71 @@ If the user would rather simply delete the wires, that is one line and also fine
 carrying real thin shadows and the reference (`daytime-downtown-01`, "prop density is high ... and
 the wires cast their own thin shadows") wants them present.
 
-#### FINDING 2 - a hard-edged flat quad over the road. PHOTOGRAPHED, CAUSE NOT YET FOUND.
+#### FINDING 2 - a hard-edged dark region over the road. NOT GEOMETRY. NOTHING FOR T2 TO DELETE.
 
 `wet-night-asphalt`, roughly x 1150-1900, y 830-990: a dull flat region with a razor-straight
-horizontal top edge and a straight diagonal right edge, lying over the wet road to the car's
-lower-right and occluding the reflection streaks that surround it. It reads as a stray plane.
+horizontal top edge and a straight diagonal right edge, lying over the road to the car's lower
+right and killing the wet sheen that surrounds it. It reads like a stray plane dropped on the road.
 
-**Do not act on this yet - three hypotheses have been tested and all three are REFUTED:**
+**It is not one, and this is settled.** With
+`ssao.enabled = false; boost.pass.enabled = false; bloom.enabled = false;
+scene.overrideMaterial = MeshNormalMaterial` the whole region renders as one flat pale green -
+the up-facing `(0, 1, 0)` ground normal - continuous with the road around it, with no edge and no
+second surface anywhere in it. There is no polygon there to remove.
 
-- not the sun/moon shadow - `g.sky.sun.castShadow = false` leaves it pixel-unchanged;
-- not a contact-shadow pad - hiding the `contactShadows` mesh leaves it pixel-unchanged;
-- not ordinary scene geometry - `scene.overrideMaterial = MeshNormalMaterial` recolours the car
-  and leaves this region untouched, so whatever draws it is not being drawn by that pass.
+**So this is a SHADING defect, not stray geometry, and it is therefore OUT OF T2's SCOPE.** It
+wants its own task. It is still a real defect and the user did report it as something that looks
+wrong, so it must not be dropped on the floor.
 
-That last result is the informative one: it is drawn outside the main scene-graph pass, which
-points at the post chain or the road's planar reflection (`road.js` `PLANE_Y = 0.03`, and the
-header at `road.js:4` describes "an additive light-smear quad on the tarmac (used for wet-night
-reflections)"). That quad is the strongest remaining suspect and is where the next session should
-start.
+What has been ruled out, each with a measured frame delta so a null result cannot be confused with
+a toggle that did nothing (see the tooling note below - this bit the first attempt):
+
+| hypothesis | toggle | frame delta | verdict |
+|---|---|---|---|
+| road wetness / planar reflection | `roadKit.setWet(0)` | 23.53% of pixels moved >8 | REFUTED, region persists |
+| SSAO | `ssao.enabled = false` | 34.91% moved >8 | REFUTED, region persists |
+| sun/moon cast shadow | `sky.sun.castShadow = false` | 0.47% moved >8 | REFUTED, region persists |
+| contact-shadow pads | hide `contactShadows` | 0.24% moved >8 | REFUTED, region persists |
+| boost pass / motion blur | `boost.pass.uniforms.uDebug = 1` | **0.00%** | **UNTESTED - see below** |
+
+The boost row is not a refutation, it is a dead handle: the pass draws nothing in this scene.
+That is consistent - `main.js:279-305` adds exactly five passes (RenderPass, ssao, bloom,
+`boostFx.pass`, outputPass, fxaa) and `boostFx.pass` is the only blur among them, so with it
+inactive **the streaks on the road are the road shader's own anisotropic wet sheen, not motion
+blur**. Do not go looking for a motion-blur bug here.
+
+**Where the next session should start.** A hard-edged shading boundary on a continuous surface,
+which survives the sun's `castShadow` flag, looks like a light-volume or shadow-camera FOOTPRINT
+edge rather than a shadow cast by any one object - `sky.update(dt, focusPos)` keeps the shadow
+camera on the car, and the region's edge sits right beside the car. Check what happens at the edge
+of the shadow camera's coverage, and check the lamp light wash (`lampPositions` in `world.js`).
 
 Raycasting was tried and abandoned: `tools/_pickpx.mjs` returns hits whose screen positions do not
 agree with the picture, so its camera mapping is wrong somewhere. Fix it or do not trust it.
 
+#### Tooling note - how this pass nearly recorded four false refutations
+
+`tools/_abtoggle.mjs` screenshots a scene, applies a toggle against `window.__game`, re-renders and
+screenshots again. **The first version of it silently proved nothing.** Its re-render was not
+reaching the visible canvas, so B came back identical to A, and "identical" reads exactly like
+"the toggle changed nothing, hypothesis refuted". Three refutations were written into this file on
+that basis before the tool was checked against itself.
+
+The first fix - assert B differs from A byte-wise - was ALSO not enough: this renderer's temporal
+jitter makes two frames of an unchanged scene differ slightly everywhere, so a no-op toggle still
+passed. The tool now measures mean absolute delta and the percentage of pixels that moved by more
+than 8, and **exits non-zero calling the run INVALID** when under 0.05% of the frame moved. That is
+what exposed the dead boost handle above.
+
+This is the same failure this repo keeps hitting and that the T1 warning at the top of this file
+describes: a green check that stays green when the thing it claims to measure is absent. A harness
+that cannot fail is not evidence.
+
 #### Tools built for this pass, kept because the next session needs them
 
+- `tools/_abtoggle.mjs` - the A/B toggle harness, with the validity guard described above.
 - `tools/_pickpx.mjs` - names the geometry under a screen pixel. **Camera mapping is suspect, see
   above.**
-- `tools/_abtoggle.mjs` - screenshots a scene, applies a toggle expression against `window.__game`,
-  re-renders and screenshots again. This is what refuted all three hypotheses above, and it is the
-  cheap way to ask "is this thing responsible" without editing the tree.
 
 ### Acceptance criteria
 
@@ -2002,3 +2041,55 @@ default would quietly overrule T6.
   cost is not a 60 fps concern, but state what it is.
 - Readable at 1280x720, where the menu card is already over-full (`menu.js:619`).
 - `bash tools/lint.sh` clean.
+
+---
+
+## T27 - A hard-edged dark patch on the road beside the car
+
+**Mode: solo.**
+**Depends on: nothing.**
+**Split out of T2 on 2026-08-06, because T2 is about geometry and this is not geometry.**
+
+### What it looks like
+
+`wet-night-asphalt`, roughly x 1150-1900, y 830-990 at 1920x1080: a dull region on the road to the
+car's lower right, with a razor-straight horizontal top edge and a straight diagonal right edge. It
+suppresses the wet sheen inside it, so it reads as a flat plate lying on the tarmac. It is one of
+the things the user was pointing at when they reported geometry that does not belong.
+
+### What it is not - all measured, do not re-derive
+
+Under `scene.overrideMaterial = MeshNormalMaterial` (with ssao, bloom and the boost pass disabled
+so the override survives to the screen) the region renders as one flat `(0, 1, 0)` up-facing green,
+continuous with the road, no edge and no second surface. **There is no polygon there.** It is a
+shading defect.
+
+Ruled out, each with the frame delta that proves the toggle actually did something: road wetness
+and the planar reflection (`roadKit.setWet(0)`, 23.5% of pixels moved, region persists), SSAO
+(34.9% moved, persists), the sun/moon cast shadow (`sky.sun.castShadow = false`, 0.47% moved,
+persists), and the contact-shadow pads (0.24% moved, persists).
+
+Not ruled out, because the handle is dead rather than the hypothesis being wrong: the boost pass
+draws nothing in this scene, so `boost.pass.uniforms.uDebug` moves 0.00% of the frame. Note that
+`boostFx.pass` is the only blur in the composer, so the streaks on the wet road are the road
+shader's own anisotropic sheen and NOT motion blur.
+
+### Where to start
+
+A hard-edged shading boundary on a continuous surface that survives the sun's `castShadow` flag
+suggests a light-volume or shadow-camera FOOTPRINT edge rather than a shadow cast by an object.
+`sky.update(dt, focusPos)` keeps the shadow camera on the car and the region's edge sits right
+beside the car, which fits. Also check the night lamp wash driven by `lampPositions` in `world.js`.
+
+Use `tools/_abtoggle.mjs`. Read its validity guard first: a run that moves under 0.05% of the frame
+is reported INVALID, and that is deliberate - four hypotheses were nearly recorded as refuted off a
+harness that was not re-rendering at all.
+
+### Acceptance criteria
+
+- The cause is NAMED, with the toggle and the frame delta that demonstrates it, not guessed.
+- The patch is gone at 1920x1080 and at 1280x720, in `wet-night-asphalt` and in any other scene it
+  turns out to affect - check all seven, since nothing had noticed it outside this one.
+- Whatever the term was doing legitimately still happens; this is a fix, not a feature deletion.
+- No frame-time regression. State p50/p99 at 1280x720 before and after.
+- Visual regression gate holds for every scene. `bash tools/lint.sh` clean.

@@ -41,7 +41,7 @@ const page = await browser.newPage({ viewport: { width: 1920, height: 1080 }, de
 await page.goto(`http://127.0.0.1:${port}/index.html#scene=${scene}&shot=1`, { waitUntil: 'load' });
 await page.waitForFunction('window.__ready === true', null, { timeout: 60000 });
 await mkdir(out, { recursive: true });
-await page.screenshot({ path: join(out, `${scene}-A.png`) });
+const aBuf = await page.screenshot({ path: join(out, `${scene}-A.png`) });
 
 const applied = await page.evaluate(`(() => {
   const g = window.__game;
@@ -53,8 +53,42 @@ const applied = await page.evaluate(`(() => {
   return true;
 })()`);
 console.log('toggle applied:', applied);
-await page.screenshot({ path: join(out, `${scene}-B.png`) });
+const bBuf = await page.screenshot({ path: join(out, `${scene}-B.png`) });
+
+// A toggle that changes nothing and a re-render that never reached the canvas look
+// IDENTICAL from here, and the first three toggles run through this tool were the
+// second kind - the conclusion "hypothesis refuted" was drawn from a stale frame.
+// So prove the pixels moved before reporting anything, and if they did not, say the
+// run is INVALID rather than letting it read as a null result.
+// Byte-inequality is NOT enough: this renderer's temporal jitter makes two frames of an
+// unchanged scene differ by a fraction of a level everywhere, so "B != A" was passing for
+// toggles that did nothing at all. Measure how much moved, and require a real signal.
 console.log(`wrote ${out}/${scene}-A.png and -B.png`);
+const diff = await page.evaluate(async ([a, b]) => {
+  const load = async (d) => {
+    const img = new Image();
+    await new Promise((r, j) => { img.onload = r; img.onerror = j; img.src = `data:image/png;base64,${d}`; });
+    const c = document.createElement('canvas'); c.width = img.width; c.height = img.height;
+    c.getContext('2d').drawImage(img, 0, 0);
+    return c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+  };
+  const [A, B] = [await load(a), await load(b)];
+  let sum = 0, over = 0, n = 0;
+  for (let i = 0; i < A.length; i += 4) {
+    const d = Math.abs(A[i] - B[i]) + Math.abs(A[i + 1] - B[i + 1]) + Math.abs(A[i + 2] - B[i + 2]);
+    sum += d / 3; if (d / 3 > 8) over++; n++;
+  }
+  return { meanAbs: +(sum / n).toFixed(3), pctOver8: +(100 * over / n).toFixed(2) };
+}, [aBuf.toString('base64'), bBuf.toString('base64')]);
+console.log(`A vs B: mean abs delta ${diff.meanAbs}/255, ${diff.pctOver8}% of pixels moved by >8`);
+// Jitter alone lands near 0 mean with a negligible fraction over 8; a toggle that actually
+// did something moves a visible patch of the frame well past that.
+if (diff.pctOver8 < 0.05) {
+  console.error('INVALID RUN: the frame did not meaningfully change. Either the toggle is a '
+    + 'no-op, the handle is wrong, or the re-render never reached the visible canvas. '
+    + 'Do NOT read this as "hypothesis refuted".');
+  await browser.close(); server.close(); process.exit(2);
+}
 await browser.close();
 server.close();
 process.exit(0);
