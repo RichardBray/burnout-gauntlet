@@ -161,6 +161,16 @@ export function createHud(container, { layout, maxPixelRatio = 1, attached = tru
   // banner
   let bannerText = '', bannerT = 0, bannerLife = 1;
 
+  // centre event banner (T11 / T13). One at a time by construction: these are punctuation, and
+  // two of them on screen at once is just noise. See eventBanner() for the precedence rule.
+  let evB = null;
+  // Rising-edge latch for the BOOST OK banner. `evReadyArmed` false means the bar is at or near
+  // full and the banner has already been spent; it re-arms only once the bar has fallen a clear
+  // margin below the ready line, so hovering at full never re-fires it.
+  // `null` = not yet primed. The car spawns with a full bar, so priming on the first update stops
+  // the banner firing at the start menu for a fill the player did not earn.
+  let evReadyArmed = null;
+
   // cached geometry, rebuilt on resize
   let barGeo = null;
   const flameTex = makeFlameTexture();
@@ -2669,7 +2679,10 @@ export function createHud(container, { layout, maxPixelRatio = 1, attached = tru
     const G = boostGeometry();
     const lines = [];
     if (s.boosting) lines.push(['BURNING BOOST', '#d6ff8c']);
-    else if (shownBoost >= READY_AT) lines.push(['BOOST READY', '#d6ff8c']);
+    // T11 deleted the 'BOOST READY' line that used to sit here. The centre banner fires once on
+    // the transition to full, and the bar turning C_READY amber at READY_AT is the persistent
+    // indicator — a third statement of the same fact was just clutter.
+
     if (damageMix > 0.05) lines.push([`BODY DAMAGE ${Math.round(damageMix * 100)}%`, '#ffa27a']);
     if (!lines.length) return;
     while (lines.length > 3) lines.pop();
@@ -2722,6 +2735,180 @@ export function createHud(container, { layout, maxPixelRatio = 1, attached = tru
       }
       ctx.restore();
     }
+  }
+
+  // =========================================================================
+  // centre event banner (T11's BOOST OK!, T13's BURNOUT X N!)
+  // =========================================================================
+  //
+  // ONE PRIMITIVE, TWO COLOURWAYS. T13 needs the identical object in flame orange with a different
+  // badge and different type, so everything that differs between them is a parameter and nothing
+  // is copied. Drawn from the same canvas vocabulary as the rest of this file — torn() for the
+  // plate, drawType() for the slanted type — so it stays sharp at 720p and at 1080p and scales
+  // with S like every other element rather than being an image asset at one size.
+  //
+  // It will not be pixel-identical to reference/hud/boost-ok-banner.png, which is a painted asset.
+  // What is reproduced is the READ: a toothed medallion on the left, a torn slanted band running
+  // off to the right, heavy slanted white type sitting on it.
+  const EV_PALETTE = {
+    // T11. Amber, matching the bar's own C_READY so the banner and the full bar are visibly the
+    // same statement.
+    boost: { band: '#f0a81a', bandHi: '#ffd257', bandLo: '#b8760a',
+      glow: 'rgba(255,190,60,0.55)', badge: 'boost' },
+    // T13. Flame orange, deliberately hotter and redder than the amber above: a burnout has to be
+    // distinguishable from a full bar at a glance, in peripheral vision, at speed.
+    burnout: { band: '#f2620f', bandHi: '#ffa53a', bandLo: '#a52f04',
+      glow: 'rgba(255,110,30,0.6)', badge: 'flame' },
+  };
+  const EV_LIFE = 1.2;      // s, total. Long enough to read at speed, short enough not to nag.
+
+  /**
+   * Fire the centre banner.
+   * @param {string} text        e.g. 'BOOST OK!' or 'BURNOUT X2!'
+   * @param {'boost'|'burnout'} kind   colourway + badge
+   * @param {number} [priority]  a banner may only be replaced by one of >= priority.
+   */
+  function eventBanner(text, kind = 'boost', priority = 0) {
+    // PRECEDENCE, stated once here rather than at each call site: a burnout outranks a boost-ok,
+    // and they genuinely can coincide — a burnout refills the bar to full, which is itself a
+    // rising edge into READY_AT. Without this the player would see BOOST OK! stamped over the
+    // burnout they just earned. Equal priority replaces, so BURNOUT X2 can follow BURNOUT.
+    if (evB && evB.priority > priority && evB.t > 0) return;
+    evB = { text: String(text).toUpperCase(), kind, priority, t: EV_LIFE };
+  }
+
+  /** Toothed medallion: dark cog ring, colour disc, white glyph. Centred on the current origin. */
+  function evBadge(r, pal) {
+    const teeth = 26;
+    ctx.beginPath();
+    for (let i = 0; i <= teeth * 2; i++) {
+      const a = (i / (teeth * 2)) * Math.PI * 2;
+      const rr = r * (i % 2 ? 1.0 : 1.13);
+      const x = Math.cos(a) * rr, y = Math.sin(a) * rr;
+      if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    }
+    ctx.closePath();
+    ctx.fillStyle = 'rgba(10,12,16,0.95)';
+    ctx.fill();
+
+    ctx.beginPath();
+    ctx.arc(0, 0, r * 0.86, 0, Math.PI * 2);
+    ctx.fillStyle = pal.band;
+    ctx.fill();
+    ctx.beginPath();
+    ctx.arc(0, 0, r * 0.70, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(8,10,14,0.92)';
+    ctx.fill();
+
+    ctx.fillStyle = '#fff';
+    if (pal.badge === 'boost') {
+      // Car silhouette in profile: wedge nose, cabin bubble, two wheels.
+      const u = r * 0.052;
+      ctx.beginPath();
+      ctx.moveTo(-9 * u, 1.5 * u);
+      ctx.lineTo(-9 * u, -0.6 * u);
+      ctx.lineTo(-3.4 * u, -2.0 * u);
+      ctx.quadraticCurveTo(-0.6 * u, -4.6 * u, 3.0 * u, -2.2 * u);
+      ctx.lineTo(9.2 * u, -1.0 * u);
+      ctx.lineTo(9.2 * u, 1.5 * u);
+      ctx.closePath();
+      ctx.fill();
+      for (const wx of [-5.2, 5.0]) {
+        ctx.beginPath();
+        ctx.arc(wx * u, 1.6 * u, 1.9 * u, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    } else {
+      // Flame: three licks off a common base.
+      const u = r * 0.055;
+      ctx.beginPath();
+      ctx.moveTo(-6 * u, 5 * u);
+      ctx.quadraticCurveTo(-7.4 * u, -1 * u, -2.4 * u, -3 * u);
+      ctx.quadraticCurveTo(-3.4 * u, -0.4 * u, -1.0 * u, -1.4 * u);
+      ctx.quadraticCurveTo(0.4 * u, -6.4 * u, 3.2 * u, -3.2 * u);
+      ctx.quadraticCurveTo(3.0 * u, -1.0 * u, 4.6 * u, -2.0 * u);
+      ctx.quadraticCurveTo(7.4 * u, 1.0 * u, 6.0 * u, 5 * u);
+      ctx.closePath();
+      ctx.fill();
+    }
+  }
+
+  function drawEventBanner() {
+    if (!evB || evB.t <= 0) return;
+    const pal = EV_PALETTE[evB.kind] || EV_PALETTE.boost;
+    const age = EV_LIFE - evB.t;
+    // Sweep in from the left, hold, fade up and out. The sweep is the reference's own motion and
+    // it doubles as the reason the banner never reads as a static overlay pasted on the road.
+    const IN = 0.22, OUT = 0.30;
+    let dx = 0, alpha = 1, dy = 0;
+    if (age < IN) {
+      const u = easeOutBack(age / IN);
+      dx = -(1 - u) * W * 0.55;
+      alpha = smoothstep(0, 0.5, age / IN);
+    } else if (evB.t < OUT) {
+      const u = 1 - evB.t / OUT;
+      alpha = 1 - u * u;
+      dy = -u * 22 * S;
+    }
+
+    // Every dimension is a fraction of the frame, so 720p and 1080p get the same design rather
+    // than the same pixel count — the HUD flame halo's rule, applied to type and plate alike.
+    const size = clamp(W * 0.040, 30, 92);
+    const bh = size * 1.46;
+    const tw = typeWidth(evB.text, { size, weight: 900, condense: 0.80, track: size * 0.045 });
+    const r = bh * 0.62;                       // medallion radius
+    const bw = tw + size * 1.9;                // band width, type plus its margins
+    const x0 = -bw * 0.36;                     // band start, so the medallion overlaps its left end
+
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    // Placed at 0.37 of frame height: above the car, below the street plate, and clear of the
+    // road surface the player is actually reading at speed.
+    ctx.translate(W / 2 + dx, H * 0.37 + dy);
+    ctx.rotate(-0.052);                        // the reference band lifts slightly to the right
+
+    // ---- band ---------------------------------------------------------------------------
+    ctx.save();
+    ctx.shadowColor = 'rgba(0,0,0,0.5)';
+    ctx.shadowBlur = 22 * S;
+    polyPath(torn(x0, -bh / 2, bw, bh, bh * 0.30, bh * 0.075, 17));
+    const g = ctx.createLinearGradient(0, -bh / 2, 0, bh / 2);
+    g.addColorStop(0, pal.bandHi);
+    g.addColorStop(0.45, pal.band);
+    g.addColorStop(1, pal.bandLo);
+    ctx.fillStyle = g;
+    ctx.fill();
+    ctx.restore();
+
+    // Torn flecks trailing off the right end, so the band ends in a rip rather than an edge.
+    ctx.fillStyle = pal.band;
+    for (let i = 0; i < 7; i++) {
+      const fx = x0 + bw + (0.10 + jit(i, 5) * 0.06 + i * 0.055) * bw;
+      const fy = jit(i, 23) * bh * 0.42;
+      const fs = bh * (0.20 - i * 0.02);
+      if (fs <= 0) break;
+      ctx.beginPath();
+      ctx.moveTo(fx, fy - fs);
+      ctx.lineTo(fx + fs * 1.5, fy - fs * 0.3);
+      ctx.lineTo(fx + fs * 0.6, fy + fs);
+      ctx.closePath();
+      ctx.fill();
+    }
+
+    // ---- type ---------------------------------------------------------------------------
+    drawType(evB.text, x0 + bw * 0.5 + size * 0.30, size * 0.36, {
+      size, weight: 900, align: 'center', condense: 0.80, slant: 0.22, track: size * 0.045,
+      fill: '#ffffff', outline: 'rgba(3,6,9,0.9)', outlineW: 0.05, shadow: 0.7, glow: pal.glow,
+    });
+
+    // ---- medallion, last so it sits over the band's left end ------------------------------
+    ctx.save();
+    ctx.translate(x0 + r * 0.42, 0);
+    ctx.rotate(0.052);                         // undo the band tilt: the badge hangs level
+    evBadge(r, pal);
+    ctx.restore();
+
+    ctx.restore();
   }
 
   // =========================================================================
@@ -2792,6 +2979,7 @@ export function createHud(container, { layout, maxPixelRatio = 1, attached = tru
     drawFeed(s);
     drawBoost(s);
     drawSpeedo(s);
+    drawEventBanner();
     drawBanner();
     gen++;
   }
@@ -2813,6 +3001,25 @@ export function createHud(container, { layout, maxPixelRatio = 1, attached = tru
       if (offBoostFor > 0.6) { chain = 1; chainArmed = false; }
     }
     if (s.crashed) { chain = 1; chainArmed = false; }
+
+    // T11. BOOST OK! on the RISING EDGE into the ready line, once per fill.
+    //
+    // The edge is taken on `shownBoost`, the damped display value, not on the raw physics figure,
+    // and that is deliberate: the banner announces what the BAR is showing, so firing it before
+    // the bar has visibly arrived would put the words on screen ahead of the thing they describe.
+    // The latch re-arms 0.06 below the line rather than at it, so a bar sitting on the boundary
+    // and jittering by a thousandth cannot machine-gun the banner.
+    if (evReadyArmed === null) {
+      // Prime off the SIM's boost, not the display's: shownBoost starts at 0 and damps up, so
+      // priming off it would arm the latch and then immediately fire on the way to a bar the
+      // player was handed at spawn.
+      evReadyArmed = clamp(s.boost ?? 0, 0, 1) < READY_AT;
+    } else if (evReadyArmed && shownBoost >= READY_AT) {
+      evReadyArmed = false;
+      eventBanner('BOOST OK!', 'boost', 0);
+    } else if (shownBoost < READY_AT - 0.06) {
+      evReadyArmed = true;
+    }
 
     burnMix = damp(burnMix, boosting ? 1 : 0, 12, dt);
     chainMix = damp(chainMix, chain > 1 ? 1 : 0, 8, dt);
@@ -2877,6 +3084,7 @@ export function createHud(container, { layout, maxPixelRatio = 1, attached = tru
     if (crashed) { oncomingYd = 0; oncomingHold = 0; }
 
     if (bannerT > 0) bannerT = Math.max(0, bannerT - dt);
+    if (evB && evB.t > 0) evB.t = Math.max(0, evB.t - dt);
     t += dt;
     void readyPulse;
   }
@@ -2895,6 +3103,12 @@ export function createHud(container, { layout, maxPixelRatio = 1, attached = tru
      * number moves.
      */
     get generation() { return gen; },
+    /**
+     * T11/T13 centre banner, for probes and for the burnout path in main.js.
+     * `hud.eventBanner(text, kind)` fires one; the getter reports the live one or null.
+     */
+    fireEventBanner: eventBanner,
+    get eventBannerState() { return evB && evB.t > 0 ? { text: evB.text, kind: evB.kind, t: evB.t } : null; },
     /** Integer metres currently painted in the single drift row; null once it has faded. */
     get driftMetres() { return driftLive || driftHold > 0 ? Math.floor(driftMetres) : null; },
     get driftPopupCount() { return driftLive || driftHold > 0 ? 1 : 0; },
