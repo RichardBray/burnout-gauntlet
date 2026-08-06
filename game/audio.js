@@ -1755,6 +1755,68 @@ export function createAudio({ enabled = true, volume = 0.62, space = 'city' } = 
     },
 
     /**
+     * T13. A completed full-bar burnout: the bar emptied and came straight back. Deliberately a
+     * bigger, dirtier gesture than boostReady()'s polite chime, because it has to be audible over
+     * a boosting engine and it is the reward, not a notification.
+     *
+     * Three layers, all from nodes this file already builds: a filtered noise WHOOSH swept up as
+     * the intake gulp, a low saw THUMP for the body, and a rising perfect-fifth pair an octave
+     * over boostReady's so the two read as related events rather than unrelated beeps. `n` is the
+     * chain count and shifts the fifth up a tone per step (capped), so X3 is audibly hotter than
+     * X1 without a second sound design.
+     */
+    burnout(n = 1) {
+      if (!running) return;
+      const now = ctx.currentTime;
+      const step = Math.min(4, Math.max(1, Math.round(n))) - 1;
+      const dest = busFx.input;
+
+      const whoosh = loopNoise(false, null, 1.0);
+      const wf = mkFilt('bandpass', 400, 1.1);
+      const wg = mkGain(1e-4, wf);
+      whoosh.gain.connect(wg);
+      wf.connect(dest);
+      wf.frequency.setValueAtTime(320, now);
+      wf.frequency.exponentialRampToValueAtTime(2400, now + 0.34);
+      wg.gain.exponentialRampToValueAtTime(0.5, now + 0.03);
+      wg.gain.exponentialRampToValueAtTime(1e-4, now + 0.42);
+
+      const thump = ctx.createOscillator();
+      thump.type = 'sawtooth';
+      const tg = mkGain(1e-4, dest);
+      thump.frequency.setValueAtTime(120, now);
+      thump.frequency.exponentialRampToValueAtTime(48, now + 0.20);
+      tg.gain.exponentialRampToValueAtTime(0.55, now + 0.012);
+      tg.gain.exponentialRampToValueAtTime(1e-4, now + 0.34);
+      thump.connect(tg);
+      thump.start(now); thump.stop(now + 0.36);
+      thump.onended = () => { try { thump.disconnect(); } catch (e) { /* noop */ } };
+
+      const semis = Math.pow(2, step * 2 / 12);
+      const cg = mkGain(1e-4, dest);
+      cg.gain.exponentialRampToValueAtTime(0.6, now + 0.02);
+      cg.gain.exponentialRampToValueAtTime(1e-4, now + 0.50);
+      for (const [f0, f1, dly] of [[392, 587, 0.02], [784, 1175, 0.10]]) {
+        const o = ctx.createOscillator();
+        o.type = 'square';
+        o.frequency.setValueAtTime(f0 * semis, now + dly);
+        o.frequency.exponentialRampToValueAtTime(f1 * semis, now + dly + 0.12);
+        const og = mkGain(0.22, cg);
+        o.connect(og);
+        o.start(now + dly); o.stop(now + dly + 0.36);
+        o.onended = () => { try { o.disconnect(); } catch (e) { /* noop */ } };
+      }
+
+      // loopNoise() starts a LOOPING source, so it has to be stopped explicitly or the voice
+      // survives its own envelope and leaks a node per burnout.
+      whoosh.src.stop(now + 0.5);
+      whoosh.src.onended = () => { try { whoosh.src.disconnect(); } catch (e) { /* noop */ } };
+      setTimeout(() => {
+        for (const nd of [wg, wf, tg, cg]) { try { nd.disconnect(); } catch (e) { /* noop */ } }
+      }, 900);
+    },
+
+    /**
      * Impact: body thud + sub, a bank of metallic resonances, a glass shard cloud and a
      * debris tail, with the CC0 crash layered underneath when it decoded.
      */

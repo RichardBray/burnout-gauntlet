@@ -171,6 +171,12 @@ export const TUNE = {
   boostPerNearMiss: 0.060,
   boostPerOncoming: 0.085,
   boostPerCheck: 0.100,
+  // OVERRULED BY THE USER (T13), and kept here as the record rather than deleted. `burnoutRefill`
+  // IS NO LONGER READ: a completed full-bar burn now refills to 1 unconditionally. The published
+  // behaviour below is what the game shipped with and what this file used to implement; the user
+  // was shown it and chose the full refill anyway. The figure stays so that a future reader can
+  // see the source we departed from and that we departed from it deliberately.
+  //
   // PUBLISHED: spending the whole bar in one burst performs a "burnout" that refills a PORTION;
   // enough stunts performed WHILE boosting instead refill it completely (a Burnout Chain), which
   // ends only on button release, failure to refill, or a crash. Our stunt proxy is drift time.
@@ -659,6 +665,11 @@ const SURFACE_BLEND = 6.0;
 // the user asked for a push back onto the road, not a dead zone.
 const OFFROAD_EARN_CUT = 0.5;
 
+// T13. Seconds a refilled bar may sit unspent before the burnout chain lapses. 8 s is a little
+// over one full burn (boostDuration) plus the time to line up the next one, so a player who is
+// actually chaining never loses it, and a player who has wandered off does.
+const BURNOUT_CHAIN_WINDOW = 8.0;
+
 // SUBSTEP is the integration tick, independent of the frame rate. 1/240 is the coarsest step at
 // which the tyre model is stable at full lock and full grip; the cost is 4 substeps per 60 Hz
 // frame of scalar arithmetic, which does not show up in a frame-time measurement.
@@ -731,6 +742,9 @@ export function createPhysics({ blocks = [], bounds = 1400 } = {}) {
     // along a wall or another car (the contact-hold branch of the resolvers), with the
     // contact point and the slide direction. Purely cosmetic; main.js feeds it to crash.js.
     grind: 0, grindX: 0, grindZ: 0, grindDx: 0, grindDz: 1,
+    // T13. Consecutive completed full-bar burns. `burnoutFired` carries the new count out to the
+    // HUD and audio once and is cleared on read; `burnoutT` is seconds since the last one.
+    burnouts: 0, burnoutFired: 0, burnoutT: 0,
     // T4. `surface` is the class the car is standing on this instant; `offRoad` is 0..1 and is the
     // BLENDED figure, so audio and the HUD fade with the grip rather than switching at the kerb.
     surface: 'tarmac', offRoad: 0,
@@ -1634,6 +1648,7 @@ export function createPhysics({ blocks = [], bounds = 1400 } = {}) {
       // this, pressing R mid-slide left the counter armed and the next drift resumed from the
       // abandoned total instead of from zero.
       state.driftMetres = 0; state.driftFeedActive = false;
+      state.burnouts = 0; state.burnoutFired = 0; state.burnoutT = 0;
       state.crashed = false; state.vy = 0; state.airborne = false; state.distance = 0;
       state.vLat = 0; state.yawRate = 0; state.slipAngle = 0; state.drifting = false;
       state.chain = 0; state.impact = 0; state.accelG = 0; state.eventEarn = 0;
@@ -1690,6 +1705,13 @@ export function createPhysics({ blocks = [], bounds = 1400 } = {}) {
      * nothing about the world layout, the same way blocks and parked bodies arrive.
      */
     setSurfaceQuery(fn) { surfaceQuery = typeof fn === 'function' ? fn : null; },
+
+    /**
+     * T13. The burnout count if one completed since the last call, else 0. CLEARED ON READ, the
+     * same contract as drainWreck(): a banner and a sound are one-shots, and a flag that stays set
+     * fires them every frame.
+     */
+    drainBurnout() { const n = state.burnoutFired; state.burnoutFired = 0; return n; },
 
     /**
      * A wreck-grade contact, or null; CLEARED ON READ. physics.js cannot start the crash cinematic
@@ -1862,18 +1884,42 @@ export function createPhysics({ blocks = [], bounds = 1400 } = {}) {
         }
       }
 
+      // ---- burnout chain expiry (T13) ---------------------------------------------------------
+      // WHAT BREAKS THE CHAIN, stated here because the task asks for the rule to be written down:
+      //   1. a crash. A wreck ends everything the player had going, as it does for the drift chain.
+      //   2. letting the refilled bar sit unspent for BURNOUT_CHAIN_WINDOW seconds. "Consecutive"
+      //      has to mean something; without a window, a burnout on one side of the map and another
+      //      ten minutes later would read as X2, which is not what a multiplier is for.
+      // The timer only runs once a chain exists, and it is reset at each burnout above. Note it is
+      // measured from the LAST BURNOUT and not from the last press: a player who is mid-burn when
+      // the window would expire has already started spending, and taking the chain away underneath
+      // a burn in progress is the one case that would feel arbitrary.
+      if (state.burnouts > 0) {
+        state.burnoutT += dt;
+        if (state.burnoutT > BURNOUT_CHAIN_WINDOW && !boosting) state.burnouts = 0;
+      }
+      if (state.crashed) { state.burnouts = 0; state.burnoutT = 0; }
+
       if (boosting) {
         state.boost = clamp(state.boost - dt / TUNE.boostDuration, 0, 1);
         state.chain += driftAmount * dt;
         if (state.boost <= 0) {
-          if (state.chain >= TUNE.chainDriftNeeded) {
-            state.boost = 1;            // Burnout Chain: refilled outright, the chain continues
-            state.chain = 0;
-          } else {
-            state.boost = TUNE.burnoutRefill;   // a burnout refills a portion, and the run ends
-            state.chain = 0;
-            boostLatch = false;
-          }
+          // A COMPLETED FULL-BAR BURN, by construction: boostLatch only arms at boost >= 0.999 and
+          // clears the moment the button is released, so reaching empty while `boosting` cannot
+          // happen any other way. Releasing early therefore neither counts nor refills, which is
+          // exactly the rule T13 asks for, and it needs no extra state to enforce.
+          state.burnouts += 1;
+          state.burnoutT = 0;
+          state.burnoutFired = state.burnouts;   // read and cleared by main.js, see drainBurnout()
+          // T13: a full-bar burn now refills to 1 UNCONDITIONALLY. The published behaviour is that
+          // it refills a PORTION (hence burnoutRefill 0.32, kept below only as the record of what
+          // was overruled); the user was shown that and chose the full refill anyway.
+          state.boost = 1;
+          // The Burnout Chain keeps its own meaning: it is what lets the run CONTINUE, i.e. the
+          // latch survives, so the player keeps boosting straight through without re-pressing.
+          // Without the drift it is still a burnout and still a full tank, the burn just ends.
+          if (state.chain < TUNE.chainDriftNeeded) boostLatch = false;
+          state.chain = 0;
         }
       } else {
         state.chain = 0;

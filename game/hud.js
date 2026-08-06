@@ -2835,6 +2835,10 @@ export function createHud(container, { layout, maxPixelRatio = 1, attached = tru
 
   function drawEventBanner() {
     if (!evB || evB.t <= 0) return;
+    // The legacy centre banner (drawBanner, at 0.30 of frame height) sits close enough to this one
+    // that both up at once would read as a pile-up. A WRECK outranks anything the boost economy
+    // has to say, so it wins the space outright; the event banner simply does not draw under it.
+    if (bannerT > 0 && /WRECK|BUSTED|FAIL/.test(bannerText.toUpperCase())) return;
     const pal = EV_PALETTE[evB.kind] || EV_PALETTE.boost;
     const age = EV_LIFE - evB.t;
     // Sweep in from the left, hold, fade up and out. The sweep is the reference's own motion and

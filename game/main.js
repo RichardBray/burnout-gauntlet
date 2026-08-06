@@ -757,6 +757,15 @@ export async function boot() {
     const full = s.boost >= 0.999;
     if (full && !lastBoostFull && !s.boosting) audio.boostReady();
     lastBoostFull = full;
+    // T13. A completed full-bar burn. Drained rather than polled, so the banner and the cue fire
+    // exactly once each. The banner outranks the BOOST OK! one on priority: a burnout refills the
+    // bar to full, which is itself a rising edge into READY_AT, and without the precedence the
+    // player would watch BOOST OK! stamp over the burnout they just earned.
+    const burnouts = physics.drainBurnout();
+    if (burnouts > 0) {
+      hud.fireEventBanner(burnouts > 1 ? `BURNOUT X${burnouts}!` : 'BURNOUT!', 'burnout', 1);
+      audio.burnout(burnouts);
+    }
     audio.update(dt, {
       rpm01: rpmOf(gspd), load: clamp(0.25 + s.accelG * 0.09, 0, 1),
       throttle: clamp(0.25 + s.accelG * 0.09, 0, 1),
