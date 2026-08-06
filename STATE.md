@@ -53,6 +53,37 @@ Before you move a block, confirm its substance is preserved in `tools/WAVE-S-PLA
 Anything live and preserved nowhere else gets added to the play brief rather than dropped.
 Opening a new wave block is the moment to do this, not later.
 
+### SESSION 17 — TASKS.md WAVES 0 AND 1. Commits `f095b88`, `80477c4`, `c5770d7`, `7330f1a`, `45e7e6c`.
+
+`TASKS.md` is the user's seventeen-feature backlog and its own wave plan. Waves 0 and 1 are done;
+wave 1's T16 is the only item still open at the time of writing.
+
+- **T9, the dev tuning menu** (`f095b88`). `game/devtune.js`, 26 sliders over steering, drift and
+  camera, writing straight into the live `TUNE` / `camRig.config` / `FRAME` objects. **TEMPORARY:
+  it is deleted once the user reports final figures**, and that closing step is wave 2.
+  A `git worktree` at `../burnout-tune` is pinned to this commit so the user can tune against a
+  stable tree while agents rewrite the main one.
+- **T1, struck parked cars** (`80477c4`). The promotion path was never broken; the impulse was
+  too small to see. Now a real momentum exchange, with spin from the lever arm rather than a coin
+  flip. Full numbers in `verdicts/wave-s/t1-t17-parked-cars.md`.
+- **T17, the C crash key** (`80477c4`, `7330f1a`). Gone, prose updated rather than deleted.
+- **T14, menu cleanup** (`c5770d7`) and **T12, drift metres** (`45e7e6c`). Built by glm-5.2 and
+  gpt-5.6 in live sessions against `tools/BRIEF-T14.md` and `tools/BRIEF-T12.md`, both verified
+  independently before landing; T12 needed two defects fixed on top.
+
+**Three corrections to `TASKS.md` were found by reading the code, and are recorded in the
+verdicts rather than left to be rediscovered:** `gripLow` and the `1/(1+(sn-gripLow)*1.35)` yaw
+decay factor do not exist (the curve was rewritten to `min(rGrip, rGeo)` in wave-S round 2); the
+orbit camera was never shared between the C key and the real crash path; and T16 needs
+`traffic.js`, which the wave-1 plan assigns to a different agent, so it was resequenced behind T1
+rather than run concurrently.
+
+**FRAME TIME IN THIS SESSION IS SMOKE-TEST ONLY.** Peer agents were running throughout, which the
+play brief forbids reporting a frame number under. Re-take alone before quoting any of it.
+
+**THE TRIM RULE IS DUE.** This file is past ~400 lines. The next session to open a wave block
+should prepend the oldest block to `STATE-HISTORY.md` first.
+
 ### THE DEFECTS THE USER REPORTED FROM PLAYING IT. This is the source of the wave-S work list.
 
 - **Steering was INVERTED.** Right steered left.
