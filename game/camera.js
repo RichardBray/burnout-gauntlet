@@ -35,9 +35,7 @@ const V_REF = 78;         // m/s — physics TUNE.vMax, the speed all curves nor
 const LOOKH_REF = 1.05;   // the lookHeight the pitch model is calibrated at
 
 /** Reshapes scene config into the measured Burnout pose. See FRAMING NOTE. */
-// `export` is here only so the TEMPORARY game/devtune.js can slide these live. Drop the keyword
-// when devtune.js is deleted (TASKS.md T9's closing step).
-export const FRAME = {
+const FRAME = {
   // Standoff, expressed against the scene's BASE lens: the counter-zoom below multiplies it down
   // as the lens opens (0.941 at the 44.4 deg cruise lens), so 1.293 here is the 1.217 the pose was
   // solved at. Raised from 1.16 purely to hold the r7 pose once distSpeed stopped inflating it.
@@ -143,12 +141,16 @@ const DEFAULTS = {
   fovBoost: 10,           // extra degrees at full boost (before fovGain)
   fovAttack: 7.5,         // punches out fast...
   fovRelease: 1.9,        // ...and crawls back
-  stiffness: 6.5,         // base spring rate (see AXIS multipliers)
-  lookStiffness: 8.0,
+  // User tuning session (T9): 6.5 -> 4.98 and 8.0 -> 5.96. A laggier follow and a laggier aim, so
+  // the car leads the frame under acceleration and the camera catches up instead of being welded on.
+  stiffness: 4.98,        // base spring rate (see AXIS multipliers)
+  lookStiffness: 5.96,
   shake: 1.0,
   roll: 0.55,             // camera bank into corners
   // User feel: left/right camera too snappy. 5.4 -> 3.78 (-30%) -> 3.02 (-20% more).
-  yawLag: 3.02,           // rad/s the rig azimuth chases the car's yaw — lower = more lag
+  // Then reversed by the T9 tuning session: 3.02 -> 5.24. Driven live rather than judged off a
+  // still, 3.02 read as the rig failing to keep up through quick direction changes.
+  yawLag: 5.24,           // rad/s the rig azimuth chases the car's yaw — lower = more lag
   slipSwing: 2.1,         // metres the tail swings across frame per unit of slip
   // Same stack: 0.26 -> 0.182 (-30%) -> 0.146 (-20% more).
   steerLead: 0.146,       // rad the aim point leads per unit of steer

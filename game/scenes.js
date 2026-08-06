@@ -81,7 +81,11 @@ export const SCENES = {
         // This also retires the "contact line is geometrically locked at 0.737" claim: it was only
         // locked while height was held fixed. Raising the camera pushes the car down the frame
         // without touching FRAME.pitchBase, so contact lands on 0.769 with the horizon still at 49.3%.
-        mode: 'chase', distance: 9.30, height: 2.10, lookAhead: 14, lookHeight: 1.05,
+        // lookAhead 14 -> 7.65 from the T9 tuning session. This scene IS the play camera
+        // (main.js defaults sceneId to 'dusk-highway-chase'), so the aim point had to be tuned by
+        // driving, not by matching a still. At 14 the aim sat far enough up the road that the car
+        // slid to the bottom of frame through corners.
+        mode: 'chase', distance: 9.30, height: 2.10, lookAhead: 7.65, lookHeight: 1.05,
         fov: 42, fovSpeed: 8, fovBoost: 10, shake: 0.85,
       });
       cruise(ctx, 'highway', 0.30, 232);

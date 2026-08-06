@@ -123,7 +123,10 @@ export const TUNE = {
   // tap under load only reached a peak |slip| of 0.22, while 0.985 leaves 17% and the rear steps
   // out. Without any clamp at all a 24 m/s^2 demand locks the rear outright and every touch of the
   // brake is a spin.
-  absHold: 0.985,
+  // 0.985 -> 0.768, from the user's live tuning session (T9). 0.768 leaves sqrt(1-0.768^2) = 64% of
+  // the friction circle for cornering, so a brake tap now loads the rear and turns the car rather
+  // than stepping it out into a spin. The tap drift is softer and far more controllable.
+  absHold: 0.768,
   reverseAccel: 5.0,
   reverseMax: 12,
 
@@ -295,7 +298,10 @@ export const TUNE = {
   steerRate: 24.29,     // 1/s the smoothed steer chases the input; keyboard is binary
   // While the e-brake is held, input and yaw-rate demand get this extra multiplier on top of
   // the base curve (user stack: 1.20 -> 1.62 -> 1.94).
-  handbrakeSteerGain: 1.94,
+  // 1.94 -> 2.30, from the user's live tuning session (T9). More steer/yaw demand on the e-brake:
+  // the slide is entered with the nose already turned in rather than waiting for the rear to come
+  // round on its own.
+  handbrakeSteerGain: 2.30,
   // YAW-RATE SERVO on the steering angle: this is the hands, and it is what a human does that a
   // feed-forward angle cannot. Open loop, the angle is solved for a steady state that does not
   // exist yet, so at 60 m/s the yaw rate (fast) outruns the sideslip (slow), both axles saturate,
