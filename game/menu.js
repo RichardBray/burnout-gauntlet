@@ -32,7 +32,7 @@
 // WHY THE KEY GATE LIVES HERE AND NOT IN main.js. `main.js` is frozen this round, and its
 // pause contract ("no tick, no input", main.js:601) only implements the first half: the
 // polled `keys` map is cleared once at the moment of pausing, and `down()`'s discrete
-// actions (KeyR, KeyC) are not gated on `paused` at all. This module already owns a
+// actions (KeyR; KeyC was removed in T17) are not gated on `paused` at all. This module owns a
 // capture-phase window keydown listener, and a capture-phase `stopPropagation()` on window
 // runs BEFORE main.js's bubble-phase listener and stops it being called at all. So the gate
 // is implementable here, exactly, without touching the frozen file - and it is also the fix
@@ -301,8 +301,10 @@ const PLACES = [
 ];
 
 // Codes the game POLLS every frame (main.js:617-630). These are the only ones re-asserted
-// on resume (D5); the discrete actions KeyR and KeyC are deliberately absent, because
-// re-firing a crash or a reset on resume is the D2 bug wearing a different hat.
+// on resume (D5); the discrete action KeyR is deliberately absent, because re-firing a reset on
+// resume is the D2 bug wearing a different hat. The rule is about DISCRETE versus HELD actions
+// and still binds: KeyC used to be the second example here and was removed in T17, but anything
+// discrete added later belongs out of this set for the same reason.
 const HELD_CODES = new Set(['KeyW', 'KeyA', 'KeyS', 'KeyD',
   'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'ShiftLeft', 'ShiftRight', 'Space']);
 
@@ -329,8 +331,8 @@ function gearOf(speedMs) {
   return Math.max(1, Math.min(6, 1 + Math.floor(kmh / 52)));
 }
 
-// Transcribed from main.js, not guessed: the keydown handler `down()` (KeyR at main.js:458,
-// KeyC at main.js:464) and the input mapping inside `frame()` (throttle/brake at :541-543,
+// Transcribed from main.js, not guessed: the keydown handler `down()` (KeyR) and the
+// input mapping inside `frame()` (throttle/brake at :541-543,
 // steer at :550, boost at :551, handbrake at :552, brake lights at :560). Escape is handled
 // in this file. Every row below was also pressed in a real boot and observed to do this.
 const CONTROLS = [
@@ -351,7 +353,6 @@ const CONTROLS = [
   // it says them in the order the player feels them: the rotation is the point.
   ['SPACE', 'handbrake - swings the tail, slows the rear'],
   ['R', 'reset car'],
-  ['C', 'crash'],
   ['ESC', 'pause / resume'],
 ];
 
@@ -805,8 +806,9 @@ export function createMenu({ ctx, onStart } = {}) {
    * moment the sim restarted (hold W on the start card, click DRIVE, 10.037 m/s with the
    * player having touched nothing since). Both are fixed by the same rule - on resume,
    * synthesise a keydown for exactly the polled codes that are still down, and for nothing
-   * else. Discrete actions (KeyR, KeyC) are excluded by HELD_CODES: re-firing a crash on
-   * resume would be D2 again.
+   * else. Discrete actions (KeyR) are excluded by HELD_CODES: re-firing a reset on resume
+   * would be D2 again. The discrete-versus-held distinction is the point and outlives any
+   * particular key - KeyC was the other example until T17 removed it.
    *
    * The start menu deliberately re-asserts NOTHING: `onStart` resets the car to a standstill,
    * so honouring a throttle held during the title card would launch a player who was leaning
