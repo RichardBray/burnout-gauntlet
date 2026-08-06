@@ -213,11 +213,6 @@ function injectStyle() {
   background: ${AMBER}; border: 0;
   clip-path: polygon(8% 0%, 100% 4%, 92% 100%, 0% 95%);
 }
-#bgmenu .val {
-  font: 700 11.5px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
-  letter-spacing: 0.04em; color: rgba(232,240,248,0.86);
-}
-#bgmenu .val b { color: ${AMBER_HOT}; font-weight: 700; }
 #bgmenu .hint { font-size: 10px; font-weight: 600; letter-spacing: 0.06em;
   color: rgba(232,240,248,0.46); margin: 3px 0 0; text-transform: none; }
 
@@ -542,29 +537,6 @@ export function createMenu({ ctx, onStart } = {}) {
   });
   paintRow.appendChild(paintSeg);
 
-  // ---- resolution scale ------------------------------------------------------
-  // This is the frame-rate control, so it shows its own consequence: the REAL drawing
-  // buffer from ctx.renderSize() and a live fps figure. A scale slider with no readout is
-  // unjudgeable - the player cannot tell 0.7 from 0.5 by looking at a 720p upscale.
-  const resRow = addRow('res', 'Render scale - lower to buy frames');
-  const resSlider = document.createElement('input');
-  resSlider.type = 'range';
-  resSlider.min = '0.4'; resSlider.max = '1'; resSlider.step = '0.05';
-  resSlider.addEventListener('input', () => {
-    ctx.setResScale(parseFloat(resSlider.value));
-    // The old window's frame times were taken at the old buffer size, so they would
-    // libel the new setting. Only ever reset here and on open, never per frame, and
-    // never on the #nomenu harness path (which never constructs a visible menu).
-    if (ctx.frameStats) ctx.frameStats.reset();
-    repaintHud(); // D1 — setResScale() -> resize() -> hud.resize() just cleared the canvas
-    refresh();
-  });
-  const resVal = h('div', 'val');
-  const fpsVal = h('div', 'val');
-  const resHint = h('div', 'hint',
-    'fps here is the paused frame, no physics: treat it as an upper bound.');
-  resRow.append(resSlider, resVal, fpsVal, resHint);
-
   // ---- soundtrack ------------------------------------------------------------
   // `ctx.music` is game/music.js, a module-level singleton in main.js that OUTLIVES boot()
   // so a scene change does not restart the track. It may be absent if this menu is dropped
@@ -682,22 +654,6 @@ export function createMenu({ ctx, onStart } = {}) {
 
     for (const { b, value } of paintBtns) b.classList.toggle('on', value === preferredPaint);
 
-    const rs = ctx.getResScale ? ctx.getResScale() : 1;
-    if (document.activeElement !== resSlider) resSlider.value = String(rs);
-    const sz = ctx.renderSize ? ctx.renderSize() : null;
-    resVal.innerHTML = sz
-      ? `<b>${sz.w}×${sz.h}</b> cap ${sz.cap || cap}p · scale ${rs.toFixed(2)}`
-        + ` &nbsp; window ${sz.cssW}×${sz.cssH}`
-      : `scale ${rs.toFixed(2)}`;
-
-    // n >= 8 because the first couple of samples after an open are the rAF gap across
-    // the open itself (measured ~2000 ms), which read as "0.5 fps" and libelled the setting.
-    const st0 = ctx.frameStats && ctx.frameStats.stats && ctx.frameStats.stats();
-    const st = st0 && st0.n >= 8 ? st0 : null;
-    fpsVal.innerHTML = st
-      ? `<b>${st.fpsP50.toFixed(1)} fps</b> p50 &nbsp; ${st.p50.toFixed(1)} ms &nbsp; n=${st.n}`
-      : 'fps - collecting';
-
     for (const { b, value } of sceneBtns) b.classList.toggle('on', value === curScene);
 
     // ---- soundtrack. Read from music.js's own state, never from what we last clicked ----
@@ -802,22 +758,28 @@ export function createMenu({ ctx, onStart } = {}) {
     if (wasPause) reassertHeldKeys();
   }
 
-  go.addEventListener('click', () => {
+  // DRIVE, RESUME and Enter (hooked in the keydown gate below) all run through primary()
+  // so the music.unlock() gesture and the once-only onStart fire identically regardless of
+  // how the player triggers them.
+  function primary() {
     const wasStart = mode === 'start';
-    // Both buttons are a real user gesture, so both unlock the soundtrack. main.js calls
-    // music.unlock() from onStart for the DRIVE case; this covers RESUME as well, which
-    // matters on `#nomenu=1` (no DRIVE click ever happens) and after a tab-hide, where
-    // Chrome suspends the context and only a gesture can resume it. unlock() is idempotent.
+    // Both the click and Enter are a real user gesture, so both unlock the soundtrack.
+    // main.js calls music.unlock() from onStart for the DRIVE case; this covers RESUME as
+    // well, which matters on `#nomenu=1` (no DRIVE click ever happens) and after a tab-hide,
+    // where Chrome suspends the context and only a gesture can resume it. unlock() is idempotent.
     if (ctx.music && ctx.music.unlock) ctx.music.unlock();
     hide();
     // onStart is called AFTER the menu has closed, per the contract, and still inside this
-    // click's task so it is a live user gesture - which is the whole point: main.js unlocks
-    // WebAudio from here, and an AudioContext resumed outside a gesture stays "suspended".
+    // gesture's task so it is a live user gesture - which is the whole point: main.js
+    // unlocks WebAudio from here, and an AudioContext resumed outside a gesture stays
+    // "suspended".
     if (wasStart && !started) {
       started = true;
       if (onStart) onStart();
     }
-  });
+  }
+
+  go.addEventListener('click', primary);
 
   // ---- Esc -------------------------------------------------------------------
   // This module owns Esc. It listens on window in the CAPTURE phase and never consults the
@@ -881,6 +843,20 @@ export function createMenu({ ctx, onStart } = {}) {
       if (open) hide(); else show('pause');
       return;
     }
+
+    // Enter mirrors the primary button: DRIVE on the start menu, RESUME on the pause
+    // menu. Gated exactly like the rest of the menu's keys (capture phase +
+    // stopPropagation) so it cannot leak a keydown into main.js's bubble-phase listener.
+    // Enter is absent from HELD_CODES, so reassertHeldKeys never re-fires it on resume.
+    if (e.code === 'Enter') {
+      if (e.repeat) return;
+      if (!open) return;
+      e.preventDefault();
+      e.stopPropagation();
+      primary();
+      return;
+    }
+
     if (!open) return;
 
     // D2: `C` and `R` fired straight through the pause menu and silently wrecked or reset
