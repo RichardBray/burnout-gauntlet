@@ -168,6 +168,7 @@ const WRECK_RESTITUTION = 0.35;  // 0 = perfectly inelastic. Sheet metal is not 
 // Fraction of the TANGENTIAL relative velocity dragged into the car, so a side swipe scrubs the
 // car along its flank instead of only punching it square out.
 const WRECK_TANGENT = 0.35;
+const WRECK_WALL_BOUNCE = 0.25; // fraction of normal speed kept when a wreck hits a facade
 // rad/s of spin per m/s of shove, at a full-corner contact (|off| = 1). A dead-square hit has
 // off = 0 and therefore no spin at all, which is the point: the rotation now comes from WHERE the
 // car was struck rather than from a coin flip.
@@ -979,8 +980,15 @@ export function createTraffic(scene, { rng, layout, blocks = [], roadKit } = {})
         // in normal play the pool is usually full, and "no slot free" must not read as a
         // parked car bolted to the road. The stolen car is far away by construction, so
         // its retire is invisible.
+        // `v.k < POOL` IS THE WHOLE FIX FOR "the parked car just disappears". The pool holds
+        // POOL_CAP slots but the meshes only DRAW POOL of them (applyPool()), so a slot with
+        // k >= POOL is live, collidable and simulated while rendering nothing. Without this
+        // clause the search found slot k = POOL the moment the live population was at its
+        // ceiling — which the comment below already says is the normal case — so the struck
+        // car vanished on contact and the steal path underneath was unreachable dead code.
+        // trySpawn() has always carried the same guard; this call site was missing it.
         let slot = null;
-        for (const v of pool) if (!v.live) { slot = v; break; }
+        for (const v of pool) if (!v.live && v.k < POOL) { slot = v; break; }
         if (!slot) {
           let far = -1;
           for (const v of pool) {
@@ -1054,6 +1062,27 @@ export function createTraffic(scene, { rng, layout, blocks = [], roadKit } = {})
           }
           v.pos.x += v.wvx * step;
           v.pos.z += v.wvz * step;
+          // Facades are walls to a wreck too — without this a kerb car promoted by a hit
+          // toward the pavement slid through the building line and finished INSIDE the
+          // block, invisible but live ("the parked car just disappears"). `blocks` is the
+          // createTraffic param main.js already fills with world.blocks. Same axis-aligned
+          // test physics.js runs for the hero: separate along the shallower axis, keep a
+          // fraction of the normal speed as bounce. ponytail: the wreck is a point with
+          // halfWid radius here, not its real box — good to a half-length on a corner clip;
+          // swap for the rotated box if wrecks ever visibly sink into a wall nose-first.
+          for (const blk of blocks) {
+            const bx = blk.w / 2 + v.halfWid, bz = blk.d / 2 + v.halfWid;
+            const dx = v.pos.x - blk.cx, dz = v.pos.z - blk.cz;
+            if (Math.abs(dx) >= bx || Math.abs(dz) >= bz) continue;
+            if (bx - Math.abs(dx) < bz - Math.abs(dz)) {
+              v.pos.x = blk.cx + Math.sign(dx || 1) * bx;
+              v.wvx *= -WRECK_WALL_BOUNCE;
+            } else {
+              v.pos.z = blk.cz + Math.sign(dz || 1) * bz;
+              v.wvz *= -WRECK_WALL_BOUNCE;
+            }
+            break;
+          }
           v.speed = Math.hypot(v.wvx, v.wvz);   // what the IDM scan reads as leader speed
           // Re-contact with the hero kicks it again, so a wreck can be batted down the road.
           // Exact point-to-rotated-box in the wreck's frame (same shape as the statics test);
