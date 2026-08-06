@@ -2278,35 +2278,20 @@ export function createWorld(scene, { rng, roadKit }) {
   }
   seal(tlPole, tlArm, tlHead, tlLens);
 
-  // ---- overhead wires (they cast their own thin shadows) --------------------
-  const wireMat = patchAtmo(new THREE.MeshStandardMaterial({
-    color: 0x14151a, roughness: 0.9, metalness: 0.1,
-  }), atmo, 0.0);
-  const wireMesh = inst(boxGeo, wireMat, 2000, { recv: false });
-  function wire(x0, z0, x1, z1, y, sag) {
-    const segs = 4;
-    const dx = x1 - x0, dz = z1 - z0;
-    const len = Math.hypot(dx, dz);
-    const ry = Math.atan2(dx, dz);
-    for (let i = 0; i < segs; i++) {
-      const t0 = i / segs, t1 = (i + 1) / segs;
-      const y0 = y - sag * Math.sin(t0 * Math.PI);
-      const y1 = y - sag * Math.sin(t1 * Math.PI);
-      const mx = x0 + dx * (t0 + t1) / 2, mz = z0 + dz * (t0 + t1) / 2;
-      const sl = len / segs;
-      const rz = Math.atan2(y1 - y0, sl);
-      push(wireMesh, mx, (y0 + y1) / 2, mz, ry + Math.PI / 2, rz,
-        Math.hypot(sl, y1 - y0) * 1.02, 0.10, 0.10);
-    }
-  }
-  for (const z of G) {
-    for (let x = -EX + 30; x <= EX; x += 62) {
-      wire(x, z + HALF + 3.0, x, z - HALF - 3.0, 9.4, 1.1);
-      wire(x, z + HALF + 3.0, x + 62, z + HALF + 3.0, 8.9, 1.4);
-      wire(x + 31, z - HALF - 3.0, x + 93, z - HALF - 3.0, 8.6, 1.4);
-    }
-  }
-  seal(wireMesh);
+  // ---- overhead wires: DELETED, T2, 2026-08-06 ------------------------------
+  // They were strung from grid maths that had nothing to do with where the lamps
+  // actually stand, so they attached to no pole at either end: lamps sit at
+  // `HALF + 2.4` with pole tops at y 8.8, the wires ran at `HALF + 3.0` and y
+  // 8.6/8.9/9.4 — 0.6 m to the side of the pole line, and the tallest run 0.6 m
+  // ABOVE the poles it was nominally strung between. The along-road runs also
+  // overshot the pole loop by 62 m and 93 m, leaving cut ends hanging over empty
+  // ground; that is what the user saw in `wet-night-asphalt` against open sky.
+  //
+  // Repairing them (draw from `lampPositions`, stop at the last pole) was offered
+  // and the user chose deletion. If they ever come back, strand them off the
+  // recorded lamp positions and not off the grid, or they will drift apart again.
+  // The cost of losing them is the thin wire shadows that `reference/INDEX.md`
+  // lists for `daytime-downtown-01`; nothing else referenced them.
 
   // ---- street props on the sidewalk perimeter -------------------------------
   const hydMat = patchAtmo(new THREE.MeshStandardMaterial({
