@@ -2836,9 +2836,12 @@ export function createHud(container, { layout, maxPixelRatio = 1, attached = tru
         // the oncoming yard meter replaces the 'ONCOMING LANE +n%' pulse popups outright
         if (e.type === 'speeding') continue;
         const name = NAMES[e.type] || String(e.type).toUpperCase();
-        const mult = e.mult > 1 ? ` x${e.mult}` : '';
+        const nearMiss = e.type === 'nearMiss';
+        const mult = e.mult > 1 ? ` ${nearMiss ? 'X' : 'x'}${e.mult}` : '';
         earnPops.push({
-          text: `${name}${mult} +${Math.max(1, Math.round((e.earn || 0) * 100))}%`,
+          text: nearMiss
+            ? `${name}${mult}`
+            : `${name}${mult} +${Math.max(1, Math.round((e.earn || 0) * 100))}%`,
           t: 0, life: 1.5,
         });
         if (earnPops.length > 4) earnPops.shift();

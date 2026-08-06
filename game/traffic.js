@@ -131,6 +131,7 @@ const EVENT_SPEED_MIN = 12; // m/s (43 km/h) hero speed floor: a crawl past a ca
 const EVENT_REL_MIN = 8;    // m/s relative speed floor, same reason
 const HERO_HALF_W = 0.95;   // hero body half-width; a pass is a LATERAL event so this is the
                             // right inflation radius for a point-vs-box clearance
+const STATIC_PASS_CELL = 24; // m; 3x3 neighboring cells cover the full pass-out radius
 const CHECK_SHUNT = 2.6;    // m/s-ish lateral shove a traffic check puts on the vehicle
 // A hit closing faster than this doesn't shunt the car back into its lane — it WRECKS it: the
 // body leaves the lane system and becomes a free 2-D projectile (see the `wrecked` branch in
@@ -543,8 +544,42 @@ export function createTraffic(scene, { rng, layout, blocks = [], roadKit } = {})
   let night = false;
   let onPass = null;        // fired at the OPENING of a near-miss pass; see the call site
   let onHorn = null;        // fired when an NPC leans on the horn at a head-on hero
-  let statics = [];         // world.js's parked bodies, for pass audio only; see update()
+  let statics = [];         // world.js's parked bodies; spatially indexed by setStaticBodies()
+  const staticBuckets = new Map();
+  const staticPasses = new Set();
+  const staticNearby = [];
+  let staticScanGen = 0, staticCandidates = 0;
   const _hero = new THREE.Vector3();
+
+  const staticKey = (ix, iz) => ix * 4096 + iz;
+
+  function clearStaticPasses() {
+    for (const b of staticPasses) b.nmOn = false;
+    staticPasses.clear();
+  }
+
+  function indexStatics(list) {
+    clearStaticPasses();
+    statics = Array.isArray(list) ? list : [];
+    staticBuckets.clear();
+    for (const b of statics) {
+      b.nmOn = false;
+      if (b.gone) continue;
+      const key = staticKey(Math.floor(b.x / STATIC_PASS_CELL), Math.floor(b.z / STATIC_PASS_CELL));
+      let bucket = staticBuckets.get(key);
+      if (!bucket) staticBuckets.set(key, bucket = []);
+      bucket.push(b);
+    }
+  }
+
+  function closeStaticPass(b, cancelled = false) {
+    if (!b.nmOn) return;
+    b.nmOn = false;
+    staticPasses.delete(b);
+    if (cancelled || b.nmHit || b.gone || b.nmRel < EVENT_REL_MIN) return;
+    emit('nearMiss', 1, b.x, b.z,
+      { clearance: +b.nmMin.toFixed(2), relSpeed: +b.nmRel.toFixed(1), parked: true });
+  }
 
   function writeMatrices() {
     for (const v of pool) {
@@ -679,13 +714,11 @@ export function createTraffic(scene, { rng, layout, blocks = [], roadKit } = {})
     setPassListener(fn) { onPass = typeof fn === 'function' ? fn : null; },
     setHornListener(fn) { onHorn = typeof fn === 'function' ? fn : null; },
 
-    /**
-     * The STATIONARY bodies (world.parkedCars) that should also make a pass whoosh. Optional:
-     * left unset, only the moving population is audible. Scanned linearly per frame with a
-     * squared-distance reject, which is why no spatial index ships with it - at the shipped
-     * density this is ~440 bodies and the reject discards nearly all of them.
-     */
-    setStaticBodies(list) { statics = Array.isArray(list) ? list : []; },
+    /** The stationary population, indexed once so pass work scales with nearby bodies only. */
+    setStaticBodies(list) { indexStatics(list); },
+    staticPassStats() {
+      return { candidates: staticCandidates, active: staticPasses.size, total: statics.length };
+    },
 
     /**
      * Move the live population ceiling at runtime, so the POOL decision can be A/B'd inside one
@@ -716,6 +749,7 @@ export function createTraffic(scene, { rng, layout, blocks = [], roadKit } = {})
     },
 
     reset(heroPos) {
+      clearStaticPasses();
       for (const v of pool) {
         v.live = false; v.nmOn = false; v.ctOn = false;
         v.endHold = 0; v.stallT = 0; v.otT = 0; v.shove = 0; v.shoveT = 0;
@@ -774,33 +808,46 @@ export function createTraffic(scene, { rng, layout, blocks = [], roadKit } = {})
       }
 
       // ---- passes on the STATIONARY population ---------------------------------------------
-      // The kerb ranks are world.js's, not this pool's, so none of the machinery below sees
-      // them and a run down a parked street was silent. Same trigger and same radius as a
-      // moving pass, so one kerb car and one moving car passed equally close sound alike.
-      //
-      // Deliberately whoosh-only: no 'check', no boost event, no IDM. These are scenery with
-      // a sound, and paying boost for them would re-price the whole economy off a population
-      // that is ~440 bodies dense along every kerb in the city.
-      if (onPass && statics.length && Math.abs(heroSpeed) > EVENT_SPEED_MIN) {
-        for (const b of statics) {
-          if (b.gone) { b.nmOn = false; continue; }   // promoted: the live wreck whooshes now
-          const dx = b.x - hx, dz = b.z - hz;
-          // Cheap reject first: everything here is static, so most of the population is
-          // nowhere near the hero on any given frame and never needs the exact test.
-          if (dx * dx + dz * dz > 400) { b.nmOn = false; continue; }
-          // Exact point-to-rotated-box, in the body's own frame. Lateral axis is (fz, -fx),
-          // matching how world.js places the wheels.
-          const along = Math.abs(dx * b.fx + dz * b.fz) - b.halfLen;
-          const lat = Math.abs(dx * b.fz - dz * b.fx) - b.halfWid;
-          const clr = Math.hypot(Math.max(along, 0), Math.max(lat, 0)) - HERO_HALF_W;
-          if (clr < NEAR_MISS_R) {
-            if (!b.nmOn) {
-              b.nmOn = true;
-              // Stationary, so relative speed IS the hero's speed and the side is fixed.
-              const side = Math.sign(dx * -heroFz + dz * heroFx) || 1;
-              onPass({ side, relSpeed: Math.abs(heroSpeed), clearance: Math.max(clr, 0) });
-            }
-          } else if (clr > NEAR_MISS_R + NEAR_MISS_OUT) b.nmOn = false;
+      // The same rotated-box clearance, open radius, close hysteresis and speed floor as a live
+      // pass. Only the hero's 3x3 spatial neighborhood is visited; state exists only for bodies
+      // with an open pass. Opening owns the one whoosh, closing owns the one full-intensity event.
+      staticNearby.length = 0;
+      staticScanGen++;
+      const scx = Math.floor(hx / STATIC_PASS_CELL), scz = Math.floor(hz / STATIC_PASS_CELL);
+      for (let ix = scx - 1; ix <= scx + 1; ix++) {
+        for (let iz = scz - 1; iz <= scz + 1; iz++) {
+          const bucket = staticBuckets.get(staticKey(ix, iz));
+          if (!bucket) continue;
+          for (const b of bucket) {
+            b.nmSeen = staticScanGen;
+            staticNearby.push(b);
+          }
+        }
+      }
+      staticCandidates = staticNearby.length;
+      for (const b of staticPasses) {
+        if (b.gone) closeStaticPass(b, true);
+        else if (b.nmSeen !== staticScanGen) closeStaticPass(b);
+      }
+      const staticRel = Math.abs(heroSpeed);
+      const staticFast = staticRel > EVENT_SPEED_MIN;
+      for (const b of staticNearby) {
+        if (b.gone) { closeStaticPass(b, true); continue; }
+        const dx = b.x - hx, dz = b.z - hz;
+        const along = Math.abs(dx * b.fx + dz * b.fz) - b.halfLen;
+        const lat = Math.abs(dx * b.fz - dz * b.fx) - b.halfWid;
+        const clr = Math.hypot(Math.max(along, 0), Math.max(lat, 0)) - HERO_HALF_W;
+        if (b.nmOn) {
+          if (clr <= b.nmMin) b.nmMin = clr;
+          if (staticRel > b.nmRel) b.nmRel = staticRel;
+          if (clr > NEAR_MISS_R + NEAR_MISS_OUT) closeStaticPass(b);
+        } else if (clr < NEAR_MISS_R && staticFast) {
+          b.nmOn = true; b.nmMin = clr; b.nmRel = staticRel; b.nmHit = false; b.nmOnc = false;
+          staticPasses.add(b);
+          if (onPass) {
+            const side = Math.sign(dx * -heroFz + dz * heroFx) || 1;
+            onPass({ side, relSpeed: staticRel, clearance: Math.max(clr, 0) });
+          }
         }
       }
 
