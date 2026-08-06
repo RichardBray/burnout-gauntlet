@@ -8,6 +8,51 @@ The standing rules there still bind: 60 fps at 1280x720 REAL pixels, visual regr
 NPC car count is user-set (`POOL = 24` in `traffic.js`, `NPC_DENSITY = 0.16` in `world.js`) and
 must not be raised.
 
+---
+
+## STATUS as of 2026-08-06. READ THIS BEFORE PICKING A TASK.
+
+| task | status | landed in |
+|---|---|---|
+| **T1** struck parked/stopped cars | **DONE** for parked; the STOPPED-TRAFFIC half is UNVERIFIED | `80477c4`, `b3c69d4`, `3a417d3` |
+| **T9** dev tuning menu | **DONE**, and TEMPORARY - still awaiting the user's figures | `f095b88` |
+| **T12** drift counter in metres | **DONE** | `45e7e6c` |
+| **T14** menu cleanup, Enter starts | **DONE** | `c5770d7` |
+| **T16** near misses in the boost feed | **DONE**, economy number outstanding | `77339f3` |
+| **T17** remove the C key | **DONE** | `80477c4`, `7330f1a` |
+| T2-T8, T10, T11, T13, T15 | not started | - |
+
+Full write-ups with measured numbers are in `verdicts/wave-s/`. Do not re-derive what is there.
+
+### Open decisions the user owns
+
+- **T9's closing step.** The dev menu is deleted once the user reports final handling figures.
+  Until then `game/devtune.js` stays and is not to be tidied away.
+- **T16's boost economy.** An empty bar filled in 56.2 s before T16 and 13.9 s after, which is
+  too generous. Halving `NPC_DENSITY` has since taken it to 21.3 s. `boostPerNearMiss` is
+  deliberately UNCHANGED at 0.060 - retuning is the user's call, not an agent's.
+- **T1's stopped-traffic half.** `traffic.js`'s `wasStopped` fix (commit `7028fff`) is correct on
+  inspection and was never demonstrated. No probe in the tree exercises it. Treat as open.
+
+### CARRIED-FORWARD WARNING: what T1 cost, and why
+
+T1 was reported fixed twice and was still broken both times, because every probe asserted on the
+SIMULATION and none on the PICTURE. The car moved in `traffic.vehicles` while the player saw
+nothing at all. Three separate bugs were hiding behind that one green check:
+
+1. `hide()` wrote to a source instance pool that the chunk cut had already zeroed, so it edited a
+   mesh that no longer draws;
+2. promotion claimed a pool slot with `k >= POOL`, which is live, collidable and simulated but
+   never rendered;
+3. wrecks slid through building facades and came to rest inside blocks.
+
+**For anything the user reports SEEING, assert on the render side** - the instance matrix, the
+submitted instance count, or actual pixels. A `traffic.vehicles` check stays green under bugs 1
+and 2. See `tools/HANDOFF-PARKED-CARS.md` and `tools/_phantom-probe.mjs`.
+
+**Any post-boot per-instance edit must route through `chunkRemap` in `world.js`**, or it silently
+edits a pool that is not on screen.
+
 ## Execution mode key
 
 | mode | meaning |
@@ -33,7 +78,7 @@ Each wave is grouped by FILE OWNERSHIP, so agents inside a wave never touch the 
 Only two items in this whole list wait on a human: applying the tuned steering figures, and T2's
 approval gate. Everything else runs as soon as the tree it needs is committed.
 
-### Wave 0 - alone, first
+### Wave 0 - alone, first  **[COMPLETE]**
 
 **T9, the dev tuning menu.**
 
@@ -43,7 +88,7 @@ It is also small, so the cost of clearing it is low.
 
 Wave 1 starts the moment T9 is committed. It does NOT wait for the tuning figures.
 
-### Wave 1 - three agents in the background, while the user tunes
+### Wave 1 - three agents in the background, while the user tunes  **[COMPLETE]**
 
 | agent | tasks | owns |
 |---|---|---|
@@ -64,6 +109,15 @@ second rebases and re-runs `bash tools/lint.sh`.
 **The user will be DRIVING the build while these three rewrite it.** Reloading mid-edit picks up a
 half-applied file. Either each agent commits atomically and the user only reloads between commits,
 or the tuning session runs in a `git worktree` pinned to the T9 commit. The worktree is cleaner.
+
+**HOW IT ACTUALLY RAN (2026-08-06).** The worktree was used and has since been removed. Two
+lessons for the next wave:
+
+- **The worktree was a trap here.** Pinned to the T9 commit, it did not contain any wave-1 fix, so
+  the user tested T1 against a tree that never had it and reported it broken. If a worktree is
+  used again, say explicitly which URL serves which commit.
+- **The ownership table above is wrong about T16.** T16's fix lives in `traffic.js`, which the
+  table gives to agent A. B and A would have collided. T16 was resequenced to run after T1 landed.
 
 ### Wave 2 - two items gated on the user's figures, the rest on wave 1
 
@@ -100,6 +154,11 @@ for the map work, and `STATE.md` needs a fresh wave block. The gauntlet reads bo
 ---
 
 ## T1 - Struck parked and stopped cars must actually move
+
+> **DONE for parked cars** (`80477c4`, `b3c69d4`, `3a417d3`). The STOPPED-LIVE-TRAFFIC half is
+> UNVERIFIED - see the status block at the top. The four "prime suspects" below are preserved as
+> written, but three were REFUTED by the repro and the real causes were elsewhere; read
+> `verdicts/wave-s/t1-t17-parked-cars.md` and `tools/HANDOFF-PARKED-CARS.md` before touching this.
 
 **Mode: solo.**
 **Depends on: nothing.**
@@ -497,6 +556,12 @@ or landing. Music level unaffected throughout.
 
 ## T9 - Dev tuning menu for steering and drift (temporary)
 
+> **DONE** (`f095b88`), and TEMPORARY. Still awaiting the user's figures, so do not delete it yet.
+> CORRECTION: `gripLow` and the `1/(1 + (sn-gripLow)*1.35)` yaw decay factor named below DO NOT
+> EXIST. The yaw curve was rewritten to `min(rGrip, rGeo)`; the panel exposes `minRadius`,
+> `gripUse` and `downforce` instead. Live camera values are `FRAME.slipAim` 0.32 and
+> `steerLead` 0.146, not the 0.30/0.26 written below.
+
 **Mode: solo. Small.**
 **Depends on: nothing. Do this first.**
 
@@ -658,6 +723,8 @@ slanted white type.
 
 ## T12 - Drift counter in metres
 
+> **DONE** (`45e7e6c`). HUD 47 m against 47.80 m independently integrated. Earn rate unmoved.
+
 **Mode: solo. Do with T11 and T13.**
 **Depends on: nothing.**
 
@@ -750,6 +817,10 @@ published behaviour was knowingly overruled by the user rather than lost.
 ---
 
 ## T14 - Menu cleanup: drop the render scale block, Enter starts the game
+
+> **DONE** (`c5770d7`). 14/14 checks in `tools/_t14-check.mjs`.
+> Note for any future input probe: a synthetic `dispatchEvent` is `isTrusted: false` and WebAudio
+> will not unlock for it. Use a trusted keypress.
 
 **Mode: solo. Small.**
 **Depends on: nothing.**
@@ -875,6 +946,9 @@ The user asked for all three:
 
 ## T16 - Near misses must appear in the boost feed, with the chain multiplier
 
+> **DONE** (`77339f3`). The ECONOMY NUMBER IS STILL THE USER'S CALL: fill went 56.2 s -> 13.9 s,
+> and the later `NPC_DENSITY` halving took it to 21.3 s. `boostPerNearMiss` deliberately unchanged.
+
 **Mode: solo. Do with T11-T13, same file.**
 **Depends on: nothing. Shares `hud.js` earn-feed code with T12.**
 
@@ -951,6 +1025,11 @@ changing them unasked.
 ---
 
 ## T17 - Remove the C manual-crash key
+
+> **DONE** (`80477c4`, `7330f1a`).
+> CORRECTION: the orbit camera was NOT shared with the genuine crash path, contrary to the
+> "Careful about" note below. The deleted block held the only `mode: 'orbit'` in `main.js`; a real
+> crash never orbited and still does not.
 
 **Mode: solo. Trivial.**
 **Depends on: nothing.**
