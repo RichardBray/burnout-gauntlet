@@ -191,7 +191,20 @@ export function createMusic() {
     if (actx.state === 'suspended') actx.resume();
     ramp(musicGain.gain, vol, FADE_S);
     const p = el.play();
-    if (p && p.catch) p.catch((e) => { lastError = String(e); });
+    if (p && p.catch) {
+      p.catch((e) => {
+        // AbortError IS NOT AN ERROR HERE, it is what skipping tracks looks like. Assigning
+        // `el.src` starts a new load, and a new load rejects any play() promise still pending
+        // from the previous track - so pressing next twice inside a second, or hitting next
+        // before the current track has buffered, reliably produced
+        // "AbortError: The play() request was interrupted by a new load request" while the new
+        // track played perfectly. Reporting it put a permanent red line under a working player.
+        // Every other rejection still surfaces, including NotAllowedError, which is the one that
+        // genuinely matters: it means the browser refused to start audio at all.
+        if (e && e.name === 'AbortError') return;
+        lastError = String(e);
+      });
+    }
   }
 
   /**
@@ -240,6 +253,12 @@ export function createMusic() {
         el.addEventListener('error', () => {
           lastError = `load failed: ${TRACKS[index] && TRACKS[index].id}`;
         });
+        // A REPORTED ERROR MUST BE ABLE TO GO AWAY. `lastError` used to be write-only: once
+        // anything set it, the menu showed that string in place of the now-playing line for the
+        // rest of the session, even though the very next track was audibly playing. 'playing'
+        // fires when the element actually produces sound, which is the only honest evidence that
+        // whatever went wrong is over.
+        el.addEventListener('playing', () => { lastError = null; });
         // The element's own volume stays at 1: level is musicGain's job, so that a
         // harness measuring the gain's output measures what reaches destination.
         el.volume = 1;

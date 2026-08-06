@@ -126,6 +126,23 @@ ok('next / prev step by one', trans.fwd === 3 && trans.back === 2, `${trans.fwd}
 ok('play-pause toggles', trans.playing1 && !trans.paused && trans.playing2,
   `${trans.playing1} -> ${trans.paused} -> ${trans.playing2}`);
 
+// ---- rapid skipping must not leave an error on screen ------------------------------------
+// The user hit this: press next a few times quickly and the menu showed
+// "audio error AbortError: The play() request was interrupted by a new load request" from then
+// on, while the music kept playing. Assigning el.src starts a new load, which rejects the play()
+// promise still pending from the previous track.
+const skid = await page.evaluate(async () => {
+  const m = window.__game.music;
+  m.play(0);
+  // No waiting between these ON PURPOSE - the bug needs a play() still in flight.
+  for (let i = 0; i < 6; i++) m.next();
+  await new Promise((r) => setTimeout(r, 2500));
+  const c = m.current();
+  return { err: m.info().error, playing: c.playing, title: c.title };
+});
+ok('rapid next leaves no error', !skid.err, skid.err || `playing "${skid.title}"`);
+ok('rapid next still plays', skid.playing === true);
+
 // ---- the menu shows exactly one track ----------------------------------------------------
 await page.keyboard.press('Escape');
 await page.waitForTimeout(300);
