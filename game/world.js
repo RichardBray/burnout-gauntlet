@@ -1767,12 +1767,6 @@ export function createWorld(scene, { roadKit, mapDoc = null }) {
   }
 
   const HZ = LAYOUT.highwayZ;
-  if (!GRAPH) {
-    roads.add(roadKit.buildRibbon([[-1200, HZ], [1200, HZ]], { cls: 'highway', shoulder: 3 }));
-    roads.add(roadKit.buildRibbon(
-      [[0, -EX], [0, -EX - 40], [-30, HZ + 70], [-70, HZ + 22]], { cls: 'city' },
-    ));
-  }
 
   // ---- shared materials -------------------------------------------------
   const conc = makeConcrete(R);
@@ -2886,27 +2880,6 @@ export function createWorld(scene, { roadKit, mapDoc = null }) {
       if (rj() < 0.5) gantry(sink, rj, x, z - 32, 1, 0, Math.PI, 26, 9.6, rngInt(rj, 2, 3));
     }
   }
-  // highway: sign gantries plus a roadside billboard row on tall posts
-  if (!GRAPH) {
-    for (let x = -900; x <= 900; x += 240) {
-        const rj = atRng(x, HZ, S_NODE);
-      gantry(sink, rj, x, HZ, 0, 1, -Math.PI / 2, LAYOUT.highwayW + 16, 10.4, 3);
-    }
-  }
-  if (!GRAPH) {
-    for (let x = -1000; x <= 1000; x += 105) {
-        const rdg = atRng(x, HZ, S_EDGE);
-      const s = ((x / 105) | 0) % 2 ? 1 : -1;
-      const bz = HZ + s * (LAYOUT.highwayW / 2 + 13);
-      const w = rngRange(rdg, 13, 19), bh = w * 0.36;
-      const by = rngRange(rdg, 9, 13);
-      placeSign(sink, rdg, x, by, bz, s > 0 ? Math.PI : 0, w, bh, { flood: true });
-      for (const t of [-w * 0.3, w * 0.3]) {
-        push(mastMesh, x + t, 0.2 + (by - bh / 2) / 2, bz, 0, 0, 0.42, by - bh / 2, 0.42);
-      }
-      shadowAt(x, bz, 0.02, 3.0, 0.7);
-    }
-  }
 
   // ---- neon: tubes, bulb strings, spill ------------------------------------
   const neons = [];
@@ -3050,12 +3023,6 @@ export function createWorld(scene, { roadKit, mapDoc = null }) {
     for (let x = -EX + 30; x <= EX; x += 62) {
       streetLight(sink, x, z + HALF + 2.4, Math.PI);
       streetLight(sink, x + 31, z - HALF - 2.4, 0);
-    }
-  }
-  if (!GRAPH) {
-    for (let x = -600; x <= 600; x += 70) {
-      streetLight(sink, x, HZ + LAYOUT.highwayW / 2 + 4, Math.PI);
-      streetLight(sink, x + 35, HZ - LAYOUT.highwayW / 2 - 4, 0);
     }
   }
 
@@ -3660,62 +3627,26 @@ export function createWorld(scene, { roadKit, mapDoc = null }) {
   }
 
   // ---- highway guard rails + overpass concrete -------------------------------
-  if (!GRAPH) {
-    for (const s of [-1, 1]) {
-      const rail = new THREE.Mesh(new THREE.BoxGeometry(2400, 0.42, 0.14), railMat);
-      rail.position.set(0, 0.72, HZ + s * (LAYOUT.highwayW / 2 + 2.2));
-      rail.castShadow = true;
-      group.add(rail);
-      const rail2 = rail.clone(); rail2.position.y = 0.38; group.add(rail2);
-    }
-  }
+  //
+  // S3d: the grid's straight 2400 m rail, its 480 posts, its 240 jersey barriers and its 1400 m
+  // deck at `z = LAYOUT.highwayZ` are DELETED. The graph's motorway is 52 edges in 20 connected
+  // components (see the S3b verdict), so none of those runs exists to draw; the viaduct, its deck
+  // and its piers are re-emitted per motorway chain in the graph block below. The three pools
+  // survive because that block fills them.
   const railPost = pool('railPost', boxGeo, poleMat, { recv: false });
-  if (!GRAPH) {
-    for (const s of [-1, 1]) {
-      for (let i = 0; i < 240; i++) {
-        push(railPost, -1200 + i * 10, 0.45, HZ + s * (LAYOUT.highwayW / 2 + 2.2), 0, 0, 0.14, 0.9, 0.14);
-      }
-    }
-  }
 
-  // jersey barrier + overpass deck running along the far side of the highway
   const barrier = pool('barrier', boxGeo, concMat, { recv: true });
-  if (!GRAPH) {
-    for (let i = 0; i < 240; i++) {
-      push(barrier, -1200 + i * 10, 0.55, HZ - LAYOUT.highwayW / 2 - 5.0, 0, 0, 9.8, 1.1, 0.6);
-    }
-  }
 
-  // The deck was NOT gated before S3b, so `#map=graph` carried a 1400 m concrete beam floating at
-  // (0, 12.5, -700) with nothing under it - the grid highway's overpass, over the graph's open
-  // ground. Gated here and re-emitted alongside a real motorway edge in the graph block below.
-  if (!GRAPH) {
-    const deck = new THREE.Mesh(new THREE.BoxGeometry(1400, 1.7, 13), concMat);
-    deck.position.set(0, 12.5, HZ - 62);
-    deck.castShadow = true; deck.receiveShadow = true;
-    group.add(deck);
-    const deckEdge = new THREE.Mesh(new THREE.BoxGeometry(1400, 1.3, 0.5), concMat);
-    deckEdge.position.set(0, 14.0, HZ - 62 + 6.5);
-    deckEdge.castShadow = true; group.add(deckEdge);
-    const deckEdge2 = deckEdge.clone(); deckEdge2.position.z = HZ - 62 - 6.5; group.add(deckEdge2);
-  }
-  // PIER RADIUS. Was r 1.5 -> 1.7 over the 11.6 m height. The row stands 64 m directly
-  // BEHIND the car-paint-closeup camera, in the flank's specular direction, and its 44
-  // cylinders were the carrier of the vertical comb that forced car-paint to widen
-  // clearcoatRoughness to mip ~4 to hide it (wave-q/car-paint.md §5, wave-q/environment.md §8).
-  // The carrier is OCCLUDED SOLID ANGLE, not the 60 m pitch: jitter saturates at -17% by
-  // +/-8 m and buys nothing at +/-24 m, and per-pier height/radius VARIATION is a clean null
-  // (0.275 vs 0.271). Halving the radius halves the fraction of the flank's specular
-  // hemisphere the row blocks, which is the quantity anisAC3 actually tracks. Do NOT delete
-  // or hide the row: it is visible in dusk-highway-chase (max delta 146), crash-cam (72) and
-  // daytime-downtown (68). At half radius it is invisible in daytime-downtown instead.
+  // PIER RADIUS, and this rationale outlives the grid row it was measured on. Was r 1.5 -> 1.7 over
+  // the 11.6 m height. In the grid world the row stood 64 m directly BEHIND the car-paint-closeup
+  // camera, in the flank's specular direction, and its cylinders carried the vertical comb that
+  // forced car-paint to widen clearcoatRoughness to mip ~4 to hide it (wave-q/car-paint.md §5,
+  // wave-q/environment.md §8). The carrier is OCCLUDED SOLID ANGLE, not the 60 m pitch: jitter
+  // saturates at -17% by +/-8 m and buys nothing at +/-24 m, and per-pier height/radius VARIATION
+  // is a clean null (0.275 vs 0.271). Halving the radius halves the fraction of the flank's
+  // specular hemisphere the row blocks, which is the quantity anisAC3 actually tracks. **Keep
+  // 0.75/0.85 and the 60 m pitch when the graph block re-emits the row; do not re-derive them.**
   const pier = pool('pier', new THREE.CylinderGeometry(0.75, 0.85, 1, 12), concMat);
-  if (!GRAPH) {
-    for (let i = 0; i < 44; i++) {
-      push(pier, -1300 + i * 60, 5.8, HZ - 62, 0, 0, 1, 11.6, 1);
-      shadowAt(-1300 + i * 60, HZ - 62, 0.02, 4.2, 0.9);
-    }
-  }
 
   // ---- THE GRAPH STREET FURNITURE (#map=graph) ---------------------------------------------
   //
