@@ -67,6 +67,57 @@ world on screen is still the `LAYOUT` grid and the graph is a different city —
 graph before `generate` would answer 'dirt' everywhere the player is and fire T4's off-road penalty
 on every road. `world.js` carries a comment at the swap point saying so.
 
+**`generate` WAS SPLIT IN SESSION 19 AND THE SPLIT IS BINDING: `tools/WAVE-T-GENERATE-PLAN.md`.**
+Read it with the two briefs. It carries the eight design decisions that are already made - per-chunk
+seeded RNG, per-chunk instance pools, computed caps, no new materials, `world.blocks` keeps its
+shape, `LAYOUT` survives carrying `carKit`, `paths` re-derived from the graph, and `bounds` raised
+early. The split exists because recon established three things: `createWorld` is a single linear
+2300-line script with no per-region entry point, one global RNG stream
+(`R = makeRng(0xC0FFEE)`, `world.js:1064`) decides the appearance of every object so on-demand
+chunk generation changes the whole city, and `push()` silently drops on overflow
+(`world.js:1133`) so every cap in the file is a silent-failure landmine at 12.7x area.
+
+**`generate-mesh` IS DESIGNED, NOT BUILT: `tools/WAVE-T-GENERATE-MESH-PLAN.md`.** Ten sections, a
+line-by-line demolition list for all 3381 lines of `world.js`, a six-step staging plan where every
+step leaves the game bootable, and 17 risks. Eight findings from it are load-bearing and will each
+cost a round if they are rediscovered:
+
+- **A single graph SEGMENT is 230.3 m long, longer than one 200 m chunk** (max edge 398.4 m). So
+  "assign each edge to an owning chunk" cannot work at any workable cell size, and neither can
+  segment-level ownership. The ribbon must be CLIPPED INSIDE a segment, with the boundary vertex and
+  its NORMAL interpolated from the same two source points in the same order by both neighbouring
+  chunks, so the two are bit-identical. Normals must be precomputed over the FULL edge and passed
+  in; deriving them per sub-polyline puts a V-notch at every boundary on every curved road.
+- **`world.js:3165` sets `group.matrixWorldAutoUpdate = false`.** Any chunk group added after boot
+  never gets its world matrix composed. Presents as "streamed chunks are invisible or in the wrong
+  place" and will be blamed on the emitter. `buildChunk` must `updateMatrixWorld(true)` then clear
+  the flag per chunk.
+- **`roadKit.buildRibbon` returns a `THREE.Group`, not a `Mesh`, and its docstring at `road.js:2`
+  advertises a `width` option that does not exist.** There are exactly two specs, `city` 20 m and
+  `highway` 36 m (`road.js:1741-1744`); the graph has 21 widths from 9.0 to 49.4 m. A spec per width
+  is 21 new programs and is forbidden. The answer is to draw the marked carriageway at the class's
+  spec width and carry the remainder as `shoulderMat`, which tiles at any width and already exists.
+- **`world.js:2159` draws from the INJECTED `rng`, not the global `R`** - a second, undeclared RNG
+  stream inside `neonSign`. Harmless today because source order is fixed; under per-chunk building
+  it makes the world depend on visit order, which is the exact failure per-cell seeding exists to
+  prevent.
+- **`road.js`'s `refl.hidden` is an unbounded registry with no removal path** (`road.js:1597`, pushed
+  at `:1890`, `:1898`, `:2005`, `:2053`, iterated twice per reflection). Streaming leaks an entry per
+  chunk build forever and writes `o.visible` on disposed meshes. Needs `roadKit.releaseHidden()`.
+- **Shot mode ticks the sim BEFORE `window.__ready`** (`main.js` ~886), so an amortised build queue
+  puts a half-built world in all seven gate screenshots. `world.settle()` must exist and be called
+  on the shot path. `_loadtime.mjs` uses the playable path and still measures a real streamed boot.
+- **The overpass pier row at `world.js:2859-2882` has no graph counterpart** - all 929 edges are
+  `elevationClass: 'ground'` - but `world.js:2867-2876` records it as a MEASURED contributor to
+  three of the seven gate scenes, with a radius chosen to fix a solved car-paint defect. Deleting it
+  is a gate regression and it is the item in the demolition list most likely to be quietly dropped.
+  Re-emit it alongside a motorway edge at the same `0.75/0.85` radius and 60 m pitch.
+- **Caps solve themselves by DEFERRED ALLOCATION, which is better than counting.** Emit into
+  caller-owned growable `Float32Array`s, then allocate each `InstancedMesh` at exactly the number of
+  pushes. There is no cap during emission, so `world.js:1133`'s silent drop cannot happen and no
+  count expression can be got wrong. Add the drop counter anyway for pools that stay global, and
+  publish it on `chunkStats().overflow`, asserted zero.
+
 Read the chunk contract in the brief BEFORE writing the generator, not after. The rule that decides
 whether this task ships at 3.5 s or 14 s is that **nothing outside the hero's resident chunk set
 may be BUILT during boot** — and it must be asserted on what EXISTS at `__ready`, never inferred
@@ -81,7 +132,10 @@ from it.
 |---|---|---|
 | `digitise` | `game/map/paradise.json`, `game/map/validate.mjs` | **DONE.** `verdicts/wave-t/digitise.md` |
 | `queries` | graph spatial index, `surfaceAt` off `LAYOUT` | **DONE.** `verdicts/wave-t/queries.md` |
-| `generate` | graph -> roads, kerbs, junctions, buildings | **NEXT.** Owns the `surfaceAt` swap |
+| `generate` | graph -> roads, kerbs, junctions, buildings | **SPLIT INTO THREE.** See below. Owns the `surfaceAt` swap |
+| ├ `generate-blocks` | `game/map/blocks.js`, graph faces -> building blocks | **BUILT, IN CRITIQUE.** `verdicts/wave-t/generate-blocks.md` |
+| ├ `generate-mesh` | per-chunk emitters in `world.js` | **DESIGNED.** `tools/WAVE-T-GENERATE-MESH-PLAN.md`. Build not started |
+| └ `generate-wire` | `surfaceAt` swap, `paths`, `bounds`, harness coords | not started; lands with `generate-mesh` |
 | `stream` | chunk build/dispose around the hero | not started; needs `generate` |
 | `rewire` | `traffic.js`, parked ranks, signals, `physics.js` blocks, minimap, spawns | not started; needs `queries` |
 | `skyline` | far LOD / impostors | not started |

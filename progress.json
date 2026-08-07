@@ -1,5 +1,5 @@
 {
-  "generated": "2026-08-06T11:04:39.578Z",
+  "generated": "2026-08-07T06:54:29.581Z",
   "waves": [
     "wave-k",
     "wave-l",
@@ -9,9 +9,10 @@
     "wave-p",
     "wave-q",
     "wave-r",
-    "wave-s"
+    "wave-s",
+    "wave-t"
   ],
-  "currentWave": "wave-s",
+  "currentWave": "wave-t",
   "play": [
     {
       "piece": "perf",

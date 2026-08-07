@@ -5,9 +5,16 @@
 # 60 s waitForFunction timeout otherwise.
 cd "$(dirname "$0")/.." || exit 1
 tmp=$(mktemp -d); fail=0
-for f in game/*.js; do
-  cp "$f" "$tmp/$(basename "$f" .js).mjs"
-  if ! out=$(node --check "$tmp/$(basename "$f" .js).mjs" 2>&1); then
+# game/map/*.js is in this glob deliberately. It was NOT, until wave T's `generate` piece found the
+# gap: graph.js and blocks.js are imported by game code and by node harnesses, and a syntax error in
+# either linted clean and presented as a 60 s waitForFunction timeout - exactly the failure the
+# comment above says this script exists to prevent. The name is flattened so game/map/foo.js and
+# game/foo.js cannot collide in the temp dir.
+for f in game/*.js game/map/*.js; do
+  [ -e "$f" ] || continue
+  flat="$tmp/$(echo "${f%.js}" | tr / _).mjs"
+  cp "$f" "$flat"
+  if ! out=$(node --check "$flat" 2>&1); then
     echo "SYNTAX $f"; echo "$out" | head -5; fail=1
   fi
 done
