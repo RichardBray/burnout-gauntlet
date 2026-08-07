@@ -1,5 +1,16 @@
 // road.js — asphalt + lane-marking materials and road ribbon mesh generation.
-// API: createRoadKit(rng, {renderer}) -> kit. kit.buildRibbon(points2D, {width, cls, y}) -> THREE.Mesh
+// API: createRoadKit(rng, {renderer}) -> kit.
+//      kit.buildRibbon(points2D, {cls, y, shoulder, closed}) -> THREE.Group holding up to TWO
+//        meshes: the wider shoulder slab (only when shoulder > 0) and the paved surface. It is a
+//        Group, NOT a Mesh, and there is no `width` option — the width comes from the class spec.
+//        (This line said "-> THREE.Mesh" and advertised a `width` option until wave T. Both were
+//        wrong, and the wrongness had outlived several waves: do not trust a docstring.)
+//      kit.ribbonInto(sink, pts, nrm, halfW, y, uRepeat, vScale) appends one ribbon into
+//        caller-owned growable arrays — no geometry, no Mesh, no material — and
+//      kit.finishRibbon(sink, cls) turns a filled sink into ONE Mesh on an EXISTING material.
+//        Together these batch many ribbons into one draw call; buildRibbon is a wrapper over them.
+//      kit.releaseHidden(obj) un-registers a mesh (or a whole Group) from the planar-reflection
+//        hide list, so streamed geometry can actually be disposed.
 //      kit.setWet(0..1) retunes every road material; kit.addWetSmear(group,x,z,ang,color,w,l,i)
 //      drops an additive light-smear quad on the tarmac (used for wet-night reflections).
 //
@@ -1840,8 +1851,127 @@ export function createRoadKit(rng, opts = {}) {
     microNormal: micro.normal,
 
     /**
-     * Build a road ribbon along a 2-D polyline. points = [[x,z], ...].
-     * Returns a Group containing the paved surface plus a slightly wider base.
+     * Append one ribbon into CALLER-OWNED growable arrays. Allocates no geometry, no Mesh and no
+     * material, so an arbitrary number of ribbons can be batched into a single draw call by
+     * calling this repeatedly against one sink and then calling `finishRibbon` once.
+     *
+     * The sink is a plain object of four plain arrays, and the caller owns all four:
+     *   `{ pos: [], nor: [], uv: [], idx: [] }`
+     * Indices are emitted relative to `sink.pos.length / 3` at entry, so appends compose.
+     *
+     * @param sink {{pos:number[], nor:number[], uv:number[], idx:number[]}}
+     * @param pts  the centreline, as `[[x,z],...]` or as `THREE.Vector2[]` (`.y` is the z axis)
+     * @param nrm  PRECOMPUTED per-point normals, `[[nx,nz],...]` or `THREE.Vector2[]`, SAME LENGTH
+     *   AS `pts`. This is a parameter rather than a central difference computed in here, and that
+     *   is deliberate and load-bearing. When one road is split across two chunks, both chunks must
+     *   offset their shared boundary cross-section along the SAME normal, and that normal has to
+     *   come from the full edge polyline. A one-sided difference at a sub-polyline's end gives the
+     *   two chunks two different normals wherever the road curves, and the seam opens into a
+     *   visible V-notch. Passing the normals in is the whole fix.
+     * @param halfW  half-width in metres. Per EDGE, not per class: the road graph carries 21
+     *   distinct widths from 9.0 to 49.4 m and there are only two class specs.
+     * @param y  the plane height of this ribbon.
+     * @param uRepeat  how many texture widths span the ribbon (i.e. `2 * halfW / spec.widthM`).
+     *   1 stretches one tile across, which is what the class-width ribbons want.
+     * @param vScale  metres of centreline per texture tile along the road.
+     */
+    ribbonInto(sink, pts, nrm, halfW, y, uRepeat, vScale) {
+      const n = pts.length;
+      if (n < 2) return;
+      const { pos, nor, uv, idx } = sink;
+      // Accept either THREE.Vector2 or [x, z]; decide once, not per vertex.
+      const pv = pts[0].x !== undefined, nv = nrm[0].x !== undefined;
+      const base = pos.length / 3;
+
+      let d = 0;
+      let px = pv ? pts[0].x : pts[0][0], pz = pv ? pts[0].y : pts[0][1];
+      for (let i = 0; i < n; i++) {
+        const x = pv ? pts[i].x : pts[i][0], z = pv ? pts[i].y : pts[i][1];
+        const nx = nv ? nrm[i].x : nrm[i][0], nz = nv ? nrm[i].y : nrm[i][1];
+        if (i > 0) {
+          const dx = x - px, dz = z - pz;
+          d += Math.sqrt(dx * dx + dz * dz);
+          px = x; pz = z;
+        }
+        pos.push(x - nx * halfW, y, z - nz * halfW);
+        pos.push(x + nx * halfW, y, z + nz * halfW);
+        nor.push(0, 1, 0, 0, 1, 0);
+        const v = d / vScale;
+        uv.push(0, v, uRepeat, v);
+      }
+      for (let i = 0; i < n - 1; i++) {
+        // wind CCW when viewed from above so the surface faces +Y
+        const a0 = base + i * 2, b0 = a0 + 1, a1 = a0 + 2, b1 = a0 + 3;
+        idx.push(a0, b0, a1, b0, b1, a1);
+      }
+      sink.length = d;
+    },
+
+    /**
+     * One Mesh from a filled sink, on an EXISTING material. No material is created here and none
+     * ever should be: shader compile is the single largest slice of cold load, so a new road
+     * width, a new district or a new class is a new texture or a new instance colour, never a new
+     * program.
+     *
+     * `cls` is 'city' or 'highway' for the marked carriageway (which also gets the planar
+     * reflection's driving hook), or 'shoulder' for the unmarked verge slab.
+     */
+    finishRibbon(sink, cls) {
+      const g = new THREE.BufferGeometry();
+      g.setAttribute('position', new THREE.Float32BufferAttribute(sink.pos, 3));
+      g.setAttribute('normal', new THREE.Float32BufferAttribute(sink.nor, 3));
+      g.setAttribute('uv', new THREE.Float32BufferAttribute(sink.uv, 2));
+      g.setIndex(sink.idx);
+      g.computeBoundingSphere();
+
+      const isShoulder = cls === 'shoulder';
+      const mesh = new THREE.Mesh(g, isShoulder ? shoulderMat : mats[cls].mat);
+      mesh.receiveShadow = true;
+      if (!isShoulder) {
+        // Drive the planar reflection from the road itself: no external per-frame hook
+        // needed, and it self-guards to one pass per render.
+        mesh.onBeforeRender = (r, sc, cam, geo, mat) => {
+          if (refl.render) refl.render(sc, cam, mat);
+        };
+      }
+      refl.hidden.push(mesh);
+      return mesh;
+    },
+
+    /**
+     * Un-register an object — a mesh, or a whole Group and everything under it — from the planar
+     * reflection's hide list.
+     *
+     * WHY THIS EXISTS. `refl.hidden` had push sites and, in effect, no removal path: the only
+     * `pop()` in the file drops one scratch prototype. The reflection pass walks that list twice
+     * per render, once to stash `visible` and once to restore it. A streaming world that builds
+     * and disposes chunks therefore (a) grows the list without bound, one entry per ribbon per
+     * chunk build, forever, and (b) writes `.visible` on meshes whose geometry has already been
+     * disposed. Call this from the dispose path of anything that called `finishRibbon`,
+     * `buildRibbon` or `addWetSmear`.
+     *
+     * @returns {number} how many entries were removed.
+     */
+    releaseHidden(obj) {
+      if (!obj) return 0;
+      const doomed = new Set();
+      if (obj.traverse) obj.traverse((o) => doomed.add(o));
+      else doomed.add(obj);
+      let removed = 0;
+      for (let i = refl.hidden.length - 1; i >= 0; i--) {
+        if (doomed.has(refl.hidden[i])) { refl.hidden.splice(i, 1); removed++; }
+      }
+      return removed;
+    },
+
+    /**
+     * Build a road ribbon along a 2-D polyline. points = [[x, z], ...].
+     *
+     * Returns a THREE.Group — not a Mesh — holding the paved surface and, when `shoulder > 0`, a
+     * slightly wider slab underneath it. There is no `width` option: the width is the class spec's
+     * (`city` 20 m, `highway` 36 m). Callers wanting a per-edge width, or wanting many ribbons in
+     * one draw call, want `ribbonInto` + `finishRibbon` instead; this is the single-ribbon wrapper
+     * over exactly those two.
      */
     buildRibbon(points, { cls = 'city', y = 0.03, shoulder = 1.6, closed = false } = {}) {
       const spec = mats[cls].spec;
@@ -1849,54 +1979,27 @@ export function createRoadKit(rng, opts = {}) {
       if (closed && pts[0].distanceTo(pts[pts.length - 1]) > 0.001) pts.push(pts[0].clone());
       const n = pts.length;
 
+      // Central difference over the WHOLE polyline. A single ribbon has no neighbouring chunk to
+      // agree with, so this is the whole edge by definition; a chunked caller computes the same
+      // thing once over the full edge and hands the slices out.
       const normals = [];
-      const dist = [0];
       for (let i = 0; i < n; i++) {
         const prev = pts[Math.max(0, i - 1)], next = pts[Math.min(n - 1, i + 1)];
         const t = new THREE.Vector2().subVectors(next, prev).normalize();
         normals.push(new THREE.Vector2(-t.y, t.x));
-        if (i > 0) dist.push(dist[i - 1] + pts[i].distanceTo(pts[i - 1]));
       }
 
       const group = new THREE.Group();
-      const build = (halfW, yy, uvScaleV) => {
-        const pos = [], uv = [], idx = [], nor = [];
-        for (let i = 0; i < n; i++) {
-          const p = pts[i], nm = normals[i];
-          pos.push(p.x - nm.x * halfW, yy, p.y - nm.y * halfW);
-          pos.push(p.x + nm.x * halfW, yy, p.y + nm.y * halfW);
-          nor.push(0, 1, 0, 0, 1, 0);
-          const v = dist[i] / uvScaleV;
-          uv.push(0, v, 1, v);
-        }
-        for (let i = 0; i < n - 1; i++) {
-          // wind CCW when viewed from above so the surface faces +Y
-          const a0 = i * 2, b0 = a0 + 1, a1 = a0 + 2, b1 = a0 + 3;
-          idx.push(a0, b0, a1, b0, b1, a1);
-        }
-        const g = new THREE.BufferGeometry();
-        g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
-        g.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3));
-        g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
-        g.setIndex(idx);
-        g.computeBoundingSphere();
-        return g;
+      const ribbon = (halfW, yy, vScale, mcls) => {
+        const sink = { pos: [], nor: [], uv: [], idx: [], length: 0 };
+        kit.ribbonInto(sink, pts, normals, halfW, yy, 1, vScale);
+        const m = kit.finishRibbon(sink, mcls);
+        group.add(m);
+        return sink.length;
       };
 
-      if (shoulder > 0) {
-        const sm = new THREE.Mesh(build(spec.widthM / 2 + shoulder, y - 0.02, 12), shoulderMat);
-        sm.receiveShadow = true;
-        group.add(sm);
-        refl.hidden.push(sm);
-      }
-      const road = new THREE.Mesh(build(spec.widthM / 2, y, spec.tileLenM), mats[cls].mat);
-      road.receiveShadow = true;
-      // Drive the planar reflection from the road itself: no external per-frame hook
-      // needed, and it self-guards to one pass per render.
-      road.onBeforeRender = (r, sc, cam, geo, mat) => { if (refl.render) refl.render(sc, cam, mat); };
-      group.add(road);
-      refl.hidden.push(road);
-      group.userData.length = dist[n - 1];
+      if (shoulder > 0) ribbon(spec.widthM / 2 + shoulder, y - 0.02, 12, 'shoulder');
+      group.userData.length = ribbon(spec.widthM / 2, y, spec.tileLenM, cls);
       return group;
     },
 
@@ -2027,7 +2130,10 @@ export function createRoadKit(rng, opts = {}) {
       if (!positions.length) return null;
       kit.addWetSmear(_smearProbe, 0, 0, 0, color, w, l, intensity); // builds kit._smearTex once
       const proto = _smearProbe.children.pop();
-      refl.hidden.pop();
+      // The probe quad registered itself in refl.hidden and is about to be thrown away. This was a
+      // bare `refl.hidden.pop()`, which is only correct while nothing else can push in between;
+      // releaseHidden removes THAT object, whatever its index.
+      kit.releaseHidden(proto);
       const mesh = new THREE.InstancedMesh(proto.geometry, proto.material, positions.length);
       const m4 = new THREE.Matrix4();
       const e = new THREE.Euler();

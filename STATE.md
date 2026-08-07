@@ -118,6 +118,91 @@ cost a round if they are rediscovered:
   count expression can be got wrong. Add the drop counter anyway for pools that stay global, and
   publish it on `chunkStats().overflow`, asserted zero.
 
+**`generate-blocks` ROUND 1 WAS FAILED BY ITS CRITIC, NARROWLY, AND THE REASON IS THE MOST REUSABLE
+THING THIS SESSION FOUND: the block list is correct and the apparatus that certifies it is not.**
+Full write-up `verdicts/wave-t/generate-blocks-critic.md`. Four findings that must not be
+rediscovered:
+
+- **THE PLANAR-AREA IDENTITY IS A TAUTOLOGY, NOT A CHECK.** "The outer face's area equals the sum of
+  the interior faces" holds for ANY rotation system, including a broken one. The critic ran the
+  exact mutation the builder's report claims it catches - swapping two entries in one node's
+  incident list - and got two MORE merged faces with the identity passing at 5844201.3 vs
+  5844201.3 and every traversal check green. Two faces merged into one preserves total area
+  exactly. **The check that actually works is Euler: V - E + F = 2.**
+- **AND EULER FAILS TODAY: 688 - 929 + 237 = -4, so six faces are merged.** The cause is the four
+  shared-node crossings the builder found and chose not to split. Splitting them in a copy of the
+  doc restores chi = 2, F = 247, kept faces 234 -> 240. The output survives this - the block set from
+  the split graph is SET-IDENTICAL to the shipped 693 - so the "do not split" call was right about
+  the blocks and wrong about the traversal.
+- **The harness passes with 53% of its own deliverable deleted.** Dropping every face above
+  100000 m2 loses 3.13 km2 and 298 blocks and `tools/_mapblocks.mjs` still exits 0. Six stage areas
+  are PRINTED and none is ASSERTED. Printing a number is not checking it.
+- **THE OVERLAY SAID SOMETHING NO NUMBER COULD, AGAIN.** The picture confirms these really are the
+  blocks of that city - magenta tiles the land between the roads and stops at it, nothing in the
+  water, the coastline respected. But it also shows the 51 giant blocks are not scattered, they are
+  **a spine of solid slabs running the length of the map**, and in the harbour those slabs lie over
+  streets that are VISIBLE IN THE REFERENCE AND ABSENT FROM THE GRAPH. Both tarmac oracles are blind
+  to that by construction, because both define tarmac as the graph. This is a `digitise` coverage
+  gap presenting as a collision wall, and it is NOT being fixed by re-tracing this session - the fix
+  is that a giant face emits a RING of perimeter rectangles, never one slab.
+
+One number for `rewire`, measured not estimated: 693 blocks against `physics.js:922`'s unindexed
+linear scan at `SUBSTEP = 1/240` is **166320 AABB tests/sec**, up from 8640 today. `world.blocks`
+stays a flat array by decision 5, so the answer is a published `world.blockIndex`.
+
+**`generate-mesh` S0 IS DONE** - `verdicts/wave-t/generate-mesh-s0.md`. `cellHash` at
+`game/util.js:41` (100x100 lattice, 10000 distinct hashes, 0 collisions, mean Hamming distance
+16.002 of 32 bits between 4-neighbours); `ribbonInto` at `road.js:1878`, `finishRibbon` at `:1919`,
+`releaseHidden` at `:1955`, `buildRibbon` rewrapped at `:1976`; the wrong header docstring at
+`road.js:1-14` corrected. **Zero materials added, verified live: programs 132 -> 132, geometries
+463 -> 463, textures 96 -> 96, `reflStats()` identical field-for-field.**
+
+**AND S0 CORRECTED A BAR THAT WAS SET WRONG, WHICH IS WORTH MORE THAN THE CODE. DO NOT RE-ISSUE IT.**
+S0 was briefed to prove a no-op refactor by requiring all seven scene renders to be BYTE-IDENTICAL.
+That is unmeetable and the builder proved it rather than rationalising it: it rendered all seven
+from a tree reverted with `git checkout HEAD --`, and **all seven md5s differed from the first
+render of the same bytes. 21 renders, 21 distinct md5s.** `crash-cam` twice back-to-back off one
+unchanged tree differs in 45 pixels at maxdiff 2. This does NOT contradict permanent rule 2 above -
+that rule says the METRICS are 0.00 run to run, and its own honest caveat is "<=0.005% of pixels at
+<=9/255", which is exactly what was measured. **A metric can be bit-stable while the framebuffer is
+not. Never ask for an md5 match on a render.**
+
+**The replacement is stronger than the thing it replaces and is the pattern for every future no-op
+refactor in this tree: load the OLD module alongside the new one.** `git show HEAD:game/road.js`
+was imported as a second module, both kits seeded from `makeRng(0xC0FFEE)`, and both `buildRibbon`s
+run over the exact call set `world.js:1178-1192` makes plus three shapes the grid never produces.
+53 calls, 448 vertices, 238 triangles, **zero differing values** under `Object.is` across
+`position`, `normal`, `uv`, the index array and its type, boundingSphere, shadow flags,
+renderOrder, the `onBeforeRender` hook, child order and `userData`. That proves the vertex buffers
+bit-identical, which an md5 match never would have.
+
+**`generate-mesh` S1 IS DONE** - `verdicts/wave-t/generate-mesh-s1.md`. The deferred-allocation sink
+is in, every emitter takes `(sink, rng, ...)`, the render-side cut at `world.js:3022-3167` is
+deleted, `seal()` is gone, and 51 literal caps were removed. **Proved a no-op by the S0 pattern:
+`git show HEAD:game/world.js` loaded as a second module, both worlds built from identical seeds,
+1294 meshes and 199311 instances on each side, 0 buckets with a count mismatch, and 0 differing
+values across 3786909 compared floats bucketed-and-sorted plus 3526590 compared in traversal
+order.** Draw calls EXACTLY equal on three scenes (1372, 2127, 663), triangles equal, programs
+131/132 unchanged. Before deleting the caps it instrumented `push()` and measured **zero silent
+drops at HEAD**, so the removal was provably safe rather than assumed safe.
+
+Three things from S1 that outlive it:
+
+- **A REAL BUG IT FOUND WHILE PROVING A NO-OP, AND DID NOT PRESERVE. `hidePoles` writes to the
+  source pool with no `chunkRemap` lookup** - only `parkedCar.hide()` ever did one - so for any pool
+  whose draw state got cut the write landed on a zeroed mesh. Measured: knocking down 5 lamps sinks
+  55 instances on HEAD and 65 now; the missing 10 are `slArm` and `slHead`. **On HEAD, knocking over
+  a street lamp leaves its arm and head hanging in mid-air.** This is the third bug in this project
+  behind one green check, and it is the exact hazard `tools/HANDOFF-PARKED-CARS.md` documents.
+- **The `neonSign` injected-`rng` fix is MEASURED AND DELIBERATELY NOT LANDED.** Flipping it inserts
+  one extra `R()` at the first neon sign, and because `R` is consumed in strict source order the
+  whole city downstream re-rolls: 199311 -> 199235 instances, 507 of 1294 meshes change shape,
+  **24.3% of pixels in `daytime-downtown` and 45.3% in `wet-night-asphalt`, maxd 187/192.** That is
+  an S2-class re-seed and landing it in S1 would have destroyed the provability S1 exists for. It is
+  two lines when S2 wants it.
+- **`car-paint-closeup` has exactly ONE bistable pixel, at (331,607), and BOTH trees produce BOTH
+  values.** Traced across nine renders. Anyone chasing a maxd 17 in that scene should stop here.
+
 Read the chunk contract in the brief BEFORE writing the generator, not after. The rule that decides
 whether this task ships at 3.5 s or 14 s is that **nothing outside the hero's resident chunk set
 may be BUILT during boot** — and it must be asserted on what EXISTS at `__ready`, never inferred
@@ -133,8 +218,8 @@ from it.
 | `digitise` | `game/map/paradise.json`, `game/map/validate.mjs` | **DONE.** `verdicts/wave-t/digitise.md` |
 | `queries` | graph spatial index, `surfaceAt` off `LAYOUT` | **DONE.** `verdicts/wave-t/queries.md` |
 | `generate` | graph -> roads, kerbs, junctions, buildings | **SPLIT INTO THREE.** See below. Owns the `surfaceAt` swap |
-| ├ `generate-blocks` | `game/map/blocks.js`, graph faces -> building blocks | **BUILT, IN CRITIQUE.** `verdicts/wave-t/generate-blocks.md` |
-| ├ `generate-mesh` | per-chunk emitters in `world.js` | **DESIGNED.** `tools/WAVE-T-GENERATE-MESH-PLAN.md`. Build not started |
+| ├ `generate-blocks` | `game/map/blocks.js`, graph faces -> building blocks | **R2 PASSED** (`verdicts/wave-t/generate-blocks-critic-r2.md`). R3 running: 2 defects |
+| ├ `generate-mesh` | per-chunk emitters in `world.js` | **DESIGNED** (`tools/WAVE-T-GENERATE-MESH-PLAN.md`). **S0+S1 DONE**, `verdicts/wave-t/generate-mesh-s[01].md`. S1 in critique |
 | └ `generate-wire` | `surfaceAt` swap, `paths`, `bounds`, harness coords | not started; lands with `generate-mesh` |
 | `stream` | chunk build/dispose around the hero | not started; needs `generate` |
 | `rewire` | `traffic.js`, parked ranks, signals, `physics.js` blocks, minimap, spawns | not started; needs `queries` |

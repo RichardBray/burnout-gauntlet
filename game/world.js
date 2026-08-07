@@ -1057,7 +1057,7 @@ function patchAtmo(mat, atmo, reflect = 0.0) {
 }
 
 // ---------------------------------------------------------------------------
-export function createWorld(scene, { rng, roadKit }) {
+export function createWorld(scene, { rng: injectedRng, roadKit }) {
   installPcss();
   const group = new THREE.Group();
   scene.add(group);
@@ -1119,32 +1119,246 @@ export function createWorld(scene, { rng, roadKit }) {
   const tmpC = new THREE.Color();
   const contacts = [];   // {x,z,y,rx,rz,ry,a} — see shadowAt() below
 
-  /** allocate an instanced mesh with a capacity; count is grown by push() */
-  function inst(geo, mat, cap, { cast = true, recv = true } = {}) {
-    const m = new THREE.InstancedMesh(geo, mat, cap);
-    m.castShadow = cast; m.receiveShadow = recv;
-    m.frustumCulled = false;
-    m.count = 0;
-    m.userData.cap = cap;
-    group.add(m);
-    return m;
+  // ---- THE SINK: deferred allocation, so the cap IS the count ---------------------------
+  //
+  // WHAT THIS REPLACES, AND WHY. `inst(geo, mat, cap)` used to allocate an InstancedMesh up
+  // front and `push()` used to write straight into it, with `if (m.count >= m.userData.cap)
+  // return;` as the only overflow handling — a SILENT drop, no throw, no counter. Every cap in
+  // this file was hand-sized for a 1.1 km square, and the file records four separate historical
+  // incidents of a cap quietly truncating a population (see the notes at the signFrame, signMesh,
+  // palm and awning pools). A streaming world sized for a 4000 x 2861 m map cannot keep guessing
+  // these numbers.
+  //
+  // So allocation is DEFERRED. An emitter pushes into a growable Float32Array with no cap at all;
+  // `finalize()` then allocates each InstancedMesh at exactly the number of pushes it received.
+  // The count expression for every pool is literally `p.count`, so there is no bound to get wrong
+  // and overflow is not a state the emission path can reach.
+  //
+  // A two-pass "count, then allocate" would NOT work here and it is worth saying why: the code
+  // paths are RNG-branched (`if (R() < 0.45)`, `rngInt(R, 2, 5)` loop counts, `while (t < len/2 -
+  // 12)`), so a counting pass that did not draw the same random numbers would produce a bound
+  // rather than a count, and one that did draw them would consume the stream twice.
+  //
+  // A pool descriptor IS a THREE.Group, deliberately. Later code holds direct handles to
+  // individual pools and toggles them — `spillMesh.visible = night` in setNight, and
+  // `world.aoExclude`, which post.js hides by writing `o.visible = false`. Making the descriptor
+  // the Group that the finalized meshes hang under preserves every one of those handles for free,
+  // exactly as the old render-side cut preserved them by parenting chunks to their source mesh.
+
+  /**
+   * Overflow counter. The sink itself cannot drop — there is no cap during emission — so this
+   * exists for the pools that are still allocated with a literal size (contactMesh) and for any
+   * future pool that reintroduces one. Published on `world.chunkStats().overflow` and asserted
+   * zero by the probe, which closes a bug class the four incidents above are instances of.
+   */
+  const dropStats = { n: 0, pools: {} };
+  function dropped(name) {
+    dropStats.n++;
+    dropStats.pools[name] = (dropStats.pools[name] || 0) + 1;
   }
-  function push(m, x, y, z, ry = 0, rz = 0, sx = 1, sy = 1, sz = 1, color) {
-    if (m.count >= m.userData.cap) return;
+
+  const sink = { pools: [], remap: new Map() };
+
+  /**
+   * Declare a pool. Returns the descriptor, which is also registered on the sink under `name` so
+   * an emitter can reach it through its `sink` argument instead of closing over this scope.
+   */
+  function pool(name, geo, mat, { cast = true, recv = true, parent = group } = {}) {
+    const p = new THREE.Group();
+    p.name = name;
+    p.castShadow = cast;
+    p.receiveShadow = recv;
+    p.count = 0;
+    p._geo = geo;
+    p._mat = mat;
+    p._cap = 256;                          // instances the scratch buffers currently hold
+    p._m = new Float32Array(p._cap * 16);
+    p._c = null;                           // allocated lazily, and only if a colour is ever set
+    parent.add(p);
+    sink.pools.push(p);
+    sink[name] = p;
+    return p;
+  }
+
+  function grow(p) {
+    if (p.count < p._cap) return;
+    p._cap *= 2;
+    const m = new Float32Array(p._cap * 16);
+    m.set(p._m); p._m = m;
+    if (p._c) {
+      // three's setColorAt fills a fresh instanceColor with 1, so an instance that never gets a
+      // colour comes out WHITE, not black. The growable copy has to keep that property.
+      const c = new Float32Array(p._cap * 3).fill(1);
+      c.set(p._c); p._c = c;
+    }
+  }
+
+  /** Append `dummy`'s current matrix. Same argument list as the old push(), minus the cap. */
+  function push(p, x, y, z, ry = 0, rz = 0, sx = 1, sy = 1, sz = 1, color) {
     dummy.position.set(x, y, z);
     dummy.rotation.set(0, ry, rz);
     dummy.scale.set(sx, sy, sz);
     dummy.updateMatrix();
-    m.setMatrixAt(m.count, dummy.matrix);
-    if (color !== undefined) m.setColorAt(m.count, tmpC.setHex(color, THREE.SRGBColorSpace));
-    m.count++;
+    pushMat(p, dummy.matrix, color);
   }
-  function seal(...ms) {
-    for (const m of ms) {
-      m.instanceMatrix.needsUpdate = true;
-      if (m.instanceColor) m.instanceColor.needsUpdate = true;
+
+  /**
+   * Append an already-composed matrix. `streetLight` and `parkedCar` need this: they set up
+   * `dummy` with a rotation order or an axis convention that push()'s (0, ry, rz) cannot express,
+   * and used to reach past push() and call `setMatrixAt` on the pool directly.
+   */
+  function pushMat(p, mat4, color) {
+    grow(p);
+    mat4.toArray(p._m, p.count * 16);
+    if (color !== undefined) {
+      if (!p._c) p._c = new Float32Array(p._cap * 3).fill(1);
+      tmpC.setHex(color, THREE.SRGBColorSpace).toArray(p._c, p.count * 3);
     }
+    p.count++;
   }
+
+  /**
+   * Discard the last instance pushed to a pool. Nothing needs this today — `bench()` used to push
+   * a placeholder leg and then decrement the count, which this replaces and which was deleted as
+   * dead code — but a pool that emits speculatively and then retracts is a shape the emitters can
+   * legitimately take, and without it the scratch buffer keeps a stale 16 floats.
+   */
+  function pop(p) { if (p.count > 0) p.count--; }
+
+  // CHUNK is a real trade and was measured, not guessed: smaller cells cull more triangles and
+  // cost more draw calls (one per occupied cell per draw state). See verdicts/wave-s for the
+  // sweep. It used to live at the bottom of this file, in a pass that re-cut the finished pools;
+  // now it is the allocation granularity itself and no re-cut is needed.
+  const CHUNK = 200;
+  // Below this many instances a draw state is left as one mesh per pool. A 60-instance pool
+  // cannot pay back the extra draw calls cutting it would add, and the point is to spend calls
+  // only where there are triangles behind them.
+  const CHUNK_MIN = 400;
+
+  /**
+   * Allocate every pool at exactly the number of instances it received, bucketed by DRAW STATE.
+   *
+   * Pools are merged by (geometry, material, castShadow, receiveShadow, renderOrder) before they
+   * are cut. Those are not distinct THINGS to the GPU — a bench slat, a traffic-light head, a
+   * sign frame and a bumper are all `boxGeo` with `darkMat`, i.e. the same program and the same
+   * buffers, split across pools only because they were built by different functions. Bucketing
+   * makes a cell cost one call per distinct draw state rather than one per author; without it,
+   * cutting downtown into cells took the city from 849 calls to 2285.
+   *
+   * THE CONSTRAINT THIS INTRODUCES, stated because it is not obvious: merged instances lose their
+   * individual pool's `visible` flag. That is safe for every pool here — the only one this file
+   * toggles on its own is `spillMesh`, whose `spillMat` is unique to it, so it can never share a
+   * bucket. A future pool that needs its own visibility needs its own material (which it needs
+   * anyway to look different).
+   *
+   * Each cell mesh gets `frustumCulled = true` and a tight bounding sphere, so three can reject a
+   * cell that is behind the camera or outside the shadow cascade. That is a provably lossless
+   * cull, which is why this is frustum culling and NOT a distance cull: the skyline is 800 m away
+   * and is supposed to be there.
+   */
+  function finalize() {
+    let meshes = 0, cells = 0, instances = 0;
+    const buckets = new Map();
+    for (const p of sink.pools) {
+      if (p.count < 1) continue;
+      const key = `${p._geo.uuid}|${p._mat.uuid}`
+        + `|${p.castShadow ? 1 : 0}${p.receiveShadow ? 1 : 0}|${p.renderOrder}`;
+      let b = buckets.get(key);
+      if (!b) buckets.set(key, b = []);
+      b.push(p);
+    }
+
+    /** One mesh per pool, unchunked and never culled: the draw state is too small to cut. */
+    const whole = (ps) => {
+      for (const p of ps) {
+        const im = new THREE.InstancedMesh(p._geo, p._mat, p.count);
+        im.castShadow = p.castShadow;
+        im.receiveShadow = p.receiveShadow;
+        im.renderOrder = p.renderOrder;
+        im.frustumCulled = false;
+        im.name = p.name;
+        im.instanceMatrix.array.set(p._m.subarray(0, p.count * 16));
+        im.instanceMatrix.needsUpdate = true;
+        if (p._c) {
+          im.instanceColor = new THREE.InstancedBufferAttribute(
+            p._c.slice(0, p.count * 3), 3);
+          im.instanceColor.needsUpdate = true;
+        }
+        p.add(im);
+        const r = new Map();
+        for (let i = 0; i < p.count; i++) r.set(i, [im, i]);
+        sink.remap.set(p, r);
+        meshes++; instances += p.count;
+      }
+    };
+
+    for (const ps of buckets.values()) {
+      const total = ps.reduce((a, p) => a + p.count, 0);
+      if (total < CHUNK_MIN) { whole(ps); continue; }
+
+      // cell key -> the instances of this draw state that land in that 200 m cell
+      const grid = new Map();
+      let anyColor = false;
+      for (const p of ps) if (p._c) anyColor = true;
+      for (const p of ps) {
+        for (let i = 0; i < p.count; i++) {
+          // [12] and [14] are the translation x/z of a column-major mat4.
+          const key = `${Math.floor(p._m[i * 16 + 12] / CHUNK)},${Math.floor(p._m[i * 16 + 14] / CHUNK)}`;
+          let b = grid.get(key);
+          if (!b) grid.set(key, b = []);
+          b.push([p, i]);
+        }
+      }
+      if (grid.size < 2 && ps.length < 2) { whole(ps); continue; }
+
+      const host = ps[0];
+      for (const refs of grid.values()) {
+        const im = new THREE.InstancedMesh(host._geo, host._mat, refs.length);
+        im.castShadow = host.castShadow;
+        im.receiveShadow = host.receiveShadow;
+        im.renderOrder = host.renderOrder;
+        im.name = `${host.name || 'pool'}:chunk`;
+        const md = im.instanceMatrix.array;
+        let cd = null;
+        if (anyColor) {
+          im.instanceColor = new THREE.InstancedBufferAttribute(
+            new Float32Array(refs.length * 3).fill(1), 3);
+          cd = im.instanceColor.array;
+        }
+        for (let k = 0; k < refs.length; k++) {
+          const [p, i] = refs[k];
+          md.set(p._m.subarray(i * 16, i * 16 + 16), k * 16);
+          // A pool with no colours in a bucket where another pool has them must contribute
+          // white, or its instances would come out black.
+          if (cd && p._c) cd.set(p._c.subarray(i * 3, i * 3 + 3), k * 3);
+          let r = sink.remap.get(p);
+          if (!r) sink.remap.set(p, r = new Map());
+          r.set(i, [im, k]);
+        }
+        im.instanceMatrix.needsUpdate = true;
+        if (im.instanceColor) im.instanceColor.needsUpdate = true;
+        // three would compute this lazily on the first frustum test anyway; doing it here keeps
+        // the whole cost inside the build.
+        im.computeBoundingSphere();
+        host.add(im);
+        meshes++; cells++; instances += refs.length;
+      }
+    }
+    return { meshes, cells, instances, states: buckets.size };
+  }
+
+  /**
+   * Where a pooled instance actually ended up. An emitter records `[descriptor, index]` at build
+   * time, but the instance it refers to is written into whichever finalized mesh its cell owns,
+   * so anything editing a baked instance after the build — polefall hiding a knocked-down lamp,
+   * traffic.js hiding a parked car it has promoted to a live wreck — must resolve through here.
+   * Writing to the descriptor instead is the bug that left a phantom parked car on screen.
+   */
+  function resolve(p, i) {
+    const r = sink.remap.get(p);
+    return (r && r.get(i)) || null;
+  }
+  sink.resolve = resolve;
   /**
    * Register a fake contact shadow.
    *
@@ -1281,41 +1495,33 @@ export function createWorld(scene, { rng, roadKit }) {
   group.add(buildings);
   const boxGeo = new THREE.BoxGeometry(1, 1, 1);
   const towerMesh = {};
-  const TOWER_CAP = 900;
-  for (const s of styles) {
-    const m = new THREE.InstancedMesh(boxGeo, buildingMats[s], TOWER_CAP);
-    m.castShadow = true; m.receiveShadow = true; m.frustumCulled = false; m.count = 0;
-    m.userData.cap = TOWER_CAP;
-    buildings.add(m);
-    towerMesh[s] = m;
-  }
-  const podiumMesh = new THREE.InstancedMesh(boxGeo, storeMat, 900);
-  podiumMesh.castShadow = true; podiumMesh.receiveShadow = true;
-  podiumMesh.frustumCulled = false; podiumMesh.count = 0; podiumMesh.userData.cap = 900;
-  buildings.add(podiumMesh);
+  for (const s of styles) towerMesh[s] = pool(`tower_${s}`, boxGeo, buildingMats[s], { parent: buildings });
+  const podiumMesh = pool('podiumMesh', boxGeo, storeMat, { parent: buildings });
+  // Reachable through the sink like every other pool: these two are keyed collections
+  // (by shaft style, by sign variant) rather than single pools, so they are registered by hand.
+  sink.towerMesh = towerMesh;
 
   // ---- facade-detail kitbash --------------------------------------------
   // Every mass gets a projecting cornice, a hollow parapet ring, ledge bands and a
   // rooftop of mechanical greebles, so no silhouette is ever a clean vertical prism.
-  const capMesh = inst(boxGeo, concMat, 40000);     // cornices / parapets / ledge bands
-  const plantMesh = inst(boxGeo, concMat, 1200);    // concrete rooftop blocks
+  const capMesh = pool('capMesh', boxGeo, concMat);     // cornices / parapets / ledge bands
+  const plantMesh = pool('plantMesh', boxGeo, concMat);    // concrete rooftop blocks
   const mechTex = makeMechTex(R);
   const mechMat = patchAtmo(new THREE.MeshStandardMaterial({
     map: mechTex, color: 0x9aa0a8, roughness: 0.72, metalness: 0.45,
   }), atmo, 0.10);
-  const mechMesh = inst(boxGeo, mechMat, 4200);     // louvred plant housings, vents, bulkheads
-  const tankMesh = inst(new THREE.CylinderGeometry(0.5, 0.5, 1, 12), mechMat, 400);
-  const mastMesh = inst(new THREE.CylinderGeometry(0.5, 0.5, 1, 6), poleMat, 1400, { recv: false });
+  const mechMesh = pool('mechMesh', boxGeo, mechMat);     // louvred plant housings, vents, bulkheads
+  const tankMesh = pool('tankMesh', new THREE.CylinderGeometry(0.5, 0.5, 1, 12), mechMat);
+  const mastMesh = pool('mastMesh', new THREE.CylinderGeometry(0.5, 0.5, 1, 6), poleMat, { recv: false });
   // Thin metalwork — fire-escape platforms and stairs, sign bracket arms, floodlight
   // goosenecks, tank legs. It DOES cast: at 3 cm/texel a 17 cm bracket is five texels
   // wide, and a ladder of fire-escape shadows raking down a brick wall is one of the
   // loudest things the reference storefront blocks have. It is a single instanced
   // draw in the shadow pass, so the whole 22 k of it costs one extra call.
-  const strutMesh = inst(boxGeo, poleMat, 22000, { cast: true, recv: false });
-  const acMesh = inst(boxGeo, mechMat, 9000, { recv: true });
+  const strutMesh = pool('strutMesh', boxGeo, poleMat, { cast: true, recv: false });
+  const acMesh = pool('acMesh', boxGeo, mechMat, { recv: true });
   const beaconMat = new THREE.MeshBasicMaterial({ color: 0xff2a18, toneMapped: true });
-  const beaconMesh = inst(new THREE.SphereGeometry(0.5, 6, 5), beaconMat, 600,
-    { cast: false, recv: false });
+  const beaconMesh = pool('beaconMesh', new THREE.SphereGeometry(0.5, 6, 5), beaconMat, { cast: false, recv: false });
 
   // ---- modular facade kit -------------------------------------------------
   // The window "detail" in the facade texture is planar, so on its own the wall
@@ -1343,7 +1549,7 @@ export function createWorld(scene, { rng, roadKit }) {
   // shadow normalBias dropped below the depth of the fins themselves (see the
   // shadow-cascade block in main.js); at the old 0.35 m bias every one of these
   // steps was pushed straight through its own shadow.
-  const gridMesh = inst(boxGeo, mullionMat, 190000, { cast: true, recv: true });
+  const gridMesh = pool('gridMesh', boxGeo, mullionMat, { cast: true, recv: true });
   /** per-instance tonal jitter so a whole grid never reads as one flat plastic colour */
   function tintVary(hex, k) {
     return (clamp(Math.round(((hex >> 16) & 255) * k), 0, 255) << 16)
@@ -1432,14 +1638,15 @@ export function createWorld(scene, { rng, roadKit }) {
     0x3f8f74, 0x9e4038,
   ];
   /** Base paint for a mass. `chance` biases how often it takes saturated colour. */
-  function facadePaint(chance) {
-    if (R() < chance) return tintVary(rngPick(R, PAINT_COLOUR), rngRange(R, 0.86, 1.12));
-    return tintVary(rngPick(R, PAINT_NEUTRAL), rngRange(R, 0.90, 1.10));
+  function facadePaint(sink, rng, chance) {
+    if (rng() < chance) return tintVary(rngPick(rng, PAINT_COLOUR), rngRange(rng, 0.86, 1.12));
+    return tintVary(rngPick(rng, PAINT_NEUTRAL), rngRange(rng, 0.90, 1.10));
   }
 
   /** Projecting pier / spandrel grid over a shaft's outer faces. */
-  function facadeGrid(x, z, w, d, y0, y1, style, faces) {
-    const trim = tintVary(STYLE_TRIM[style] || 0xa99b80, rngRange(R, 0.86, 1.14));
+  function facadeGrid(sink, rng, x, z, w, d, y0, y1, style, faces) {
+    const { gridMesh } = sink;
+    const trim = tintVary(STYLE_TRIM[style] || 0xa99b80, rngRange(rng, 0.86, 1.14));
     const top = Math.min(y1 - 0.7, y0 + GRID_TOP);
     if (top - y0 < 3.2) return;
     for (const ry of faces) {
@@ -1502,7 +1709,7 @@ export function createWorld(scene, { rng, roadKit }) {
     map: makeShopIntTex(R), toneMapped: true, side: THREE.FrontSide,
   });
   const shopQuad = new THREE.PlaneGeometry(1, 1);
-  const shopMesh = inst(shopQuad, shopIntMat, 26000, { cast: false, recv: false });
+  const shopMesh = pool('shopMesh', shopQuad, shopIntMat, { cast: false, recv: false });
   // Brightness is measured, not guessed. Over the left third of the facade band —
   // the near street wall, 42% of the band's pixels — our frame ran mean luma 34.6
   // with 52% of pixels under 32, against 52.9-69.7 / 35.8-42.0% for the three
@@ -1517,12 +1724,13 @@ export function createWorld(scene, { rng, roadKit }) {
     0xcee88a, 0xe8a06e, 0x6fcfca, 0xe89a8e, 0xece0cc, 0xaecae8,
   ];
   /** Bright interior + a warm ceiling-light line for one shop bay. */
-  function shopBay(x, z, ry, along, half, o, wid) {
+  function shopBay(sink, rng, x, z, ry, along, half, o, wid) {
+    const { shopMesh } = sink;
     const nx = Math.sin(ry), nz = Math.cos(ry);
     const px = x + nx * (half + 0.04) - nz * o;
     const pz = z + nz * (half + 0.04) + nx * o;
     push(shopMesh, px, 2.82, pz, ry, 0, wid, 3.10, 1,
-      tintVary(rngPick(R, SHOP_TINT), rngRange(R, 0.84, 1.14)));
+      tintVary(rngPick(rng, SHOP_TINT), rngRange(rng, 0.84, 1.14)));
   }
 
   /**
@@ -1530,7 +1738,8 @@ export function createWorld(scene, { rng, roadKit }) {
    * fascia beam, pilasters between the bays and a kick plinth on the pavement.
    * This is the layer the reference has and we had nothing of.
    */
-  function storefrontBand(x, z, w, d, style, faces) {
+  function storefrontBand(sink, rng, x, z, w, d, style, faces) {
+    const { capMesh, gridMesh } = sink;
     // Podium trim is deliberately NOT the shaft's STYLE_TRIM. At street level the
     // shaft trims (0x8e979f for glass, 0x9a6a56 for brick) sat within a few percent
     // of the dark glazing behind them, so the pilaster/transom/canopy relief that
@@ -1538,7 +1747,7 @@ export function createWorld(scene, { rng, roadKit }) {
     // three references frame their shopfronts in pale stone or white-painted metal
     // against dark glass — that value STEP is what makes the relief legible in
     // shade, and it costs nothing but a different instance colour.
-    const trim = tintVary(rngPick(R, PODIUM_TRIM), rngRange(R, 0.88, 1.10));
+    const trim = tintVary(rngPick(rng, PODIUM_TRIM), rngRange(rng, 0.88, 1.10));
     for (const ry of faces) {
       const nx = Math.sin(ry), nz = Math.cos(ry);
       const wide = Math.abs(nx) > 0.5;
@@ -1563,7 +1772,7 @@ export function createWorld(scene, { rng, roadKit }) {
         push(gridMesh, x + nx * (half + 0.40) - nz * o, 3.05,
           z + nz * (half + 0.40) + nx * o, ry, 0, 0.92, 5.80, 0.80, trim);
         // the lit interior for the bay this pilaster opens
-        if (i < n) shopBay(x, z, ry, along, half, o + bstep / 2, bstep - 1.10);
+        if (i < n) shopBay(sink, rng, x, z, ry, along, half, o + bstep / 2, bstep - 1.10);
       }
       // kick plinth + the AO-catching lip where the wall meets the slab
       push(capMesh, x + nx * (half + 0.31), 0.62, z + nz * (half + 0.31), ry, 0,
@@ -1588,39 +1797,40 @@ export function createWorld(scene, { rng, roadKit }) {
   }
 
   /** Rooftop mechanical kitbash: bulkhead, chillers, tank, masts, aviation beacons. */
-  function rooftop(x, y, z, w, d, tall) {
-    const bw = clamp(w * 0.30, 2.2, 7) * rngRange(R, 0.7, 1.15);
-    const bd = clamp(d * 0.30, 2.2, 7) * rngRange(R, 0.7, 1.15);
-    const bh = rngRange(R, 2.6, 4.6);
-    push(mechMesh, x + rngRange(R, -w * 0.22, w * 0.22), y + bh / 2,
-      z + rngRange(R, -d * 0.22, d * 0.22), 0, 0, bw, bh, bd);
-    const n = rngInt(R, 2, 5);
+  function rooftop(sink, rng, x, y, z, w, d, tall) {
+    const { beaconMesh, capMesh, mastMesh, mechMesh, strutMesh, tankMesh } = sink;
+    const bw = clamp(w * 0.30, 2.2, 7) * rngRange(rng, 0.7, 1.15);
+    const bd = clamp(d * 0.30, 2.2, 7) * rngRange(rng, 0.7, 1.15);
+    const bh = rngRange(rng, 2.6, 4.6);
+    push(mechMesh, x + rngRange(rng, -w * 0.22, w * 0.22), y + bh / 2,
+      z + rngRange(rng, -d * 0.22, d * 0.22), 0, 0, bw, bh, bd);
+    const n = rngInt(rng, 2, 5);
     for (let i = 0; i < n; i++) {
-      const mw = rngRange(R, 1.4, clamp(w * 0.24, 1.8, 6));
-      const md = rngRange(R, 1.4, clamp(d * 0.24, 1.8, 6));
-      const mh = rngRange(R, 0.8, 2.6);
-      const mx = x + rngRange(R, -w * 0.36, w * 0.36);
-      const mz = z + rngRange(R, -d * 0.36, d * 0.36);
-      push(mechMesh, mx, y + mh / 2, mz, rngRange(R, -0.35, 0.35), 0, mw, mh, md);
+      const mw = rngRange(rng, 1.4, clamp(w * 0.24, 1.8, 6));
+      const md = rngRange(rng, 1.4, clamp(d * 0.24, 1.8, 6));
+      const mh = rngRange(rng, 0.8, 2.6);
+      const mx = x + rngRange(rng, -w * 0.36, w * 0.36);
+      const mz = z + rngRange(rng, -d * 0.36, d * 0.36);
+      push(mechMesh, mx, y + mh / 2, mz, rngRange(rng, -0.35, 0.35), 0, mw, mh, md);
       push(capMesh, mx, y + mh + 0.09, mz, 0, 0, mw * 0.9, 0.18, md * 0.9);
     }
-    if (R() < 0.45) {                              // water tank on a leg frame
-      const r = rngRange(R, 1.1, 2.1), th = rngRange(R, 2.2, 3.8);
-      const tx = x + rngRange(R, -w * 0.30, w * 0.30), tz = z + rngRange(R, -d * 0.30, d * 0.30);
+    if (rng() < 0.45) {                              // water tank on a leg frame
+      const r = rngRange(rng, 1.1, 2.1), th = rngRange(rng, 2.2, 3.8);
+      const tx = x + rngRange(rng, -w * 0.30, w * 0.30), tz = z + rngRange(rng, -d * 0.30, d * 0.30);
       for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
         push(strutMesh, tx + sx * r * 0.62, y + 1.1, tz + sz * r * 0.62, 0, 0, 0.17, 2.2, 0.17);
       }
       push(tankMesh, tx, y + 2.2 + th / 2, tz, 0, 0, r * 2, th, r * 2);
       push(capMesh, tx, y + 2.2 + th + 0.22, tz, 0, 0, r * 1.6, 0.44, r * 1.6);
     }
-    const masts = tall ? rngInt(R, 1, 3) : (R() < 0.45 ? 1 : 0);
+    const masts = tall ? rngInt(rng, 1, 3) : (rng() < 0.45 ? 1 : 0);
     for (let i = 0; i < masts; i++) {
-      const mh = rngRange(R, 4, tall ? 18 : 8);
-      const mx = x + rngRange(R, -w * 0.40, w * 0.40), mz = z + rngRange(R, -d * 0.40, d * 0.40);
+      const mh = rngRange(rng, 4, tall ? 18 : 8);
+      const mx = x + rngRange(rng, -w * 0.40, w * 0.40), mz = z + rngRange(rng, -d * 0.40, d * 0.40);
       push(mastMesh, mx, y + mh / 2, mz, 0, 0, 0.22, mh, 0.22);
       for (let k = 0; k < 3; k++) {                 // cross arms + guys
-        push(strutMesh, mx, y + mh * (0.45 + k * 0.18), mz, rngRange(R, 0, 3), 0,
-          rngRange(R, 0.7, 1.6), 0.09, 0.09);
+        push(strutMesh, mx, y + mh * (0.45 + k * 0.18), mz, rngRange(rng, 0, 3), 0,
+          rngRange(rng, 0.7, 1.6), 0.09, 0.09);
       }
       push(beaconMesh, mx, y + mh + 0.32, mz, 0, 0, 0.44, 0.44, 0.44);
     }
@@ -1628,11 +1838,12 @@ export function createWorld(scene, { rng, roadKit }) {
 
   /** Ledge bands, wall AC units and fire escapes hung off a shaft's outer faces. */
   const FACES = [0, Math.PI / 2, Math.PI, -Math.PI / 2];
-  function facadeDetail(x, z, w, d, y0, y1, style, rich) {
+  function facadeDetail(sink, rng, x, z, w, d, y0, y1, style, rich) {
+    const { acMesh, capMesh, strutMesh } = sink;
     // Full-perimeter cornice every few floors, 78 cm proud with a thin drip lip
     // under it. This is the one horizontal step big enough to throw a shadow that
     // survives aerial perspective, so it is what gives the mass its floor bands.
-    for (let y = y0 + TILE_H; y < y1 - 3.5; y += TILE_H * (R() < 0.5 ? 1 : 2)) {
+    for (let y = y0 + TILE_H; y < y1 - 3.5; y += TILE_H * (rng() < 0.5 ? 1 : 2)) {
       push(capMesh, x, y + 0.18, z, 0, 0, w + 1.56, 0.50, d + 1.56);
       push(capMesh, x, y - 0.22, z, 0, 0, w + 1.02, 0.30, d + 1.02);
     }
@@ -1641,20 +1852,20 @@ export function createWorld(scene, { rng, roadKit }) {
       const nx = Math.sin(ry), nz = Math.cos(ry);
       const half = Math.abs(nx) > 0.5 ? w / 2 : d / 2;
       const along = Math.abs(nx) > 0.5 ? d : w;
-      const n = rngInt(R, 2, 6);
+      const n = rngInt(rng, 2, 6);
       for (let i = 0; i < n; i++) {
-        const o = rngRange(R, -along * 0.42, along * 0.42);
-        const ay = rngRange(R, y0 + 2.5, Math.min(y1 - 2, y0 + 36));
+        const o = rngRange(rng, -along * 0.42, along * 0.42);
+        const ay = rngRange(rng, y0 + 2.5, Math.min(y1 - 2, y0 + 36));
         push(acMesh, x + nx * (half + 0.36) - nz * o, ay, z + nz * (half + 0.36) + nx * o,
           ry, 0, 1.0, 0.72, 0.75);
       }
     }
-    if ((style === 'brick' || style === 'office') && R() < 0.55) {
-      const ry = rngPick(R, FACES);
+    if ((style === 'brick' || style === 'office') && rng() < 0.55) {
+      const ry = rngPick(rng, FACES);
       const nx = Math.sin(ry), nz = Math.cos(ry);
       const half = Math.abs(nx) > 0.5 ? w / 2 : d / 2;
       const along = Math.abs(nx) > 0.5 ? d : w;
-      const o = rngRange(R, -along * 0.3, along * 0.3);
+      const o = rngRange(rng, -along * 0.3, along * 0.3);
       const px = x + nx * (half + 0.9) - nz * o, pz = z + nz * (half + 0.9) + nx * o;
       const top = Math.min(y1 - 2, y0 + 26);
       for (let y = y0 + 4.2; y < top; y += 3.6) {
@@ -1721,12 +1932,12 @@ export function createWorld(scene, { rng, roadKit }) {
       const tm = towerMesh[style];
       // Painted masses. A glass curtain wall stays near-neutral (the texture's own
       // blue-grey IS its colour); masonry and rendered concrete take real paint.
-      const shaftPaint = facadePaint(PAINT_CHANCE[style] ?? 0.35);
+      const shaftPaint = facadePaint(sink, R, PAINT_CHANCE[style] ?? 0.35);
       push(podiumMesh, px, PODIUM_H / 2 + 0.2, pz, 0, 0, w + 1.5, PODIUM_H, d + 1.5,
-        facadePaint(0.55));
+        facadePaint(sink, R, 0.55));
       push(capMesh, px, PODIUM_H + 0.55, pz, 0, 0, w + 3.0, 0.75, d + 3.0);
       push(capMesh, px, PODIUM_H + 1.05, pz, 0, 0, w + 2.0, 0.35, d + 2.0);
-      storefrontBand(px, pz, w + 1.5, d + 1.5, style, FACES);
+      storefrontBand(sink, R, px, pz, w + 1.5, d + 1.5, style, FACES);
 
       // ---- stepped massing: 1-3 shafts, each setting back from the one below ----
       const steps = h > 70 ? rngInt(R, 2, 3) : (h > 34 ? rngInt(R, 1, 2) : 1);
@@ -1736,12 +1947,12 @@ export function createWorld(scene, { rng, roadKit }) {
         const frac = last ? 1 : rngRange(R, 0.42, 0.66);
         const top = sy + (h - sy) * frac;
         push(tm, px, sy + (top - sy) / 2 + 0.2, pz, 0, 0, sw, top - sy, sd, shaftPaint);
-        facadeDetail(px, pz, sw, sd, sy, top, style, innerB && st === 0);
-        facadeGrid(px, pz, sw, sd, sy, top, style, FACES);
+        facadeDetail(sink, R, px, pz, sw, sd, sy, top, style, innerB && st === 0);
+        facadeGrid(sink, R, px, pz, sw, sd, sy, top, style, FACES);
         parapet(px, top + 0.2, pz, sw, sd, last ? rngRange(R, 1.2, 2.4) : rngRange(R, 0.9, 1.5),
           last ? 1.2 : 0.9);
         if (last) {
-          rooftop(px, top + 0.2, pz, sw, sd, h > 60);
+          rooftop(sink, R, px, top + 0.2, pz, sw, sd, h > 60);
         } else if (R() < 0.7) {
           // the setback terrace carries its own plant so the shoulder is never bare
           push(plantMesh, px + rngRange(R, -sw * 0.3, sw * 0.3), top + 1.4,
@@ -1799,20 +2010,20 @@ export function createWorld(scene, { rng, roadKit }) {
         const style = innerB ? rngPick(R, ['office', 'concrete', 'brick', 'glass'])
           : rngPick(R, ['brick', 'brick', 'office', 'concrete']);
         push(podiumMesh, cx, PODIUM_H / 2 + 0.2, cz, 0, 0, ww + 0.8, PODIUM_H, dd + 0.8,
-          facadePaint(0.58));
+          facadePaint(sink, R, 0.58));
         push(capMesh, cx, PODIUM_H + 0.5, cz, 0, 0, ww + 2.4, 0.7, dd + 2.4);
         // The street wall is the closest architecture to the lens in every downtown
         // frame, so it carries the higher paint chance of the two mass generators.
         push(towerMesh[style], cx, PODIUM_H + (h - PODIUM_H) / 2 + 0.2, cz,
-          0, 0, ww, h - PODIUM_H, dd, facadePaint((PAINT_CHANCE[style] ?? 0.35) * 1.25));
-        facadeDetail(cx, cz, ww, dd, PODIUM_H, h, style, true);
+          0, 0, ww, h - PODIUM_H, dd, facadePaint(sink, R, (PAINT_CHANCE[style] ?? 0.35) * 1.25));
+        facadeDetail(sink, R, cx, cz, ww, dd, PODIUM_H, h, style, true);
         // street wall: only the outward face and the two returns are ever seen,
         // so the fine kit is skipped on the buried inner face.
         const outFaces = [ry, ry + Math.PI / 2, ry - Math.PI / 2];
-        facadeGrid(cx, cz, ww, dd, PODIUM_H, h, style, outFaces);
-        storefrontBand(cx, cz, ww + 0.8, dd + 0.8, style, outFaces);
+        facadeGrid(sink, R, cx, cz, ww, dd, PODIUM_H, h, style, outFaces);
+        storefrontBand(sink, R, cx, cz, ww + 0.8, dd + 0.8, style, outFaces);
         parapet(cx, h + 0.2, cz, ww, dd, rngRange(R, 1.0, 2.2), 1.1);
-        rooftop(cx, h + 0.2, cz, ww, dd, false);
+        rooftop(sink, R, cx, h + 0.2, cz, ww, dd, false);
         frontages.push(canonFrontage({
           x: ex + tx * (t + seg / 2) + nx * 0.6, z: ez + tz * (t + seg / 2) + nz * 0.6,
           ry, along: seg, h, big: false,
@@ -1825,8 +2036,6 @@ export function createWorld(scene, { rng, roadKit }) {
       }
     }
   }
-  seal(...Object.values(towerMesh), podiumMesh, capMesh, gridMesh, plantMesh, mechMesh,
-    tankMesh, mastMesh, strutMesh, acMesh, beaconMesh);
 
   // ---- signage: cantilevered billboards, blades, awnings, gantries ----------
   // Signs are real albedo-textured panels on real bracket geometry that projects
@@ -1868,27 +2077,24 @@ export function createWorld(scene, { rng, roadKit }) {
     m.shadowSide = THREE.DoubleSide;
     patchAtmo(m, atmo, 0.02);
     signMats.push(m);
-    const im = new THREE.InstancedMesh(planeGeo, m, SIGN_CAP);
     // receives as well as casts: a billboard's own bracket arms and floodlight
     // goosenecks are the nearest casters to it, and their shadows on the panel are
     // what sell the panel as an object hung off a wall rather than a texture on it
-    im.castShadow = true; im.receiveShadow = true;
-    im.frustumCulled = false; im.count = 0; im.userData.cap = SIGN_CAP;
-    group.add(im);
-    signMeshes.push(im);
+    signMeshes.push(pool(`sign_${v}`, planeGeo, m, { cast: true, recv: true }));
   }
+  sink.signMeshes = signMeshes;
   // 5000 was SILENTLY TRUNCATING at exactly cap: push() drops on overflow, so
   // 1229 of the 6229 frames/wall plates/blade boxes this build asks for were
   // never drawn and whole runs of shopfront came up with an unbordered panel.
   // Measured want is 6229; 9000 leaves headroom for a denser frontage pass.
-  const signFrame = inst(boxGeo, darkMat, 9000, { recv: false });
-  const signStrut = inst(new THREE.CylinderGeometry(0.09, 0.09, 1, 6), poleMat, 1400, { recv: false });
+  const signFrame = pool('signFrame', boxGeo, darkMat, { recv: false });
+  const signStrut = pool('signStrut', new THREE.CylinderGeometry(0.09, 0.09, 1, 6), poleMat, { recv: false });
   // pre-tilted brace: a bar that runs outward *and* upward, for sign arm ties
   const braceGeo = new THREE.BoxGeometry(0.14, 0.14, 1);
   braceGeo.rotateX(-0.60);
   // awning and sign-arm tie braces: these are the diagonals whose shadows land on
   // the fascia and the shopfront glass directly behind them
-  const braceMesh = inst(braceGeo, poleMat, 16000, { cast: true, recv: false });
+  const braceMesh = pool('braceMesh', braceGeo, poleMat, { cast: true, recv: false });
 
   /**
    * Two panels back to back, each drawn FrontSide, so a sign that is legible
@@ -1904,9 +2110,10 @@ export function createWorld(scene, { rng, roadKit }) {
    *   doing exactly that and only read at all because signFrame was capped at
    *   5000 and silently dropping their frames.
    */
-  function panelPair(v, x, y, z, ry, w, h, vBack = -1, sep = 0.025) {
+  function panelPair(sink, rng, v, x, y, z, ry, w, h, vBack = -1, sep = 0.025) {
+    const { signMeshes } = sink;
     const nx = Math.sin(ry), nz = Math.cos(ry);
-    const vb = vBack >= 0 ? vBack : rngInt(R, 0, GREEN0 - 1);
+    const vb = vBack >= 0 ? vBack : rngInt(rng, 0, GREEN0 - 1);
     push(signMeshes[v], x + nx * sep, y, z + nz * sep, ry, 0, w, h, 1);
     push(signMeshes[vb], x - nx * sep, y, z - nz * sep, ry + Math.PI, 0, w, h, 1);
   }
@@ -1916,13 +2123,14 @@ export function createWorld(scene, { rng, roadKit }) {
    * @param hang   drop rods from a gantry beam above
    * @param both   also print the reverse face (see panelPair)
    */
-  function placeSign(x, y, z, ry, w, h, {
+  function placeSign(sink, rng, x, y, z, ry, w, h, {
     frame = true, struts = 0, reach = 0, variant = -1, flood = false, both = false,
   } = {}) {
-    const v = variant >= 0 ? variant : rngInt(R, 0, GREEN0 - 1);
+    const { braceMesh, signFrame, signMeshes, signStrut, strutMesh } = sink;
+    const v = variant >= 0 ? variant : rngInt(rng, 0, GREEN0 - 1);
     const nx = Math.sin(ry), nz = Math.cos(ry);
     const sx = x + nx * reach, sz = z + nz * reach;
-    if (both) panelPair(v, sx + nx * 0.14, y, sz + nz * 0.14, ry, w, h, variant);
+    if (both) panelPair(sink, rng, v, sx + nx * 0.14, y, sz + nz * 0.14, ry, w, h, variant);
     else push(signMeshes[v], sx + nx * 0.14, y, sz + nz * 0.14, ry, 0, w, h, 1);
     if (frame) push(signFrame, sx, y, sz, ry, 0, w + 0.5, h + 0.5, 0.26);
     if (reach > 0.5) {
@@ -1962,7 +2170,7 @@ export function createWorld(scene, { rng, roadKit }) {
   // stopped appearing partway through the city build - the whole point of an
   // awning is that it is the most saturated thing at eye level, and the blocks
   // that missed out were bare fascia.
-  const awnMesh = inst(awnGeo, awnMat, 20000, { cast: true, recv: true });
+  const awnMesh = pool('awnMesh', awnGeo, awnMat, { cast: true, recv: true });
   // The awning texture is a white canvas with 40%-black stripes, so the instance
   // colour IS the awning's colour and it gets multiplied down by the stripe. The old
   // palette was mid-value trade colours that, once striped and dropped into canyon
@@ -1972,9 +2180,10 @@ export function createWorld(scene, { rng, roadKit }) {
   const awnCols = [0xe0503f, 0x2f9c5e, 0x2f6fc4, 0xefc032, 0xa54bbf, 0xef7a2a,
     0x3fa8b4, 0xefe4d2, 0xd44a76];
 
-  function awning(x, y, z, ry, w, depth) {
+  function awning(sink, rng, x, y, z, ry, w, depth) {
+    const { awnMesh, braceMesh } = sink;
     const nx = Math.sin(ry), nz = Math.cos(ry);
-    const col = rngPick(R, awnCols);
+    const col = rngPick(rng, awnCols);
     push(awnMesh, x + nx * depth * 0.5, y, z + nz * depth * 0.5, ry, 0, w, 1, depth, col);
     // Valance: the vertical fabric skirt hanging off the leading edge. It is the
     // awning's own front silhouette — without it the canvas is a single sloped plane
@@ -1993,7 +2202,7 @@ export function createWorld(scene, { rng, roadKit }) {
     // cantilevered fascia billboard on bracket arms
     if (R() < (f.big ? 0.5 : 0.7)) {
       const w = Math.min(f.along * 0.72, rngRange(R, 5, 14));
-      placeSign(f.x, rngRange(R, 9.2, Math.max(10, Math.min(f.h - 2, 17))), f.z, f.ry,
+      placeSign(sink, R, f.x, rngRange(R, 9.2, Math.max(10, Math.min(f.h - 2, 17))), f.z, f.ry,
         w, w * rngRange(R, 0.34, 0.58),
         { reach: rngRange(R, 2.0, 4.6), flood: R() < 0.5 });
     }
@@ -2007,7 +2216,7 @@ export function createWorld(scene, { rng, roadKit }) {
       // a blade sign hangs perpendicular to the wall, so the camera sees it from
       // whichever side it drives up on — it MUST be printed both ways round
       // sep 0.17 clears the 0.3-deep frame box below (half depth 0.15)
-      panelPair(rngInt(R, 0, GREEN0 - 1), ox, by, oz, f.ry + Math.PI / 2, bw, bh, -1, 0.17);
+      panelPair(sink, R, rngInt(R, 0, GREEN0 - 1), ox, by, oz, f.ry + Math.PI / 2, bw, bh, -1, 0.17);
       push(signFrame, ox, by, oz, f.ry + Math.PI / 2, 0, bw + 0.4, bh + 0.4, 0.3);
       push(strutMesh, f.x + nx * out * 0.5, by + bh * 0.42, f.z + nz * out * 0.5,
         f.ry, 0, 0.16, 0.16, out);
@@ -2029,7 +2238,7 @@ export function createWorld(scene, { rng, roadKit }) {
         const bx = f.x - nz * o, bz = f.z + nx * o;
         const ly = rngRange(R, 3.9, 7.4);
         // sep 0.12 clears the 0.20-deep frame box below (half depth 0.10)
-        panelPair(rngInt(R, 0, GREEN0 - 1), bx + nx * out, ly, bz + nz * out,
+        panelPair(sink, R, rngInt(R, 0, GREEN0 - 1), bx + nx * out, ly, bz + nz * out,
           f.ry + Math.PI / 2, lw, lh, -1, 0.12);
         push(signFrame, bx + nx * out, ly, bz + nz * out, f.ry + Math.PI / 2, 0,
           lw + 0.22, lh + 0.22, 0.20);
@@ -2050,13 +2259,13 @@ export function createWorld(scene, { rng, roadKit }) {
       if (R() > 0.90) continue;
       const bwid = f.along / bays;
       const o = -f.along / 2 + bwid * (i + 0.5);
-      awning(f.x - Math.cos(f.ry) * o, rngRange(R, 5.0, 5.7),
+      awning(sink, R, f.x - Math.cos(f.ry) * o, rngRange(R, 5.0, 5.7),
         f.z + Math.sin(f.ry) * o, f.ry, bwid * 0.82, rngRange(R, 2.1, 3.1));
     }
     // vertical banner strip up the pier between windows
     if (f.big && R() < 0.3) {
       const bh2 = rngRange(R, 10, 22);
-      placeSign(f.x, rngRange(R, 16, Math.max(18, f.h * 0.55)), f.z, f.ry,
+      placeSign(sink, R, f.x, rngRange(R, 16, Math.max(18, f.h * 0.55)), f.z, f.ry,
         bh2 * 0.30, bh2, { reach: rngRange(R, 0.8, 1.8), frame: false });
     }
   }
@@ -2067,14 +2276,15 @@ export function createWorld(scene, { rng, roadKit }) {
       const ry = rngPick(R, FACES);
       const w = Math.min(Math.max(t.w, t.d) * 0.95, rngRange(R, 10, 22));
       // freestanding on the roof: legible from the streets on both sides of it
-      placeSign(t.x, t.h + 3.2 + w * 0.16, t.z, ry, w, w * 0.32,
+      placeSign(sink, R, t.x, t.h + 3.2 + w * 0.16, t.z, ry, w, w * 0.32,
         { struts: 3, flood: true, both: true });
     }
   }
 
   // ---- gantries: signage cantilevered right over the traffic lanes ----------
-  const gantryMesh = inst(boxGeo, poleMat, 3000, { recv: false });
-  function gantry(cx, cz, ux, uz, faceRy, span, y, panels) {
+  const gantryMesh = pool('gantryMesh', boxGeo, poleMat, { recv: false });
+  function gantry(sink, rng, cx, cz, ux, uz, faceRy, span, y, panels) {
+    const { gantryMesh, mastMesh } = sink;
     const beamRy = Math.atan2(ux, uz);
     for (const s of [-1, 1]) {
       const px = cx + ux * span / 2 * s, pz = cz + uz * span / 2 * s;
@@ -2092,7 +2302,7 @@ export function createWorld(scene, { rng, roadKit }) {
     for (let i = 0; i < panels; i++) {
       const t = (i - (panels - 1) / 2) * 7.4;
       // traffic passes under a gantry in both directions, so print both faces
-      placeSign(cx + ux * t, y - 2.6, cz + uz * t, faceRy, 6.4, 3.6,
+      placeSign(sink, rng, cx + ux * t, y - 2.6, cz + uz * t, faceRy, 6.4, 3.6,
         { variant: GREEN0 + (i % 2), both: true });
       for (const s of [-2.6, 2.6]) {
         push(gantryMesh, cx + ux * (t + s), y - 0.9, cz + uz * (t + s), beamRy, 0, 0.12, 1.5, 0.12);
@@ -2102,47 +2312,46 @@ export function createWorld(scene, { rng, roadKit }) {
   for (const z of G) {
     for (const x of G) {
       // masts land on the pavement (|offset| = 13 m) either side of a 20 m road
-      if (R() < 0.5) gantry(x - 32, z, 0, 1, -Math.PI / 2, 26, 9.6, rngInt(R, 2, 3));
-      if (R() < 0.5) gantry(x, z - 32, 1, 0, Math.PI, 26, 9.6, rngInt(R, 2, 3));
+      if (R() < 0.5) gantry(sink, R, x - 32, z, 0, 1, -Math.PI / 2, 26, 9.6, rngInt(R, 2, 3));
+      if (R() < 0.5) gantry(sink, R, x, z - 32, 1, 0, Math.PI, 26, 9.6, rngInt(R, 2, 3));
     }
   }
   // highway: sign gantries plus a roadside billboard row on tall posts
   for (let x = -900; x <= 900; x += 240) {
-    gantry(x, HZ, 0, 1, -Math.PI / 2, LAYOUT.highwayW + 16, 10.4, 3);
+    gantry(sink, R, x, HZ, 0, 1, -Math.PI / 2, LAYOUT.highwayW + 16, 10.4, 3);
   }
   for (let x = -1000; x <= 1000; x += 105) {
     const s = ((x / 105) | 0) % 2 ? 1 : -1;
     const bz = HZ + s * (LAYOUT.highwayW / 2 + 13);
     const w = rngRange(R, 13, 19), bh = w * 0.36;
     const by = rngRange(R, 9, 13);
-    placeSign(x, by, bz, s > 0 ? Math.PI : 0, w, bh, { flood: true });
+    placeSign(sink, R, x, by, bz, s > 0 ? Math.PI : 0, w, bh, { flood: true });
     for (const t of [-w * 0.3, w * 0.3]) {
       push(mastMesh, x + t, 0.2 + (by - bh / 2) / 2, bz, 0, 0, 0.42, by - bh / 2, 0.42);
     }
     shadowAt(x, bz, 0.02, 3.0, 0.7);
   }
-  seal(...signMeshes, signFrame, signStrut, braceMesh, awnMesh, gantryMesh,
-    strutMesh, mastMesh, capMesh);
 
   // ---- neon: tubes, bulb strings, spill ------------------------------------
   const neons = [];
   const neonColors = [0xff2d6f, 0x24d1ff, 0xffd23f, 0x7cff5a, 0xb14cff, 0xff6b1a, 0xff3b1f, 0x33ffd0];
   const tubeMat = new THREE.MeshBasicMaterial({ toneMapped: true });
   const tubeGeo = new THREE.BoxGeometry(1, 1, 1);
-  const tubeMesh = inst(tubeGeo, tubeMat, 1400, { cast: false, recv: false });
+  const tubeMesh = pool('tubeMesh', tubeGeo, tubeMat, { cast: false, recv: false });
   const bulbMat = new THREE.MeshBasicMaterial({ toneMapped: true });
-  const bulbMesh = inst(new THREE.SphereGeometry(0.5, 6, 5), bulbMat, 1800, { cast: false, recv: false });
+  const bulbMesh = pool('bulbMesh', new THREE.SphereGeometry(0.5, 6, 5), bulbMat, { cast: false, recv: false });
 
   const spillTex = makeContactTex();
   const spillMat = new THREE.MeshBasicMaterial({
     map: spillTex, transparent: true, blending: THREE.AdditiveBlending,
     depthWrite: false, toneMapped: true, opacity: 0.0,
   });
-  const spillMesh = inst(planeGeo, spillMat, 400, { cast: false, recv: false });
+  const spillMesh = pool('spillMesh', planeGeo, spillMat, { cast: false, recv: false });
   spillMesh.renderOrder = 3;
 
   /** rectangular neon outline + a couple of inner bars, all on one wall plane */
-  function neonSign(x, y, z, ry, w, h, col) {
+  function neonSign(sink, rng, x, y, z, ry, w, h, col) {
+    const { spillMesh, tubeMesh } = sink;
     const nx = Math.sin(ry), nz = Math.cos(ry);
     const T = 0.20;
     const ox = x + nx * 0.28, oz = z + nz * 0.28;
@@ -2152,11 +2361,17 @@ export function createWorld(scene, { rng, roadKit }) {
     push(tubeMesh, ox - nz * (w / 2), y, oz + nx * (w / 2), ry, 0, T, h, T, col);
     push(tubeMesh, ox + nz * (w / 2), y, oz - nx * (w / 2), ry, 0, T, h, T, col);
     // interior "lettering" bars
-    const bars = rngInt(R, 2, 4);
+    const bars = rngInt(rng, 2, 4);
     for (let i = 0; i < bars; i++) {
       const by = y - h / 2 + h * ((i + 1) / (bars + 1));
-      const bw = w * rngRange(R, 0.34, 0.82);
-      const bo = (rng() - 0.5) * (w - bw) * 0.8;
+      const bw = w * rngRange(rng, 0.34, 0.82);
+      // SECOND, UNDECLARED RNG STREAM. This one draw comes from the stream main.js injects
+      // (makeRng(0xC17E)), not from the world's own R, and it always has. It is preserved
+      // verbatim here so that converting the emitters to take their stream as an argument is a
+      // provable no-op; switching it to the emitter's `rng` moves one draw between two streams
+      // and reshuffles every neon bar's offset, so it is a deliberate change with its own
+      // measurement, not a refactor. See verdicts/wave-t/generate-mesh-s1.md.
+      const bo = (injectedRng() - 0.5) * (w - bw) * 0.8;
       push(tubeMesh, ox - nz * bo, by, oz + nx * bo, ry, 0, bw, T * 0.8, T * 0.8, col);
     }
     // coloured spill onto the wall behind
@@ -2172,7 +2387,7 @@ export function createWorld(scene, { rng, roadKit }) {
     const along = Math.abs(nx) > 0.5 ? t.d : t.w;
     const w = Math.min(along * 0.6, rngRange(R, 4, 10));
     const h = w * rngRange(R, 0.3, 0.7);
-    neonSign(t.x + nx * (half + 0.6), rngRange(R, 4.2, 6.6), t.z + nz * (half + 0.6), ry, w, h,
+    neonSign(sink, R, t.x + nx * (half + 0.6), rngRange(R, 4.2, 6.6), t.z + nz * (half + 0.6), ry, w, h,
       rngPick(R, neonColors));
     // bulb string along the podium cornice
     if (R() < 0.7) {
@@ -2185,7 +2400,6 @@ export function createWorld(scene, { rng, roadKit }) {
       }
     }
   }
-  seal(tubeMesh, bulbMesh, spillMesh);
 
   // ---- street lights (instanced) -------------------------------------------
   const lampMat = new THREE.MeshBasicMaterial({ color: 0xffd9a0, toneMapped: true });
@@ -2203,20 +2417,26 @@ export function createWorld(scene, { rng, roadKit }) {
     dummy.scale.set(1e-6, 1e-6, 1e-6);
     dummy.updateMatrix();
     dummy.rotation.order = 'YZX';
-    for (const [m, i] of used) { m.setMatrixAt(i, dummy.matrix); m.instanceMatrix.needsUpdate = true; }
+    for (const [m, i] of used) {
+      const t = resolve(m, i);
+      if (!t) continue;
+      t[0].setMatrixAt(t[1], dummy.matrix);
+      t[0].instanceMatrix.needsUpdate = true;
+    }
   };
 
-  const slPole = inst(new THREE.CylinderGeometry(0.11, 0.17, 1, 8), poleMat, 400, { recv: false });
-  const slArm = inst(boxGeo, poleMat, 400, { recv: false });
-  const slHead = inst(boxGeo, darkMat, 400, { recv: false });
-  const slBulb = inst(planeGeo, lampMat, 400, { cast: false, recv: false });
+  const slPole = pool('slPole', new THREE.CylinderGeometry(0.11, 0.17, 1, 8), poleMat, { recv: false });
+  const slArm = pool('slArm', boxGeo, poleMat, { recv: false });
+  const slHead = pool('slHead', boxGeo, darkMat, { recv: false });
+  const slBulb = pool('slBulb', planeGeo, lampMat, { cast: false, recv: false });
   lamps.add(slPole, slArm, slHead, slBulb);
 
-  function streetLight(x, z, rotY) {
+  function streetLight(sink, x, z, rotY) {
+    const { slArm, slBulb, slHead, slPole } = sink;
     // Record this lamp's instances so hide() can take the baked pole out of the draw when
     // the hero knocks it down (lampfall.js swaps in a dynamic falling copy).
     const used = [];
-    const rec = (m) => { if (m.count < m.userData.cap) used.push([m, m.count]); };
+    const rec = (m) => used.push([m, m.count]);
     rec(slPole);
     push(slPole, x, 0.2 + 4.3, z, rotY, 0, 1, 8.6, 1);
     const ax = Math.cos(rotY), az = -Math.sin(rotY);
@@ -2228,10 +2448,8 @@ export function createWorld(scene, { rng, roadKit }) {
     dummy.rotation.set(-Math.PI / 2, rotY, 0);
     dummy.scale.set(0.98, 0.46, 1);
     dummy.updateMatrix();
-    if (slBulb.count < slBulb.userData.cap) {
-      used.push([slBulb, slBulb.count]);
-      slBulb.setMatrixAt(slBulb.count, dummy.matrix); slBulb.count++;
-    }
+    used.push([slBulb, slBulb.count]);
+    pushMat(slBulb, dummy.matrix);
     dummy.rotation.order = 'YZX';
     lampPositions.push(new THREE.Vector3(x + ax * 2.3, 8.2, z + az * 2.3));
     shadowAt(x, z, 0.24, 1.5, 0.9);
@@ -2243,28 +2461,28 @@ export function createWorld(scene, { rng, roadKit }) {
   dummy.rotation.order = 'XYZ';
   for (const z of G) {
     for (let x = -EX + 30; x <= EX; x += 62) {
-      streetLight(x, z + HALF + 2.4, Math.PI);
-      streetLight(x + 31, z - HALF - 2.4, 0);
+      streetLight(sink, x, z + HALF + 2.4, Math.PI);
+      streetLight(sink, x + 31, z - HALF - 2.4, 0);
     }
   }
   for (let x = -600; x <= 600; x += 70) {
-    streetLight(x, HZ + LAYOUT.highwayW / 2 + 4, Math.PI);
-    streetLight(x + 35, HZ - LAYOUT.highwayW / 2 - 4, 0);
+    streetLight(sink, x, HZ + LAYOUT.highwayW / 2 + 4, Math.PI);
+    streetLight(sink, x + 35, HZ - LAYOUT.highwayW / 2 - 4, 0);
   }
   dummy.rotation.order = 'YZX';
-  seal(slPole, slArm, slHead, slBulb);
 
   // ---- traffic lights ------------------------------------------------------
-  const tlPole = inst(new THREE.CylinderGeometry(0.13, 0.18, 1, 8), poleMat, 240, { recv: false });
-  const tlArm = inst(boxGeo, poleMat, 240, { recv: false });
-  const tlHead = inst(boxGeo, darkMat, 240, { recv: false });
+  const tlPole = pool('tlPole', new THREE.CylinderGeometry(0.13, 0.18, 1, 8), poleMat, { recv: false });
+  const tlArm = pool('tlArm', boxGeo, poleMat, { recv: false });
+  const tlHead = pool('tlHead', boxGeo, darkMat, { recv: false });
   const lensMat = new THREE.MeshBasicMaterial({ toneMapped: true });
-  const tlLens = inst(new THREE.SphereGeometry(0.5, 8, 6), lensMat, 720, { cast: false, recv: false });
+  const tlLens = pool('tlLens', new THREE.SphereGeometry(0.5, 8, 6), lensMat, { cast: false, recv: false });
   const signalLights = [];
 
-  function trafficLight(x, z, ry) {
+  function trafficLight(sink, x, z, ry) {
+    const { tlArm, tlHead, tlLens, tlPole } = sink;
     const used = [];
-    const rec = (m) => { if (m.count < m.userData.cap) used.push([m, m.count]); };
+    const rec = (m) => used.push([m, m.count]);
     rec(tlPole);
     push(tlPole, x, 0.2 + 3.4, z, ry, 0, 1, 6.8, 1);
     const ax = Math.cos(ry), az = -Math.sin(ry);
@@ -2285,11 +2503,10 @@ export function createWorld(scene, { rng, roadKit }) {
   }
   for (const x of G) {
     for (const z of G) {
-      trafficLight(x - HALF - 2.6, z + HALF + 2.6, -Math.PI / 2);
-      trafficLight(x + HALF + 2.6, z - HALF - 2.6, Math.PI / 2);
+      trafficLight(sink, x - HALF - 2.6, z + HALF + 2.6, -Math.PI / 2);
+      trafficLight(sink, x + HALF + 2.6, z - HALF - 2.6, Math.PI / 2);
     }
   }
-  seal(tlPole, tlArm, tlHead, tlLens);
 
   // ---- overhead wires: DELETED, T2, 2026-08-06 ------------------------------
   // They were strung from grid maths that had nothing to do with where the lamps
@@ -2315,22 +2532,22 @@ export function createWorld(scene, { rng, roadKit }) {
   // was within 2x of its old occupancy has been raised. push() silently drops
   // over-cap instances, which would read as a street that thins out at random.
   const binGeo = new THREE.CylinderGeometry(0.36, 0.30, 1, 10);
-  const binMesh = inst(binGeo, darkMat, 2400);
-  const boxMesh = inst(boxGeo, paintedMat, 3000);
-  const hydBody = inst(new THREE.CylinderGeometry(0.17, 0.21, 1, 8), hydMat, 900);
-  const hydCap = inst(new THREE.SphereGeometry(0.5, 8, 6), hydMat, 900);
-  const planterMesh = inst(boxGeo, concMat, 1400);
-  const shrubMesh = inst(new THREE.SphereGeometry(0.5, 7, 6), leafMat, 1400);
-  const benchSeat = inst(boxGeo, darkMat, 1800);
-  const benchLeg = inst(boxGeo, darkMat, 1800);
-  const bollardMesh = inst(new THREE.CylinderGeometry(0.11, 0.13, 1, 8), poleMat, 1600);
-  const meterMesh = inst(new THREE.CylinderGeometry(0.07, 0.07, 1, 6), poleMat, 1400);
+  const binMesh = pool('binMesh', binGeo, darkMat);
+  const boxMesh = pool('boxMesh', boxGeo, paintedMat);
+  const hydBody = pool('hydBody', new THREE.CylinderGeometry(0.17, 0.21, 1, 8), hydMat);
+  const hydCap = pool('hydCap', new THREE.SphereGeometry(0.5, 8, 6), hydMat);
+  const planterMesh = pool('planterMesh', boxGeo, concMat);
+  const shrubMesh = pool('shrubMesh', new THREE.SphereGeometry(0.5, 7, 6), leafMat);
+  const benchSeat = pool('benchSeat', boxGeo, darkMat);
+  const benchLeg = pool('benchLeg', boxGeo, darkMat);
+  const bollardMesh = pool('bollardMesh', new THREE.CylinderGeometry(0.11, 0.13, 1, 8), poleMat);
+  const meterMesh = pool('meterMesh', new THREE.CylinderGeometry(0.07, 0.07, 1, 6), poleMat);
 
   // palms
-  const palmTrunk = inst(new THREE.CylinderGeometry(0.19, 0.30, 1, 8), new THREE.MeshStandardMaterial({
+  const palmTrunk = pool('palmTrunk', new THREE.CylinderGeometry(0.19, 0.30, 1, 8), new THREE.MeshStandardMaterial({
     color: 0x7d6a4e, roughness: 0.95, metalness: 0,
-  }), 700);
-  patchAtmo(palmTrunk.material, atmo, 0.0);
+  }));
+  patchAtmo(palmTrunk._mat, atmo, 0.0);
   const frondTex = makeFrondTex(R);
   const frondMat = new THREE.MeshStandardMaterial({
     map: frondTex, alphaMap: frondTex, transparent: true, alphaTest: 0.35,
@@ -2340,30 +2557,30 @@ export function createWorld(scene, { rng, roadKit }) {
   const frondGeo = new THREE.PlaneGeometry(1, 0.44);
   frondGeo.rotateX(-Math.PI / 2);
   frondGeo.translate(0.5, 0, 0);
-  const frondMesh = inst(frondGeo, frondMat, 700 * 9, { cast: true, recv: false });
+  const frondMesh = pool('frondMesh', frondGeo, frondMat, { cast: true, recv: false });
 
-  function palm(x, z, y) {
-    const h = rngRange(R, 7.5, 12.5);
-    const tilt = rngRange(R, -0.10, 0.10);
-    push(palmTrunk, x, y + h / 2, z, rngRange(R, 0, 6.28), tilt, 1, h, 1);
+  function palm(sink, rng, x, z, y) {
+    const { frondMesh, palmTrunk } = sink;
+    const h = rngRange(rng, 7.5, 12.5);
+    const tilt = rngRange(rng, -0.10, 0.10);
+    push(palmTrunk, x, y + h / 2, z, rngRange(rng, 0, 6.28), tilt, 1, h, 1);
     const cx = x + Math.sin(tilt) * h * 0.5;
-    const n = rngInt(R, 7, 9);
-    const a0 = rngRange(R, 0, 6.28);
+    const n = rngInt(rng, 7, 9);
+    const a0 = rngRange(rng, 0, 6.28);
     for (let i = 0; i < n; i++) {
-      const ang = a0 + (i / n) * Math.PI * 2 + rngRange(R, -0.14, 0.14);
-      const pitch = rngRange(R, 0.30, 0.95);
-      const len = rngRange(R, 2.9, 4.3);
+      const ang = a0 + (i / n) * Math.PI * 2 + rngRange(rng, -0.14, 0.14);
+      const pitch = rngRange(rng, 0.30, 0.95);
+      const len = rngRange(rng, 2.9, 4.3);
       push(frondMesh, cx, y + h - 0.25, z, ang, -pitch, len, 1, len * 0.78);
     }
     shadowAt(cx, z, y + 0.02, 2.6, 0.75);
   }
 
-  function bench(x, z, ry) {
+  function bench(sink, x, z, ry) {
+    const { benchLeg, benchSeat } = sink;
     push(benchSeat, x, 0.68, z, ry, 0, 1.9, 0.11, 0.55);
     push(benchSeat, x - Math.cos(ry) * 0.24, 1.02, z + Math.sin(ry) * 0.24, ry, 0, 1.9, 0.5, 0.09);
     for (const s of [-0.7, 0.7]) {
-      push(benchLeg, x - Math.sin(ry) * s * 0, z * 0 + 0, 0); // placeholder, replaced below
-      benchLeg.count--;
       push(benchLeg, x - Math.cos(ry + Math.PI / 2) * s, 0.4, z + Math.sin(ry + Math.PI / 2) * s,
         ry, 0, 0.10, 0.62, 0.5);
     }
@@ -2397,7 +2614,7 @@ export function createWorld(scene, { rng, roadKit }) {
         // a boulevard planting scheme, not a downtown one, and nine alpha-tested
         // fronds is by far the most expensive prop in the set.
         if (k < 0.075) {
-          palm(x, z, 0.24);
+          palm(sink, R, x, z, 0.24);
         } else if (k < 0.32) {
           push(binMesh, x, 0.24 + 0.5, z, ry, 0, 1, 1.0, 1);
           shadowAt(x, z, 0.25, 0.95, 0.95);
@@ -2414,7 +2631,7 @@ export function createWorld(scene, { rng, roadKit }) {
           push(shrubMesh, x, 0.24 + 1.15, z, ry, 0, 1.5, 1.1, 1.5, 0x527f34);
           shadowAt(x, z, 0.25, 1.5, 0.9);
         } else if (k < 0.72) {
-          bench(x, z, ry);
+          bench(sink, x, z, ry);
         } else if (k < 0.86) {
           push(bollardMesh, x, 0.24 + 0.44, z, ry, 0, 1, 0.88, 1);
           shadowAt(x, z, 0.25, 0.5, 0.9);
@@ -2430,8 +2647,6 @@ export function createWorld(scene, { rng, roadKit }) {
       }
     }
   }
-  seal(binMesh, boxMesh, hydBody, hydCap, planterMesh, shrubMesh,
-    benchSeat, benchLeg, bollardMesh, meterMesh, palmTrunk, frondMesh);
 
   // ---- pedestrian guard railing along the kerb --------------------------------
   // `daytime-downtown-03` runs a bright railing the full length of the far kerb
@@ -2439,8 +2654,8 @@ export function createWorld(scene, { rng, roadKit }) {
   // ladder of 1.1 m verticals in pale metal against dark pavement is a lot of
   // high-contrast edge for very little geometry. Ours is broken into one run per
   // block edge, so the kerb keeps its gaps for parking and crossings.
-  const guardPost = inst(boxGeo, railMat, 7000, { recv: false });
-  const guardRail = inst(boxGeo, railMat, 3000, { recv: false });
+  const guardPost = pool('guardPost', boxGeo, railMat, { recv: false });
+  const guardRail = pool('guardRail', boxGeo, railMat, { recv: false });
   for (const b of blocks) {
     const off = 0.55;   // stand-off from the kerb face, clear of the 22 cm step
     const edges = [
@@ -2467,7 +2682,6 @@ export function createWorld(scene, { rng, roadKit }) {
       }
     }
   }
-  seal(guardPost, guardRail);
 
   // ---- parked cars ----------------------------------------------------------
   const carPaint = patchAtmo(new THREE.MeshStandardMaterial({
@@ -2485,11 +2699,11 @@ export function createWorld(scene, { rng, roadKit }) {
   // horizontal breaks a real car silhouette has - sill, beltline, roof cap and
   // bumper - for 9 instances a car instead of 6, and it splits into two classes
   // so a rank is not one extruded shape repeated.
-  const carBody = inst(boxGeo, carPaint, 9600);       // lower body + roof cap
-  const carCab = inst(boxGeo, carGlass, 4800);        // glasshouse
-  const carTrim = inst(boxGeo, darkMat, 9600);        // bumpers / valances
+  const carBody = pool('carBody', boxGeo, carPaint);       // lower body + roof cap
+  const carCab = pool('carCab', boxGeo, carGlass);        // glasshouse
+  const carTrim = pool('carTrim', boxGeo, darkMat);        // bumpers / valances
   const carWheelGeo = new THREE.CylinderGeometry(0.34, 0.34, 0.22, 10);
-  const carWheel = inst(carWheelGeo, tyreMat, 19200);
+  const carWheel = pool('carWheel', carWheelGeo, tyreMat);
   // Burnout's traffic is not a car park of greys. The old eight were all
   // desaturated and three of them sat within 6% luma of the asphalt, so a rank
   // of them added silhouette but almost no contrast; these keep the muted half
@@ -2544,19 +2758,20 @@ export function createWorld(scene, { rng, roadKit }) {
   // consumers can scan this linearly per frame and no spatial index is warranted.
   const parkedBodies = [];
 
-  function parkedCar(x, z, ry) {
+  function parkedCar(sink, rng, x, z, ry) {
+    const { carBody, carCab, carTrim, carWheel } = sink;
     parkCounts[parkPop]++;
-    const col = rngPick(R, carColors);
+    const col = rngPick(rng, carColors);
     const fx = Math.cos(ry), fz = -Math.sin(ry);      // unit forward for this yaw
     // Every instance this car owns, so hide() below can take the baked body out of the
     // draw when traffic.js promotes it to a live (shoved/wrecked) pool car after a hit.
     const used = [];
-    const rec = (m) => { if (m.count < m.userData.cap) used.push([m, m.count]); };
+    const rec = (m) => used.push([m, m.count]);
     const at = (m, d, y, sx, sy, sz, c) => {
       rec(m);
       push(m, x + fx * d, CAR_Y + y, z + fz * d, ry, 0, sx, sy, sz, c);
     };
-    const van = R() < 0.16;
+    const van = rng() < 0.16;
     if (van) {
       at(carBody, 0.00, 0.86, 4.90, 1.12, 1.92, col);   // slab side, 0.30 - 1.42
       // window band the length of the body, not a windscreen on its own: a van
@@ -2586,10 +2801,8 @@ export function createWorld(scene, { rng, roadKit }) {
         dummy.rotation.set(0, ry + Math.PI / 2, Math.PI / 2);
         dummy.scale.set(1, 1, 1);
         dummy.updateMatrix();
-        if (carWheel.count < carWheel.userData.cap) {
-          used.push([carWheel, carWheel.count]);
-          carWheel.setMatrixAt(carWheel.count, dummy.matrix); carWheel.count++;
-        }
+        used.push([carWheel, carWheel.count]);
+        pushMat(carWheel, dummy.matrix);
       }
     }
     // A 4.40 x 1.82 m sedan (4.90 x 1.92 van) laid down a 6.8 m ROUND pad here:
@@ -2614,16 +2827,15 @@ export function createWorld(scene, { rng, roadKit }) {
         dummy.rotation.set(0, 0, 0);
         dummy.scale.set(1e-6, 1e-6, 1e-6);
         dummy.updateMatrix();
-        // The chunk cut at the bottom of this file re-homes every baked instance into a
-        // `pool:chunk` copy and zeroes the source pool, so the [m, i] recorded at bake time
-        // points at a mesh that no longer draws. chunkRemap says where the instance went;
-        // writing to the source was the bug that left a phantom parked car on screen
-        // (visible, no collider) while its promoted wreck slid away.
+        // The [m, i] recorded at bake time names a pool DESCRIPTOR and a push index, not a
+        // mesh: the instance is written into whichever finalized cell mesh owns it. Writing to
+        // the descriptor is the bug that left a phantom parked car on screen (visible, no
+        // collider) while its promoted wreck slid away, so this must go through resolve().
         for (const [m, i] of used) {
-          const r = chunkRemap.get(m);
-          const [tm, ti] = (r && r.get(i)) || [m, i];
-          tm.setMatrixAt(ti, dummy.matrix);
-          tm.instanceMatrix.needsUpdate = true;
+          const t = resolve(m, i);
+          if (!t) continue;
+          t[0].setMatrixAt(t[1], dummy.matrix);
+          t[0].instanceMatrix.needsUpdate = true;
         }
       },
     });
@@ -2656,9 +2868,9 @@ export function createWorld(scene, { rng, roadKit }) {
       + Math.min(Math.max(qx, qz), 0) - 48);
   }
 
-  function tryPark(x, z, ry, clear) {
+  function tryPark(sink, rng, x, z, ry, clear) {
     if (heroDist(x, z) < clear) { parkCounts.culled++; return; }
-    parkedCar(x, z, ry);
+    parkedCar(sink, rng, x, z, ry);
   }
 
   /**
@@ -2669,12 +2881,12 @@ export function createWorld(scene, { rng, roadKit }) {
    * it against a junction test whose modulo was off by 40 m, which stripped the
    * mid-block runs and left the boulevards bare.
    */
-  function rank(ox, oz, ax, az, a0, a1, side) {
+  function rank(sink, rng, ox, oz, ax, az, a0, a1, side) {
     const nx = -az * side, nz = ax * side;      // outward normal for this kerb
     // Nose-in or nose-out is a coin flip per rank, not per car, so a kerb reads
     // as one continuous line of parking rather than alternating jumble.
-    const flip = R() < 0.5;
-    for (let t = a0 + rngRange(R, 0, 6); t < a1; t += rngRange(R, 10, 14)) {
+    const flip = rng() < 0.5;
+    for (let t = a0 + rngRange(rng, 0, 6); t < a1; t += rngRange(rng, 10, 14)) {
       // 0.30 -> 0.40: driveways, hydrants, bus stops. A kerb this solidly parked was part of
       // what made the street read as a car park even where the parking itself was legitimate,
       // and one gap in five became one in three at a cost of ~150 bodies. It cannot go much
@@ -2683,10 +2895,10 @@ export function createWorld(scene, { rng, roadKit }) {
       // the street read abandoned.
       // 0.60 was the surviving fraction before NPC_DENSITY; keeping it as a factor means the
       // multiplier reads as "fraction of the old population" at every site that uses it.
-      if (R() >= 0.60 * NPC_DENSITY) continue;
+      if (rng() >= 0.60 * NPC_DENSITY) continue;
       const x = ox + ax * t + nx * PARK_OFF;
       const z = oz + az * t + nz * PARK_OFF;
-      tryPark(x, z, Math.atan2(-az, ax) + (flip ? Math.PI : 0), 2.8);
+      tryPark(sink, rng, x, z, Math.atan2(-az, ax) + (flip ? Math.PI : 0), 2.8);
     }
   }
 
@@ -2695,10 +2907,10 @@ export function createWorld(scene, { rng, roadKit }) {
     for (let i = 0; i < G.length - 1; i++) {
       const a0 = G[i] + JCLR, a1 = G[i + 1] - JCLR;
       // a kerb only exists where a block backs it
-      if (j < G.length - 1) rank(0, G[j], 1, 0, a0, a1, 1);
-      if (j > 0) rank(0, G[j], 1, 0, a0, a1, -1);
-      if (j < G.length - 1) rank(G[j], 0, 0, 1, a0, a1, -1);
-      if (j > 0) rank(G[j], 0, 0, 1, a0, a1, 1);
+      if (j < G.length - 1) rank(sink, R, 0, G[j], 1, 0, a0, a1, 1);
+      if (j > 0) rank(sink, R, 0, G[j], 1, 0, a0, a1, -1);
+      if (j < G.length - 1) rank(sink, R, G[j], 0, 0, 1, a0, a1, -1);
+      if (j > 0) rank(sink, R, G[j], 0, 0, 1, a0, a1, 1);
     }
   }
 
@@ -2720,17 +2932,17 @@ export function createWorld(scene, { rng, roadKit }) {
    * at the signal" and starts reading as stopped/loading in the kerbside lane, which is a
    * thing streets actually do and which no longer contradicts the live signal.
    */
-  function signalQueue(gx, gz, ax, az) {
+  function signalQueue(sink, rng, gx, gz, ax, az) {
     // Scaled by NPC_DENSITY like the ranks, with a floor of 1: a "queue" of zero cars is just
     // an absent queue, and dropping the whole mechanism was not what was asked for.
-    const n = Math.max(1, Math.round(rngInt(R, 2, 4) * NPC_DENSITY));
+    const n = Math.max(1, Math.round(rngInt(rng, 2, 4) * NPC_DENSITY));
     const ry = Math.atan2(-az, ax);
     let d = 19.6;                               // nose on the stop bar, behind the crossing
     for (let i = 0; i < n; i++) {
       const x = gx - ax * d - az * 7.4;
       const z = gz - az * d + ax * 7.4;
-      tryPark(x, z, ry, 4.6);
-      d += rngRange(R, 5.6, 7.4);               // bumper gap of a stopped queue
+      tryPark(sink, rng, x, z, ry, 4.6);
+      d += rngRange(rng, 5.6, 7.4);               // bumper gap of a stopped queue
     }
   }
   const ARMS = [[1, 0], [-1, 0], [0, 1], [0, -1]];
@@ -2741,7 +2953,7 @@ export function createWorld(scene, { rng, roadKit }) {
       // cross street; two now also crowds the kerbside lane against the live inner lane at
       // the junction the player is most likely to be looking through.
       const k = rngInt(R, 0, 3);
-      signalQueue(gx, gz, ARMS[k][0], ARMS[k][1]);
+      signalQueue(sink, R, gx, gz, ARMS[k][0], ARMS[k][1]);
     }
   }
   // laneTraffic() USED TO BE HERE and it was the defect. It filled BOTH carriageways of every
@@ -2752,7 +2964,6 @@ export function createWorld(scene, { rng, roadKit }) {
   // vehicles in those references are MOVING and a still frame cannot tell the difference.
   // traffic.js now owns that population: 56 live cars that drive, follow, and stop at signals.
   // Do not put a standing population back into a carriageway to win a still frame.
-  seal(carBody, carCab, carTrim, carWheel);
 
   // ---- road surface paint + utility marks -------------------------------------
   // The lower half of the street-level band is asphalt, and asphalt is where we
@@ -2775,9 +2986,9 @@ export function createWorld(scene, { rng, roadKit }) {
   flatGeo.rotateX(-Math.PI / 2);
   const discGeo = new THREE.CircleGeometry(0.5, 14);
   discGeo.rotateX(-Math.PI / 2);
-  const paintMesh = inst(flatGeo, paintMat, 12000, { cast: false, recv: true });
-  const patchMesh = inst(flatGeo, patchMat, 9000, { cast: false, recv: true });
-  const holeMesh = inst(discGeo, patchMat, 3000, { cast: false, recv: true });
+  const paintMesh = pool('paintMesh', flatGeo, paintMat, { cast: false, recv: true });
+  const patchMesh = pool('patchMesh', flatGeo, patchMat, { cast: false, recv: true });
+  const holeMesh = pool('holeMesh', discGeo, patchMat, { cast: false, recv: true });
   const PAINT_Y = 0.045;
 
   /** one zebra crossing, laid across the full carriageway on one junction arm */
@@ -2804,34 +3015,34 @@ export function createWorld(scene, { rng, roadKit }) {
    * differently-aged resurfacing squares; ours was one uniform tile, so the near
    * asphalt had no feature bigger than the texture's own crack network.
    */
-  function roadWear(ox, oz, ax, az, a0, a1) {
-    for (let t = a0; t < a1; t += rngRange(R, 7, 16)) {
-      const o = rngRange(R, -HALF + 1.4, HALF - 1.4);
+  function roadWear(sink, rng, ox, oz, ax, az, a0, a1) {
+    const { holeMesh, patchMesh } = sink;
+    for (let t = a0; t < a1; t += rngRange(rng, 7, 16)) {
+      const o = rngRange(rng, -HALF + 1.4, HALF - 1.4);
       const x = ox + ax * t - az * o, z = oz + az * t + ax * o;
-      const k = R();
+      const k = rng();
       if (k < 0.34) {
         push(holeMesh, x, PAINT_Y - 0.006, z, 0, 0, 1.32, 1, 1.32, 0x3a3b3e);
         push(holeMesh, x, PAINT_Y, z, 0, 0, 1.04, 1, 1.04, 0x6a6259);
       } else {
-        const w = rngRange(R, 1.6, 4.6), d = rngRange(R, 1.1, 3.0);
-        const ry = Math.atan2(-az, ax) + rngRange(R, -0.05, 0.05);
+        const w = rngRange(rng, 1.6, 4.6), d = rngRange(rng, 1.1, 3.0);
+        const ry = Math.atan2(-az, ax) + rngRange(rng, -0.05, 0.05);
         push(patchMesh, x, PAINT_Y - 0.006, z, ry, 0, w + 0.34, 1, d + 0.34, 0x2a2b2e);
         push(patchMesh, x, PAINT_Y, z, ry, 0, w, 1, d,
           // kept within ~15% of the ribbon's own base value: a resurfacing square
           // reads as a seam and a tone shift, and any wider a spread turns into
           // a sheet of paper lying on the road
-          rngPick(R, [0x3d3f43, 0x545350, 0x47494d, 0x585652, 0x34363b]));
+          rngPick(rng, [0x3d3f43, 0x545350, 0x47494d, 0x585652, 0x34363b]));
       }
     }
   }
   for (let j = 0; j < G.length; j++) {
     for (let i = 0; i < G.length - 1; i++) {
       const a0 = G[i] + JCLR, a1 = G[i + 1] - JCLR;
-      roadWear(0, G[j], 1, 0, a0, a1);
-      roadWear(G[j], 0, 0, 1, a0, a1);
+      roadWear(sink, R, 0, G[j], 1, 0, a0, a1);
+      roadWear(sink, R, G[j], 0, 0, 1, a0, a1);
     }
   }
-  seal(paintMesh, patchMesh, holeMesh);
 
   // ---- highway guard rails + overpass concrete -------------------------------
   for (const s of [-1, 1]) {
@@ -2841,20 +3052,18 @@ export function createWorld(scene, { rng, roadKit }) {
     group.add(rail);
     const rail2 = rail.clone(); rail2.position.y = 0.38; group.add(rail2);
   }
-  const railPost = inst(boxGeo, poleMat, 520, { recv: false });
+  const railPost = pool('railPost', boxGeo, poleMat, { recv: false });
   for (const s of [-1, 1]) {
     for (let i = 0; i < 240; i++) {
       push(railPost, -1200 + i * 10, 0.45, HZ + s * (LAYOUT.highwayW / 2 + 2.2), 0, 0, 0.14, 0.9, 0.14);
     }
   }
-  seal(railPost);
 
   // jersey barrier + overpass deck running along the far side of the highway
-  const barrier = inst(boxGeo, concMat, 300, { recv: true });
+  const barrier = pool('barrier', boxGeo, concMat, { recv: true });
   for (let i = 0; i < 240; i++) {
     push(barrier, -1200 + i * 10, 0.55, HZ - LAYOUT.highwayW / 2 - 5.0, 0, 0, 9.8, 1.1, 0.6);
   }
-  seal(barrier);
 
   const deck = new THREE.Mesh(new THREE.BoxGeometry(1400, 1.7, 13), concMat);
   deck.position.set(0, 12.5, HZ - 62);
@@ -2874,12 +3083,11 @@ export function createWorld(scene, { rng, roadKit }) {
   // hemisphere the row blocks, which is the quantity anisAC3 actually tracks. Do NOT delete
   // or hide the row: it is visible in dusk-highway-chase (max delta 146), crash-cam (72) and
   // daytime-downtown (68). At half radius it is invisible in daytime-downtown instead.
-  const pier = inst(new THREE.CylinderGeometry(0.75, 0.85, 1, 12), concMat, 60);
+  const pier = pool('pier', new THREE.CylinderGeometry(0.75, 0.85, 1, 12), concMat);
   for (let i = 0; i < 44; i++) {
     push(pier, -1300 + i * 60, 5.8, HZ - 62, 0, 0, 1, 11.6, 1);
     shadowAt(-1300 + i * 60, HZ - 62, 0.02, 4.2, 0.9);
   }
-  seal(pier);
 
   // ---- contact shadows ------------------------------------------------------
   const contactTex = makeContactTex();
@@ -2940,6 +3148,12 @@ export function createWorld(scene, { rng, roadKit }) {
     }
     contactMesh.count = 0;
     for (const c of contacts) {
+      // contactMesh is the ONE pool left with a literal capacity: it is rebuilt from scratch on
+      // every time-of-day change, so it cannot go through the sink, and it is sized
+      // `contacts.length + 8` once. If a later emitter registers pads after this allocation, the
+      // extra ones would silently vanish — the exact failure mode the four capacity incidents in
+      // this file were. Count it instead, and let the probe assert zero.
+      if (contactMesh.count >= contactMesh.userData.cap) { dropped('contactShadows'); continue; }
       const d = Math.min(1.2, 0.38 * Math.max(c.rx, c.rz) / tanEl);
       dummy.position.set(c.x + ax * d, c.y + 0.012, c.z + az * d);
       dummy.rotation.set(0, c.ry, 0);
@@ -2975,7 +3189,7 @@ export function createWorld(scene, { rng, roadKit }) {
   // NOT the smallest number that is fast: 8 would buy a further 4 ms and would drop a lit emitter
   // in shot on 12% of frames, and this wave may not make a scene look worse.
   const POOL = 10;
-  const pool = [];
+  const lightPool = [];
   // Scratch for the frustum gate in update(). One allocation, reused; update() runs every frame.
   const _lightFrustum = new THREE.Frustum();
   const _lightPV = new THREE.Matrix4();
@@ -2986,7 +3200,7 @@ export function createWorld(scene, { rng, roadKit }) {
     const l = new THREE.PointLight(0xffc98a, 0, 46, 2);
     l.visible = false;
     scene.add(l);
-    pool.push(l);
+    lightPool.push(l);
   }
   // emitters the pool can be assigned to: warm street lamps + coloured neon
   const emitters = [];
@@ -3019,151 +3233,78 @@ export function createWorld(scene, { rng, roadKit }) {
     highway: makePath([[-1000, HZ + 6.5], [-300, HZ + 6.5], [400, HZ + 6.5], [1000, HZ + 6.5]], false),
   };
 
-  // ---- SPATIAL CHUNKING: the one change that makes this city affordable ----------------
-  // Every pool above was allocated by inst() with `frustumCulled = false`, and that was
-  // correct while each pool was ONE mesh: a single InstancedMesh holding 150 000 window
-  // mullions spread over the whole map has a map-wide bounding sphere, so the frustum test
-  // could only ever cost a matrix multiply and then say "yes". The consequence, measured:
-  // 203 540 instances and 2.40 M triangles, of which 0.19% are within 200 m of the camera and
-  // 92% are beyond 400 m, ALL submitted, EVERY frame (verdicts/wave-s/perf-profile.md, map
-  // census). And not once per frame but three times: the colour pass, the shadow pass, and
-  // SSAO's depth/normal pass each re-submit the whole scene — `ssao-off` alone drops 2.16 M
-  // triangles out of the frame, which is how you can see the third submission in the counters.
+  // ---- FINALIZE: allocate every pool, cut by draw state and 200 m cell -----------------
   //
-  // So this pass re-cuts every large pool into one InstancedMesh per `CHUNK` metre cell of
-  // ground, each with `frustumCulled = true` and its own tight bounding sphere. Nothing about
-  // the scene's contents changes — the same instances exist at the same transforms with the
-  // same materials — but three can now reject a cell that is behind the camera or outside the
-  // shadow cascade, which is a pixel-identical, provably lossless cull. This is why the fix is
-  // frustum culling and NOT a distance cull: the skyline is 800 m away and is supposed to be
-  // there, so throwing geometry away by range would be a visible regression, whereas throwing
-  // away what is not in the view volume cannot be.
+  // This used to be a RE-CUT: every pool was allocated at a guessed cap, filled, and then a pass
+  // here walked the finished meshes, bucketed them by draw state, split each bucket by cell,
+  // built a second set of InstancedMeshes and zeroed the originals. That pass is gone. The sink
+  // never allocated the first set, so finalize() is the only allocation that happens and the
+  // cells it produces are the same cells the re-cut produced.
   //
-  // WHY THE SOURCE MESH IS KEPT AS THE PARENT rather than replaced. Later code holds direct
-  // references to individual pools (`spillMesh.visible = night` in setNight, `towers`,
-  // `carKit`) and toggles them. Making the chunks CHILDREN of the original mesh preserves every
-  // one of those handles: visibility still inherits down the parent, the material is shared so
-  // every setNight()/setWet() material edit still lands, and the parent itself draws nothing
-  // because its count is zeroed. `layers.disableAll()` on the parent is what removes its own
-  // (now empty) draw call: three's projectObject tests the layer mask of an object before
-  // adding it to the render list but recurses into children regardless of that test.
+  // Why it matters: a single InstancedMesh holding 150,000 window mullions spread over the whole
+  // map has a map-wide bounding sphere, so its frustum test could only ever cost a matrix
+  // multiply and then say "yes". Measured before the cut existed: 203,540 instances and 2.40 M
+  // triangles, of which 0.19% were within 200 m of the camera and 92% beyond 400 m, ALL
+  // submitted, EVERY frame — and not once per frame but three times, because the colour pass,
+  // the shadow pass and SSAO's depth/normal prepass each re-submit the whole scene.
+  const buildStats = finalize();
+
+  // ---- ONE CHUNK, FOR NOW ---------------------------------------------------------------
+  // The emitters above now all write into a sink rather than into pools they close over, and
+  // they take their RNG as an argument rather than reading the module's `R`. That is the whole
+  // precondition for building the city cell by cell. This build still runs them ONCE, against a
+  // single chunk whose bounds are the whole world and whose stream is the same global `R` in the
+  // same order, which is what makes this step provably behaviour-preserving: the refactor is
+  // verified before any seeding change lands.
+  const resident = new Map();
+  resident.set('0,0', {
+    key: '0,0', cellX: 0, cellZ: 0,
+    minX: -Infinity, maxX: Infinity, minZ: -Infinity, maxZ: Infinity,
+    group, sink, stats: buildStats,
+  });
+
+  // ---- STATIC TRANSFORMS. The cut multiplies the object count in this subtree, and every one
+  // of those objects would otherwise have its world matrix recomposed on every
+  // renderer.render() — measured at 2.9 ms/frame BEFORE the cells existed. Nothing under
+  // world.group ever moves: the city is built once at fixed coordinates, and the only things
+  // that change afterwards are visibility flags, material uniforms and instance matrices, none
+  // of which are object transforms. So compose the subtree's matrices once and then opt out.
   //
-  // CHUNK is a real trade and was measured, not guessed: smaller cells cull more triangles and
-  // cost more draw calls (one per occupied cell per pool). See the verdict for the sweep.
-  let chunkStats = null;
-  // (source mesh -> (source index -> [chunk mesh, chunk index])), filled by the chunk cut
-  // below. Any code that edits a baked instance after boot must route through this, or it
-  // edits a pool that no longer draws. Currently the only such editor is parkedCar().hide().
-  const chunkRemap = new Map();
-  const CHUNK = 200;
-  // Below this many instances a pool is left exactly as it was. A 60-instance pool cannot pay
-  // back the extra draw calls chunking it would add, and the whole point is to spend calls
-  // only where there are triangles behind them.
-  const CHUNK_MIN = 400;
-  {
-    const _m = new THREE.Matrix4();
-    const _c = new THREE.Color();
-    const pools = [];
+  // THIS IS PER CHUNK FROM HERE ON, NOT ONCE. three's updateMatrixWorld() skips recursing into a
+  // child whose matrixWorldAutoUpdate is false unless it is called with force = true, so a chunk
+  // Group added to this subtree AFTER boot never composes its world matrix and renders at the
+  // identity transform or not at all. Anything that adds a chunk later must call
+  // `rec.group.updateMatrixWorld(true)` on it. That failure presents as "the streamed chunks are
+  // invisible or in the wrong place" and will be blamed on the emitter, so it is called out here.
+  group.updateMatrixWorld(true);
+  group.matrixWorldAutoUpdate = false;
+
+  /**
+   * What actually EXISTS in the scene graph, counted by traversing it rather than by reading a
+   * running total. A counter can happily say "9 chunks built" while the scene holds 300; a
+   * traversal cannot.
+   */
+  function chunkStats() {
+    let meshes = 0, instances = 0, tris = 0;
+    const geoms = new Set();
     group.traverse((o) => {
-      // contactMesh is rebuilt by layoutContacts() on every time-of-day change, so its
-      // instance list is not static and it must not be re-cut here.
-      if (o.isInstancedMesh && o !== contactMesh) pools.push(o);
+      if (!o.isInstancedMesh) return;
+      meshes++;
+      instances += o.count;
+      geoms.add(o.geometry.uuid);
+      const g = o.geometry;
+      tris += o.count * (g.index ? g.index.count : g.attributes.position.count) / 3;
     });
-    // ---- POOLS ARE MERGED BY (geometry, material, shadow flags) BEFORE THEY ARE CUT.
-    // Chunking on its own trades triangles for draw calls, and downtown that trade went the wrong
-    // way: it took the city from 849 calls to 2285 because ~50 pools each contributed a chunk per
-    // occupied cell. But those pools are not 50 distinct THINGS to the GPU — a bench slat, a
-    // traffic-light head, a sign frame and a bumper are all `boxGeo` with `darkMat`, i.e. the same
-    // program and the same buffers, split across pools only because they were built by different
-    // functions. Bucketing by (geometry, material, castShadow, receiveShadow) merges them, so a
-    // cell costs one call per distinct DRAW STATE rather than one per author.
-    //
-    // THE CONSTRAINT THIS INTRODUCES, stated because it is not obvious: instances that get merged
-    // lose their individual pool's `visible` flag. That is safe for every pool here — the only
-    // pool this file ever toggles individually is `spillMesh`, whose `spillMat` is unique to it, so
-    // it can never share a bucket with anything. If a future pool needs its own visibility, give
-    // it its own material (which it needs anyway to look different) or exclude it above.
-    let chunks = 0, moved = 0;
-    const buckets = new Map();
-    for (const src of pools) {
-      // A multi-material pool would need its groups carried across too; none exists here, and
-      // silently merging two of them by a shared undefined uuid is exactly the kind of bug that
-      // only shows up as one wrong-coloured object somewhere in the city.
-      if (src.count < 1 || Array.isArray(src.material)) continue;
-      const key = `${src.geometry.uuid}|${src.material.uuid}`
-        + `|${src.castShadow ? 1 : 0}${src.receiveShadow ? 1 : 0}|${src.renderOrder}`;
-      let b = buckets.get(key);
-      if (!b) buckets.set(key, b = []);
-      b.push(src);
-    }
-    for (const srcs of buckets.values()) {
-      const total = srcs.reduce((a, s) => a + s.count, 0);
-      if (total < CHUNK_MIN) continue;
-      // cell key -> flat list of matrices (and colours, if any source carries them)
-      const cells = new Map();
-      let anyColor = false;
-      for (const src of srcs) if (src.instanceColor) anyColor = true;
-      for (const src of srcs) {
-        for (let i = 0; i < src.count; i++) {
-          src.getMatrixAt(i, _m);
-          // elements[12]/[14] are the translation x/z of a column-major mat4.
-          const key = `${Math.floor(_m.elements[12] / CHUNK)},${Math.floor(_m.elements[14] / CHUNK)}`;
-          let b = cells.get(key);
-          if (!b) cells.set(key, b = { mats: [], cols: [], refs: [] });
-          b.mats.push(_m.clone());
-          b.refs.push([src, i]);
-          // A source with no instanceColor in a bucket where another source has one must
-          // contribute white, or its instances would come out black.
-          if (anyColor) {
-            if (src.instanceColor) { src.getColorAt(i, _c); b.cols.push(_c.clone()); }
-            else b.cols.push(new THREE.Color(1, 1, 1));
-          }
-        }
-      }
-      if (cells.size < 2 && srcs.length < 2) continue;  // nothing to win
-      const host = srcs[0];
-      for (const cell of cells.values()) {
-        const im = new THREE.InstancedMesh(host.geometry, host.material, cell.mats.length);
-        im.castShadow = host.castShadow;
-        im.receiveShadow = host.receiveShadow;
-        im.renderOrder = host.renderOrder;
-        im.name = `${host.name || 'pool'}:chunk`;
-        for (let k = 0; k < cell.mats.length; k++) {
-          im.setMatrixAt(k, cell.mats[k]);
-          if (anyColor) im.setColorAt(k, cell.cols[k]);
-          // Where this source instance now draws from, so a later per-instance edit
-          // (parkedCar's hide()) can land on the copy that is actually on screen: the
-          // source pool below gets count = 0, so writing to it changes nothing visible.
-          const [sm, si] = cell.refs[k];
-          let r = chunkRemap.get(sm);
-          if (!r) chunkRemap.set(sm, r = new Map());
-          r.set(si, [im, k]);
-        }
-        im.instanceMatrix.needsUpdate = true;
-        if (im.instanceColor) im.instanceColor.needsUpdate = true;
-        // Explicit: three would compute this lazily on the first frustum test anyway, but
-        // doing it here keeps the whole cost of this restructure inside boot.
-        im.computeBoundingSphere();
-        host.add(im);
-        chunks++;
-      }
-      for (const src of srcs) {
-        moved += src.count;
-        src.count = 0;
-        src.layers.disableAll();
-      }
-    }
-    // ---- STATIC TRANSFORMS. The chunking multiplies the object count in this subtree, and
-    // every one of those objects would otherwise have its world matrix recomposed on every
-    // renderer.render() — measured at 2.9 ms/frame BEFORE the chunks existed. Nothing under
-    // world.group ever moves: the city is built once at fixed coordinates, and the only things
-    // that change afterwards are visibility flags, material uniforms and instance matrices,
-    // none of which are object transforms. So compose the subtree's matrices once and then opt
-    // out. three's updateMatrixWorld() skips recursing into a child whose matrixWorldAutoUpdate
-    // is false unless it is called with force = true, which main.js's setup path does.
-    group.updateMatrixWorld(true);
-    group.matrixWorldAutoUpdate = false;
-    chunkStats = { chunks, moved, cell: CHUNK };
+    const rc = [...resident.values()];
+    return {
+      cell: CHUNK,
+      residentCells: rc.length,
+      residentKeys: rc.map((c) => c.key).sort(),
+      drawStates: buildStats.states,
+      cells: buildStats.cells,
+      meshes, instances, geometries: geoms.size, tris,
+      overflow: { n: dropStats.n, pools: { ...dropStats.pools } },
+    };
   }
 
   let night = false;
@@ -3209,7 +3350,7 @@ export function createWorld(scene, { rng, roadKit }) {
       spillMat.opacity = night ? 0.55 : 0.0;
       spillMesh.visible = night;
       contactMat.opacity = night ? 0.42 : 0.72;
-      for (const l of pool) l.visible = night;
+      for (const l of lightPool) l.visible = night;
       groundMat.color.setHex(night ? 0x14151a : 0x25262a);
       atmo.uDay.value = night ? 0.0 : 1.0;
       atmo.uReflect.value = night ? 0.22 : 0.55;
@@ -3356,13 +3497,13 @@ export function createWorld(scene, { rng, roadKit }) {
         }
         front++;
         if (!night) continue;
-        const l = pool[slot++];
+        const l = lightPool[slot++];
         l.position.copy(em.p);
         l.color.setHex(em.color, THREE.SRGBColorSpace);
         l.intensity = em.power;
         l.distance = em.range;
       }
-      for (let i = slot; i < POOL; i++) pool[i].intensity = 0;
+      for (let i = slot; i < POOL; i++) lightPool[i].intensity = 0;
       // `front` is how many candidates were in shot BEFORE the POOL cap, which is the number
       // that decides whether POOL is big enough. Histogrammed over a real drive rather than
       // guessed; see verdicts/wave-s/perf-r2.md section 4.

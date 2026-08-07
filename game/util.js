@@ -1,5 +1,6 @@
 // util.js — shared deterministic helpers. Owned by nobody in particular; keep it tiny.
-// API: makeRng(seed)->()=>[0,1), rngRange/rngInt/rngPick, clamp, lerp, damp, smoothstep,
+// API: makeRng(seed)->()=>[0,1), cellHash(a,b,salt)->uint32, rngRange/rngInt/rngPick,
+//      clamp, lerp, damp, smoothstep,
 //      makeCanvas(w,h)->{c,ctx}, canvasTexture(canvas,opts), valueNoise2D(rng,size)->Float32Array.
 // Everything here MUST be deterministic: no Math.random, no Date.now.
 
@@ -14,6 +15,37 @@ export function makeRng(seed = 1) {
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
   };
 }
+/**
+ * Integer hash of a coordinate pair plus a domain salt -> unsigned 32-bit int.
+ *
+ * The point of it: `makeRng(cellHash(x, z, salt))` gives a per-cell / per-block / per-edge random
+ * stream whose seed is a pure function of WHERE the thing is, never of when it was visited. That is
+ * the whole determinism contract of a streaming world — a chunk built at boot and the same chunk
+ * built after a ten-minute drive must be byte-identical — so this must stay pure: no Math.random,
+ * no Date, no module-level mutable state.
+ *
+ * The finaliser is an xor-shift-multiply chain (the murmur/splitmix family). Its job is avalanche:
+ * adjacent cells differ in exactly one low bit of one input, and the output must differ in about
+ * half of all 32 bits. Verified over a 100x100 lattice — see the note in the wave-T verdict.
+ *
+ * NOTE ON THE NAME. `hashNum` at world.js:954 is a URL-hash-param reader (it parses
+ * `location.hash`) and is a completely unrelated thing. Do not overload that name, and do not
+ * shorten this one to `hash`.
+ *
+ * @param {number} a integer-ish (truncated with |0)
+ * @param {number} b integer-ish (truncated with |0)
+ * @param {number} [salt=0] domain separator, so the per-block and per-edge streams for the same
+ *   numeric pair do not coincide
+ * @returns {number} unsigned 32-bit integer
+ */
+export function cellHash(a, b, salt = 0) {
+  let h = Math.imul(a | 0, 0x27d4eb2d) ^ Math.imul(b | 0, 0x165667b1) ^ (salt | 0);
+  h = Math.imul(h ^ (h >>> 15), 0x2545f491);
+  h ^= h >>> 13;
+  h = Math.imul(h, 0x27d4eb2d);
+  return (h ^ (h >>> 16)) >>> 0;
+}
+
 export const rngRange = (rng, a, b) => a + (b - a) * rng();
 export const rngInt = (rng, a, b) => Math.floor(a + (b - a + 1) * rng());
 export const rngPick = (rng, arr) => arr[Math.min(arr.length - 1, Math.floor(rng() * arr.length))];
