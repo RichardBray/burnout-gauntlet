@@ -60,7 +60,15 @@ Opening a new wave block is the moment to do this, not later.
 
 ### WAVE T — LIVE. THE MAP. `TASKS.md` wave 4, task T3. Opened session 18, 2026-08-07.
 
-**EXACT NEXT ACTION: S3c ROUND 3 - FIX THE PROBE. The r2 critic FAILED r2**
+**EXACT NEXT ACTION: S3c ROUND 3 IS RUNNING** (gpt, `tools/BRIEF-S3C-R3.md`). If this says RUNNING
+and `verdicts/wave-t/generate-mesh-s3c.md` has no `## ROUND 3` section, that round was killed -
+re-run it from the same brief. **Round 3 fixes the PROBE, not the world**: split WORLD failures
+(authored corridor) from DRIVER excursions (driven trajectory) so they can never be confused, get
+the baseline to exit 0 by fixing the confound rather than by loosening a world assertion, author
+multi-edge routes crossing at least two junctions each, and add a **DRIVER poison that must produce
+zero WORLD failures** - that last one is what proves the confound is actually gone.
+
+Superseded: ~~S3c ROUND 3 - FIX THE PROBE.~~ **The r2 critic FAILED r2**
 (`verdicts/wave-t/generate-mesh-s3c-critic.md`, `## ROUND 2`). **`paths.city` IS FIXED AND PASSES** -
 face 124, edges `421,422,435,467,485,500,523,568,593,564,540,507,426`, all `arterial`/`street`, zero
 service, 82 controls, 998.889 m, largest gap 1.553 m, closure 0.000 m, 900/900 tarmac, and
