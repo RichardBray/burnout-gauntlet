@@ -1,3 +1,273 @@
+## SESSION 17 ARCHIVE — SESSION 16'S PLUMBING COMMIT AND THE WHOLE WAVE-S RECORD.
+
+Moved out of STATE.md when wave T (the map) opened, under the trim rule. Wave S is CLOSED: the
+playability bar it was built to chase is met on the handling half and the numbers that still bind
+are all in `tools/WAVE-S-PLAY-BRIEF.md`, with the per-piece evidence in `verdicts/wave-s/`.
+Nothing below is actionable. It exists so a claim can be audited by `grep`.
+
+### SESSION 16 — THE PIVOT, AND THE PLUMBING THAT MADE IT MEASURABLE. Commit `caa3e17`.
+
+**THE SEVENTEENTH BROKEN MEASUREMENT, AND IT WOULD HAVE INVALIDATED THE ENTIRE NEW BAR.**
+`main.js` set `renderer.setPixelRatio(min(devicePixelRatio, 2))`.
+This is a Retina machine where `devicePixelRatio` is 2, so a 1280x720 window rendered a **2560x1440**
+buffer - four times the pixels - and every frame-rate number taken from it would have been wrong by
+that factor.
+The pixel ratio is now `resScale`, default **1.0** and hard-capped at 1.0, so the drawing buffer is
+exactly `innerWidth x innerHeight` real pixels and the canvas CSS upscales it to fill the window.
+**Quote the render size and the pixel ratio beside every frame-time number, every time.**
+
+**THE MEASURED PRE-WAVE BASELINE.**
+Headless chromium, ANGLE/Metal, `--disable-frame-rate-limit`, viewport 1280x720,
+`deviceScaleFactor 1`, so `renderW 1280 / renderH 720 / pixelRatio 1`.
+Scene `dusk-highway-chase` on the playable path (`#nomenu=1`), throttle held 6 s, 146 frames:
+**p50 41.20 ms (24.3 fps), p90 77.80, p99 399.70, max 845.8, 82.9% of frames over 16.7 ms.**
+60 fps means p50 <= 16.7 ms, so the wave needs a **2.5x p50 speedup**, and the p99 is a **separate
+stall defect** that no p50 fix will touch.
+
+**WHAT THE PLUMBING COMMIT ADDED**, all in `main.js` unless stated:
+- `window.__frameStats` - a ring of **rAF-callback to rAF-callback wall-clock deltas** with
+  full-sort percentiles.
+  rAF-to-rAF is the honest quantity: it includes compositing and main-thread work outside our own
+  render call.
+  **A `performance.now()` bracket around `composer.render()` is NOT a substitute** - GPU work is
+  pipelined, so that bracket reads ~4 ms on a build that is visibly dropping frames, which is
+  permanent rule 3's failure mode for the fifth time.
+- `ctx.applyTimeOfDay('dawn'|'midday'|'dusk'|'night')` - both knobs existed but each needed three or
+  four collaborators poked in the right order, which is why nothing but the boot path had ever
+  changed them.
+  Order: `sky.apply`, `world.setNight`, `traffic.setNight`, `car.setLights`, `sky.applyBloom`,
+  `world.applyKeyFill`.
+- `ctx.applyWet(0..1)`, `ctx.setResScale(0.4..1)`, `ctx.renderSize()`, `ctx.setPaused()`.
+- `#nomenu=1` (skip the start menu, which is what a harness must use so a measurement never depends
+  on a click) and `#res=<n>`.
+- Module seams for `game/traffic.js` and `game/menu.js`, wired into `tick()` and the boot path
+  against a documented contract in each file's header, so the builders that fill them in never have
+  to touch `main.js`.
+  Traffic updates on the **scaled** dt so a crash's slow-mo dilates other cars too.
+- `progress.html` gained a PLAYABILITY section with PASS / PARTIAL / FAIL verdicts and per-piece
+  numbers, read out of a fenced `progress-metrics` block inside each verdict file so the numbers
+  cannot drift away from the evidence that produced them.
+  The visual pieces moved below it under a note saying they are closed.
+
+### WAVE S — LIVE. The playability wave. Pieces, each judged alone by a separate critic.
+
+| piece | owns | state after round 2 |
+|---|---|---|
+| `research` | `docs/BURNOUT-HANDLING.md` | **DONE.** Which numbers bind is settled; see below |
+| `fps-harness` | `tools/fps.mjs` | **DONE.** Instrument independently audited and sound |
+| `traffic` | `game/traffic.js` | **PASS** (round 2). Event stream is the wave's best result |
+| `menu` | `game/menu.js`, `game/music.js`, `game/audio.js` | **PASS** (round 2). Soundtrack, two volumes, scene picker |
+| `handling` | `game/physics.js`, `game/camera.js` | **PARTIAL.** Drift fixed; three items open, round 3 live |
+| `perf` | broadest, driven by the profile | **PARTIAL. THE 60 FPS BAR IS NOT MET.** Round 3 live |
+| driver | `game/main.js` (frozen to everyone else) | **DONE.** `da65fcf`, `68c093b` — see the joins below |
+
+**THE ONE NEW CONCURRENCY RULE, AND IT IS SPECIFIC TO THIS ERA.**
+Every measurement in this project's history could tolerate concurrent agents because it was
+deterministic pixels.
+**Frame time cannot.**
+A peer agent compiling shaders or rendering a screenshot steals GPU and CPU from the measurement
+window and there is no way to detect it after the fact.
+So: builders and critics that do not measure frame time may run concurrently and must label any
+frame-time number they take as a smoke test; **every agent that reports a frame-time RESULT runs
+ALONE and must say so in its verdict.**
+
+### WAVE S RESULTS — rounds 1, 2 and the driver's joins. Session 17.
+
+Round 1 shipped six pieces, each judged by a separate critic that PLAYED it.
+Round 2 was three concurrent builders on a hard file partition plus three fresh critics plus a
+repair-and-verify pass on the one piece that failed.
+The full evidence is in `verdicts/wave-s/`; only what is still live is written here.
+
+**`research`** — `docs/BURNOUT-HANDLING.md`.
+Unusually honest: it logs four failed instruments and prints `NOT FOUND` seven times rather than
+interpolating, and round 1's handling critic re-read it and published which of its numbers may be
+scored HIT/MISS and which are directional only.
+**Score against: boost bar exactly 8.0 s, full-bar-only gate, ceiling ratio ~1.00, 0-100 mph
+3.45-3.48 s, MaxSpeed 177-201 mph, straight-line yaw < 0.2 deg/s, brake-tap-or-e-brake entry with no
+drift button.
+Do NOT score against: yaw 28-38 deg/s (player-used, speed bracketed not measured — a sanity band
+only), the yaw curve's values (shape only), drift scrub (`NOT FOUND`, any band is self-anchored).**
+
+**`fps-harness`** — `tools/fps.mjs`, five drive scenarios, resolution sweep, interleaved A/B
+subsystem attribution.
+Round 1's perf critic audited the instrument the hard way and it passed: `window.__frameStats` and an
+independently installed second rAF ring agree to every digit, which is the expected result and the
+point.
+
+**`menu` + `menu-music`** — **PASS.**
+Start and Esc pause menus, time of day, wet, resolution scale with a live buffer readout, the full
+control list, a scene picker with no reload, the soundtrack, and separate MUSIC and SFX sliders.
+The critic patched `AudioNode.prototype.connect` before the page built a single node, enumerated
+every node that reaches a destination (**exactly two, on two different AudioContexts, zero before
+the gesture**) and hung its own analyser off each: music **-16.52 dBFS RMS**, SFX master **-19.08**,
+cross-checked against an MP3 it decoded itself.
+**The routing rule is settled by kill-control in both directions: muting SFX moves the music 0.14 dB
+while collapsing itself 69 dB; muting music moves SFX 1.15 dB while collapsing itself 74 dB; and
+`audio.stop()`, which CLOSES audio.js's context, leaves the music playing at -16.23 dBFS.**
+D1-D7 all closed. One new defect the critic found and the driver fixed at `68c093b`: a swallowed
+keyup latched `heldNow` forever and was re-synthesised on every later resume (steer +0.99999857 with
+the keyboard idle).
+
+**`traffic` + `traffic-r2`** — **PASS.**
+`laneTraffic()`'s 1255 standing cars are gone; `POOL` is **30**, decided on measured
+corridor-ahead and events-per-km evidence, with `setPool` so the next agent can re-derive it in one
+boot.
+All four round-1 defects closed at the mechanism: parked in a junction box the phase flips 7 times
+in 22.8 s with **0** cars frozen (was 0 flips, 15 frozen); closest VISIBLE highway spawn 240.8 m
+with 0 inside 240 m (was 62.9 m with 26 inside 120 m); visible line-end retires 0 in 141 s (was 3 in
+40 s); a wrong-way hero is shied 3.000 m (was 0.000 and driven through).
+Overlap **0.000 m over ~340k vehicle-frames**.
+The builder also found an unreported bug: the oncoming shy had no `latSign`, so on three of four
+(axis, dir) combinations it steered cars TOWARD the hero.
+**`traffic.drainEvents()` is the strongest single result of the wave**: every emitted clearance
+equals the clearance the critic computed itself from the published pose, 0 of 11 `oncoming` tags
+wrong, 0 of 37 near misses mistagged, 6.85-7.20 events/km of highway, and **zero** on all three
+attempts to make it a timer or an odometer.
+
+**`handling` + `handling-r2` + repair** — **PARTIAL, and it is the piece still open.**
+Round 1 passed on numbers and failed on feel; its critic's section 6 ranked the ten things that made
+the car least fun and that list drove everything since.
+Now measured live through the real key listeners: **the three drift orderings all hold** — 2.22 s
+hands-off / 2.72 s after a tapped countersteer / 0.80 s under a held one, against round 1's
+0.63 / 0.61 / 0.68 where holding opposite lock kept you sideways LONGER than doing nothing.
+Swapping `rHold` back for `rTarget` on one line collapses the hold 2.35 -> 0.59 s, so the mechanism
+is single-point and is the one claimed.
+The e-brake rotates the car, is monotone in hold time at 80/130/200/250 km/h and never accelerates
+you; the wall now tiers 77/53/20/1% of speed kept at 10/20/45/90 deg from the face; the passive boost
+refill is verified gone (0.0000 over 20 s of held W); body roll 3.31 -> 6.9 deg; the sign invariant
+holds in both directions from world matrices.
+The chain drift went 6.2 deg / 0% drifting to **17.7 deg / 57%**, and forcing `rearBroke` false puts
+every beat back to 6.2 deg / 0%.
+**Still open at the end of round 2, and this is round 3's brief:** `driftFlick` supplies 7.5 of the
+chain's 16.2 deg by ADDING to `state.vLat` (free energy — it changes ground speed, which is now the
+speedometer), brake+lock sweeps 2.8 deg of heading in 400 ms against throttle+lock's 11.9, and there
+is **still no power-on grip edge** (250 km/h held lock: dead-flat 28-29 deg/s, peak slip 4.9 deg,
+0% drifting) — third round on that one, and `gripUse` is NOT the cause, refuted by kill-control and
+reverted 0.95 -> 0.85.
+
+**`perf` + `perf-r2`** — **PARTIAL. THE 60 FPS BAR IS NOT MET.**
+Round 1 took the highway 46.5 -> 17.2 ms mean.
+Round 2 found the biggest thing nobody had looked for: **`road.js`'s planar reflection is a full
+mirrored re-render, and on a wet frame it ran FOUR times** — once for the frame, once inside SSAO's
+prepass, once inside boost's hero-mask depth pass and once per cube-probe face — 22.5 ms of a 48 ms
+frame, 18.3 ms of it into buffers nothing sampled.
+Night-wet p50 **46.70 -> 32.70 ms**, p99 86.90 -> 52.90, boost p99 44.50 -> 32.80, all independently
+reproduced by a critic that ran alone on three clean worktrees and read `gl.drawingBufferWidth` off
+the driver at the end of all 41 windows.
+**The honest state of the bar, 1280x720 pixelRatio 1 dpr 1 resScale 1, as p50 / delivered fps /
+share of frames over 16.7 ms: corner 13.00 / 79.5 / 3.5% PASSES; cruise 16.10 / 55.2 / 33.5%;
+city 21.80 / 45; boost 22.10 / 45; night-wet 32.70 / 30.**
+**`p50 <= 16.7 ms` IS NOT `60 fps sustained` and must not be reported as it** — cruise passes on p50
+with a third of its frames long. Report p50 AND delivered fps AND share-over-16.7, always.
+Two of round 2's mechanisms were overturned by runtime kill-control and **must not be re-claimed**:
+the frustum-first point-light fill is worth **0.00 ms** (an unused slot is still visible and still in
+`NUM_POINT_LIGHTS`; `POOL` is the entire win, at 2.2 ms per light), and reflection gate 2 is worth
+**0.00 ms** on p50/p99 (it cuts max only, 72-86 -> 54).
+And round 2 introduced a live regression: **a deterministic 174-300 ms hitch on the third frame after
+`__ready` in 4 of 4 cold boots**, reproduced by `tools/_perfcritic-r2-first.mjs`.
+
+**THE DRIVER'S JOINS — `68c093b`, and `da65fcf` before it.**
+`main.js` was frozen for all three round-2 builders and taken by the session driver, because it is
+the one file all of them would otherwise have touched.
+What landed there, each routed by a builder that was forbidden to make it:
+- `physics.setEventSource(() => traffic.drainEvents())` — **this IS the boost economy.**
+  Without it, drift was the only earn path in the shipped game.
+  Measured live: 6.95 events/km, and 6 near misses take an empty bar to 0.2525, so a full bar costs
+  about 24 events.
+- `const w = physics.drainWreck(); if (w) crash.trigger(w)` — `state.crashed` was set by nothing at
+  all, so `crash.js`'s whole state machine was unreachable from driving.
+- `carRoot.rotation.y = s.yaw`, dropping `- s.slip * 0.22`.
+  That term predates physics having a real lateral velocity and was subtracting the slide from the
+  thing that shows the slide: it spent 12.6 of the 18.3 deg the camera-sign fix bought and had the
+  WRONG SIGN at peak slip.
+  Regression gate: `slip` is at most 0.00407 in all seven shot presets, so it is worth under 0.05 deg
+  there and `carRoot.rotation.y` is identical to five decimals in every one.
+- The HUD and engine audio read `s.ground` (|v|), not `s.speed`: they read **52% low** at 61 deg of
+  slip, i.e. exactly when the player is doing something interesting.
+- `frameStats.push` no longer saturates `over16_7pct` past 4096 frames.
+
+### ROUND 3 — `handling` PASSES. The feel half of the bar is MET.
+
+**`handling` — PASS**, `b72de30`.
+Three things were open and all three are settled, each at the mechanism, every headline number
+re-derived by a fresh critic driving the live page through the real key listeners.
+
+- **The flick no longer manufactures energy.** `driftFlick` added to `state.vLat`; it now ROTATES
+  the body-frame velocity vector, so `hypot(speed, vLat)` is unchanged **algebraically** rather than
+  by tuning.
+  Metered at the line over the published six-beat chain: **6.2173 m/s of ground speed created ->
+  0.0000**.
+  That mattered beyond tidiness because `da65fcf` pointed the speedometer and the engine note at
+  `state.ground`, so the manufactured speed was being displayed and heard.
+  Cost: 16.2 -> 16.1 deg of chain depth.
+- **BRAKE + LOCK WAS ROTATING THE CAR THE WRONG WAY, and two previous instruments could not see it
+  because both measured heading as `|yaw - yaw0|`** — which scores a car spinning away from the
+  corner as a car turning into it.
+  Signed and live from dead straight: **-8.1 deg at 200 km/h and -14.9 at 250**, at up to 96 deg/s
+  the wrong way, with a peak correct-way yaw rate of 1 deg/s.
+  Now +16.3 / +11.0 / +6.1 / +4.9 deg at 100/130/200/250 and **worst wrong-way yaw 0 at every
+  speed**; brake+lock reaches parity with throttle+lock at 130 km/h.
+  Two causes, each load-bearing under its own kill-control and neither redundant: the drift reference
+  was built on `rHold` (the rate that holds the angle the car has NOW, which is zero at entry) so it
+  asked for 8 deg/s while `rTarget` asked for 17-58; and `entering` left the tyre moment uncancelled
+  on a comment's claim that it is pro-rotation, when it measures **-908 deg/s^2 at 250 km/h**, flatly
+  anti-rotation.
+  All six chain beats now clear the critic's fixed 10 deg bar for the first time.
+- **THE POWER-ON GRIP EDGE IS CLOSED AS A DISCLOSED STRUCTURAL LIMIT, and that is the correct
+  outcome, not a miss.**
+  Third round on it, eleven kill-controls, every one inert — including the real yaw-rate servo
+  (`stabilityAssist` + `spinDamp`'s ceiling, a different object from the `steerServo` round 2
+  correctly refuted).
+  The measured reason: **throttle makes the rear axle MORE capable, not less.**
+  Drive spends 29-34% of the rear friction circle while the load transfer it causes adds 13-16% of
+  vertical load, so rear demand/capacity is a flat **0.78 on throttle against 0.86 coasting**.
+  A second ceiling sits behind it: `delta` is an inverse-model output solving for the angle that
+  achieves `rTarget`, so the player cannot ask the front tyre for more slip than the grip-limited
+  rate needs.
+  **The builder refused to ship an unsourced power-yaw term, on the grounds that it would have been
+  `driftFlick` again in a new place. That is the judgement this loop is trying to produce.**
+  Reopening this as a constant hunt is explicitly the wrong move: it and the flick are ONE piece of
+  model work (track width, lateral load transfer, a driven-axle tractive split).
+
+**`perf` — PARTIAL**, `197d70a` / `c2b32bc`.
+Round 2's cold-boot regression is **closed, 0 of 11 boots** against round 2's own unmodified
+instrument (it hitched 9 of 9 before).
+The critic overturned one of the two nominated causes: it was `audio.start()` building the whole
+graph on the first keydown, with a 162-308 ms main-thread longtask sitting exactly on it, and
+stubbing `audio.start` alone kills it 4 of 4.
+Every headline reproduced on the critic's own harness to 0.6 ms on 5 of 5, all three shipped
+mechanisms survived runtime kill-control, and no scene got worse.
+**The HUD was rendering a 2560x1440 backing store over a 1280x720 frame, and that Retina tax was the
+entire 4 ms dpr-2 penalty** — at dpr 2, `corner` passes the bar for the first time.
+Night's 4096 shadow map is 1024 and night-wet went **33.30 -> 27.00 ms**.
+
+**THE BAR, at 1280x720 ratio 1 dpr 1 resScale 1, three runs, as p50 / delivered fps / % over
+16.7 ms:**
+
+| scenario | after round 3 | verdict |
+|---|---|---|
+| corner | 12.90 / 81.2 / 3.1% | **PASSES** |
+| cruise | 15.90 / 60.0 / 23.3% | inside on p50, NOT sustained |
+| city | 21.20 / 44.9 / 93.3% | miss |
+| boost | 23.20 / 43.0 / 96.8% | miss |
+| night-wet | 27.00 / 36.6 / 99.7% | miss |
+
+**A NEW PERMANENT LESSON, and it belongs beside permanent rule 3.**
+Round 2's handling builder retracted two of its own constants after its critic's kill-controls
+refuted them, and round 2's traffic builder rejected its own first fix on measurement (bounding the
+junction latch at 3.2 s broke a hard-won 0.000 m overlap invariant, caught with the critic's own
+instrument BEFORE shipping).
+Both are the behaviour this loop is for.
+**A builder that reverts its own unmeasured change is producing the most valuable output available
+here.**
+Round 3 extended it: its handling builder **refused to ship an unsourced term** to hit a target it
+could not reach honestly, and closed the item as a disclosed structural limit with eleven
+kill-controls behind the disclosure.
+And round 3's own critic caught the shipped comment quoting a kill-control from a variant that was
+never shipped — **rule 5 cuts both ways: a comment quoting the wrong measurement is the same defect
+as a comment claiming a change the code does not make.**
+
+
 ## SESSION 16 ARCHIVE — THE ENTIRE VISUAL-WAVE RECORD, waves P, Q and R.
 
 Moved out of STATE.md when the project PIVOTED away from visual work. STATE.md had reached 958
