@@ -118,14 +118,14 @@ function makePath(points, closed) {
  * Both curves must lie ON the road network, because a scene spawning on dirt fires T4's off-road
  * penalty on the first frame of its own screenshot.
  *
- * THE CITY LOOP IS A PLANAR FACE, NOT A SEARCHED CYCLE. The demolition table asks for "the
- * largest-area cycle in the arterial-union-street subgraph that passes through downtown", and a
- * general largest-area cycle search is exponential. It is also unnecessary: `blocks.js` already
- * walks every planar FACE of the graph, and a face's boundary IS a closed cycle over road
- * centrelines by construction. So the largest-area downtown face is the largest-area downtown
- * cycle, already computed, for free, and it cannot leave the road network. Measured: face 90,
- * 15.3 ha, 55 ring vertices, 1989 m perimeter, and all 55 vertices AND all 55 edge midpoints
- * answer `tarmac`. The grid's rounded rectangle it replaces is ~2500 m, so the scale matches.
+ * THE CITY LOOP IS A CLASS-PURE PLANAR FACE, NOT A SEARCHED CYCLE. `blocks.js` already walks every
+ * planar FACE of the graph, and a face's boundary IS a closed cycle over road centrelines by
+ * construction. But district alone is not enough: round 1 selected downtown face 90, whose ring
+ * also contains service edges 323 and 369. Each face segment is therefore joined back to the
+ * source edge segment that produced it, and only faces whose complete boundary is arterial/street
+ * survive. The largest downtown survivor is face 124: 3.86 ha, 30 ring vertices and 997.887 m of
+ * arterial/street boundary. It stays within Downtown; broader district coverage is not worth
+ * admitting another road class or joining disconnected points.
  *
  * THE RING IS DENSIFIED BEFORE IT IS SMOOTHED. `makePath` runs a uniform Catmull-Rom of tension
  * 0.5 through its control points, which OVERSHOOTS at a sharp corner between two long segments -
@@ -142,12 +142,30 @@ function makePath(points, closed) {
  */
 const PATH_STEP = 15.0;   // m; max control-point spacing fed to makePath's Catmull-Rom
 export function graphPaths(plan, faces) {
-  // ---- city: the largest-area downtown face's ring --------------------------------------------
-  const dt = faces.filter((f) => f.district === 'downtown');
+  // ---- city: the largest-area class-pure downtown face's ring ---------------------------------
+  // Face polygons are assembled from these exact source segments by blocks.js. A canonical key
+  // recovers the owning graph edge without a nearest-edge guess; an unmatched (for example,
+  // crossing-split) segment is conservatively rejected rather than silently treated as allowed.
+  const pointKey = (p) => `${p.x ?? p[0]},${p.z ?? p[1]}`;
+  const segmentKey = (a, b) => {
+    const ka = pointKey(a), kb = pointKey(b);
+    return ka < kb ? `${ka}|${kb}` : `${kb}|${ka}`;
+  };
+  const edgeBySegment = new Map();
+  for (const e of plan.edges) for (let i = 1; i < e.vs.length; i++) {
+    edgeBySegment.set(segmentKey(e.vs[i - 1], e.vs[i]), e);
+  }
+  const allowed = new Set(['arterial', 'street']);
+  const faceEdges = (f) => f.polygon.map((p, i) => edgeBySegment.get(
+    segmentKey(p, f.polygon[(i + 1) % f.polygon.length]),
+  ));
+  const dt = faces.map((f) => ({ f, edges: faceEdges(f) }))
+    .filter(({ f, edges }) => f.district === 'downtown'
+      && edges.every((e) => e && allowed.has(e.cls)));
   // Tie-break on id so the choice cannot depend on face order.
-  dt.sort((a, b) => (b.area - a.area) || (a.id - b.id));
-  if (!dt.length) throw new Error('graphPaths: no downtown face');
-  const ring = dt[0].polygon;
+  dt.sort((a, b) => (b.f.area - a.f.area) || (a.f.id - b.f.id));
+  if (!dt.length) throw new Error('graphPaths: no arterial/street-only downtown face');
+  const chosen = dt[0], ring = chosen.f.polygon;
   const city = [];
   for (let i = 0; i < ring.length; i++) {
     const a = ring[i], b = ring[(i + 1) % ring.length];
@@ -191,11 +209,25 @@ export function graphPaths(plan, faces) {
   }
   highway.push(hw[hw.length - 1]);
 
+  const cityEdgeIds = [...new Set(chosen.edges.map((e) => e.id))];
+  const cityBoundaryByDistrict = {};
+  let cityBoundaryLen = 0;
+  for (let i = 0; i < ring.length; i++) {
+    const a = ring[i], b = ring[(i + 1) % ring.length];
+    const len = Math.hypot(b[0] - a[0], b[1] - a[1]);
+    const district = chosen.f.district;
+    cityBoundaryLen += len;
+    cityBoundaryByDistrict[district] = (cityBoundaryByDistrict[district] || 0) + len;
+  }
   return {
     city: makePath(city, true),
     highway: makePath(highway, false),
-    stats: { faceId: dt[0].id, faceArea: dt[0].area, cityPts: city.length,
-      hwEdges: bestSeq.length, hwLen: bestLen, hwPts: highway.length },
+    stats: {
+      faceId: chosen.f.id, faceArea: chosen.f.area, cityPts: city.length,
+      cityEdgeIds, cityClasses: [...new Set(chosen.edges.map((e) => e.cls))],
+      cityBoundaryLen, cityBoundaryByDistrict,
+      hwEdges: bestSeq.length, hwLen: bestLen, hwPts: highway.length,
+    },
   };
 }
 

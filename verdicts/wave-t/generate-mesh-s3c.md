@@ -150,3 +150,99 @@ verified byte-identical (md5 `7e22417c60aa08a0c5feb7cf878ba99b`) to my own saved
 committing**, so this build is uncontaminated, but that was luck: two writers on `world.js` would
 have silently destroyed one side. **This commit deliberately contains only my own files.** The
 foreign files are left in the working tree, uncommitted and unverified, for the user to judge.
+
+## ROUND 2
+
+Round 2 fixes only the two critic blockers: the city circuit is arterial/street-only, and
+`tools/_s3c-drive.mjs` is now the required built-collision probe. Round-1's re-verified constant
+table is untouched.
+
+### Literals introduced or changed
+
+| item | BEFORE | AFTER literal and file:line |
+|---|---|---|
+| city allowed classes | absent; all Downtown faces eligible | `new Set(['arterial', 'street'])`, `game/world.js:158` |
+| chunk plane | absent | `const CHUNK = 200`, `tools/_s3c-drive.mjs:21` |
+| collision corridor radius | absent | `const HERO_RADIUS = 1.0`, `tools/_s3c-drive.mjs:22` |
+| physics call step | absent | `const FIXED_DT = 1 / 60`, `tools/_s3c-drive.mjs:23`; physics internally uses its real 1/240 substep |
+| route start speed | absent | `const START_SPEED = 15`, `tools/_s3c-drive.mjs:24` |
+| follower lookahead | absent | `const LOOKAHEAD = 20`, `tools/_s3c-drive.mjs:25` |
+| route-end radius | absent | `const END_RADIUS = 10`, `tools/_s3c-drive.mjs:26` |
+| boundary crossing tolerance | absent | `const BOUNDARY_TOLERANCE = 18`, `tools/_s3c-drive.mjs:27` |
+| stuck threshold | absent | `const STUCK_SPEED = 2`, `const STUCK_SECONDS = 2`, `tools/_s3c-drive.mjs:28-29` |
+| authored routes | absent | Downtown `[595,447]`, Harbor `[741,567]`, Palm Bay `[94,71]`, Silver Lake `[100,77]`, Mountain `[339,253]`, `tools/_s3c-drive.mjs:33-39` |
+
+`PATH_STEP = 15.0` at `game/world.js:143`, grid paths at `game/world.js:4235-4236`,
+`POOL = 24` at `game/traffic.js:89`, and `NPC_DENSITY = 0.16` at `game/world.js:3343`
+are unchanged. Round-2 adds zero `new THREE.*Material` expressions and zero materials.
+
+### Class-pure city circuit and path measurements
+
+The old selector admitted any face whose majority district was Downtown and chose face 90. The new
+selector joins every face segment to its source graph edge, rejects missing/disallowed segments,
+then chooses the largest remaining Downtown face with the same deterministic area/id ordering.
+
+Chosen face **124**: edge ids
+`421,422,435,467,485,500,523,568,593,564,540,507,426`; classes exactly
+`arterial,street`; source boundary **997.887 m**. Boundary by district: Downtown **997.887 m**;
+Harbor/Palm Bay/Silver Lake/Mountain **0.000 m**. A broader pure closed circuit was not available;
+purity, closure and continuity take precedence as the round-2 brief requires.
+
+Independent pure-Node reconstruction of Three's Catmull-Rom/arclength sampling from
+`game/map/*.js`: city **82 controls, 900/900 tarmac, 998.889 m curve, 1.553 m largest consecutive
+sample gap, 0.000 m endpoint closure**. Unchanged highway: **94 controls, 900/900 tarmac,
+1191.265 m, 1.811 m largest gap**.
+
+### Seven revised spawn points
+
+Block clearance is against every `world.blocks` AABB expanded by the 1.0 m hero radius.
+
+| scene | x,z m | surface / nearest edge | paved margin | expanded-block overlaps / clearance |
+|---|---:|---|---:|---:|
+| dusk-highway-chase | 760.85,-470.76 | tarmac / motorway 184 | 15.000 m | 0 / 17.761 m |
+| boost-blur | 855.79,-463.55 | tarmac / motorway 199 | 15.000 m | 0 / 18.547 m |
+| crash-cam | 1070.37,75.16 | tarmac / street 435 | 10.791 m | 0 / 10.125 m |
+| wet-night-asphalt | 994.77,333.80 | tarmac / street 568 | 9.965 m | 0 / 13.775 m |
+| daytime-downtown | 925.52,213.98 | tarmac / street 507 | 10.000 m | 0 / 13.058 m |
+| car-paint-closeup | 431.04,-400.76 | tarmac / motorway 251 | 15.000 m | 0 / 16.395 m |
+| hud-overlay | 1053.05,193.73 | tarmac / street 500 | 9.658 m | 0 / 17.947 m |
+
+Result: **7/7 tarmac, 0/7 in an expanded block**. `crash-cam` moved off service edge 323.
+
+### Built-collision drive probe
+
+`tools/_s3c-drive.mjs` boots the real `#map=graph` WebGL world, pauses the live loop, disables only
+traffic/parked-car contacts, and drives real physics with `followPath` and `step(1/60)`. It authors
+routes from graph edge ids, validates district/orientation/chain connectivity, enumerates each
+route's 200 m plane intersections, and exits non-zero for end/stuck/bounds/surface/block-corridor/
+boundary failures. It never writes the car position after the initial `reset`; there is no road snap
+or teleport.
+
+Pure-data route preflight: Downtown edge 595 **302.014 m / 2 boundaries / 76/76 tarmac**; Harbor
+741 **287.697 / 2 / 75/75**; Palm Bay 94 **294.619 / 2 / 77/77**; Silver Lake 100
+**398.397 / 2 / 104/104**; Mountain 339 **337.008 / 2 / 87/87**. Total **1619.735 m,
+10 boundaries, 0 source-corridor intersections with expanded built blocks**.
+
+**Probe written, not executed, blocked by listen EPERM.** Baseline, `--poison=wall`, and
+`--poison=sever` each failed before Chromium launch at `listen EPERM 127.0.0.1`; their status 1 is
+an environment failure, not claimed as a probe-red result. The orchestrator must run all three.
+
+The wall poison appends a 14 x 14 m AABB across Downtown's authored route; the sever poison appends
+edge 598 at the wrong node after edge 595. Pure-data controls made the common predicates red:
+the wall intersects the 1.0 m route corridor and the sever fails chain continuity. Further controls:
+reselecting old face 90 restores **161.305 m** of disallowed boundary on service edges 323/369;
+substituting block 0 centre `[-982,-1298]` makes path tarmac **899/900** and spawn overlap **1**;
+shifting one sample by 500 m raises max gap from **1.553 m to 500.553 m**.
+
+### Honest limitation and remaining runtime checks
+
+This probe asserts on `world.blocks` collision and `surfaceAt` continuity along authored graph
+routes; it does **NOT** assert ribbon/junction mesh contact, because physics has no such signal
+(`game/physics.js:1973` forces `pos.y = 0`). That gap is real, named, and belongs to a later piece.
+The baseline drive, wall poison, sever poison, both-mode boot/console, and grid pixels remain
+unexecuted solely because localhost binding is denied. The grid path literals are unchanged and the
+new product selection executes only behind `GRAPH` at `game/world.js:1834-1837`; no pixel pass is
+claimed.
+
+`node --check game/world.js`, `node --check tools/_s3c-drive.mjs`, and `bash tools/lint.sh` all exit
+0 (`lint ok`). No frame-time number was taken or reported.
