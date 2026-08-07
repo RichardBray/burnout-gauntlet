@@ -313,22 +313,6 @@ function installPcss() {
     `${src.slice(0, at)}${PCSS_DISK}${sig}${PCSS_BODY}${src.slice(end)}`;
 }
 
-function roundedRect(hx, hz, r, seg = 10) {
-  const pts = [];
-  const arcs = [
-    { cx: hx - r, cz: hz - r, a0: 0, a1: Math.PI / 2 },
-    { cx: -(hx - r), cz: hz - r, a0: Math.PI / 2, a1: Math.PI },
-    { cx: -(hx - r), cz: -(hz - r), a0: Math.PI, a1: 1.5 * Math.PI },
-    { cx: hx - r, cz: -(hz - r), a0: 1.5 * Math.PI, a1: 2 * Math.PI },
-  ];
-  for (const a of arcs) {
-    for (let i = 0; i <= seg; i++) {
-      const t = a.a0 + (a.a1 - a.a0) * (i / seg);
-      pts.push([a.cx + Math.cos(t) * r, a.cz + Math.sin(t) * r]);
-    }
-  }
-  return pts;
-}
 
 // ---------------------------------------------------------------------------
 // canvas helpers
@@ -1188,12 +1172,10 @@ function patchAtmo(mat, atmo, reflect = 0.0) {
 // `rng` is still passed by main.js and is deliberately NOT destructured: nothing in createWorld
 // reads it any more. Deleting the argument at the call site is S5 cleanup.
 export function createWorld(scene, { roadKit, mapDoc = null }) {
-  // `#map=graph`. When a parsed paradise.json is handed in, the city comes from the road graph
-  // instead of LAYOUT's 1.1 km grid. S3a builds roads, junctions, kerbs and pavement only, so
-  // every grid-driven population is emptied rather than branched around: `G` and `blocks` are the
-  // two arrays the whole content build iterates, and emptying `G` takes out the grid ribbons, the
-  // lamps, the signals, the ranks and the road wear in one move. The default path is untouched
-  // and `#map=grid` stays pixel-stable.
+  // S3d: `mapDoc` is now ALWAYS supplied - `main.js` fetches paradise.json unless the URL says
+  // `#map=grid`, and the grid populations this flag used to switch between have been deleted, not
+  // branched around. What survives of `GRAPH` is a handful of reads that S5 removes along with the
+  // flag itself; a null `mapDoc` no longer produces a city, it produces an empty one.
   const GRAPH = !!mapDoc;
   installPcss();
   const group = new THREE.Group();
@@ -1649,19 +1631,10 @@ export function createWorld(scene, { roadKit, mapDoc = null }) {
   let roadStats = null;
   const roads = new THREE.Group();
   group.add(roads);
-  const G = GRAPH ? [] : LAYOUT.grid;
-  const EX = LAYOUT.extent, HALF = LAYOUT.roadW / 2;
-
-  for (const z of G) roads.add(roadKit.buildRibbon([[-EX, z], [EX, z]], { cls: 'city' }));
-  for (const x of visitOrder(G)) {
-    const stops = [-EX, ...G, EX];
-    for (let i = 0; i < stops.length - 1; i++) {
-      const z0 = stops[i] + (G.includes(stops[i]) ? HALF + 1 : 0);
-      const z1 = stops[i + 1] - (G.includes(stops[i + 1]) ? HALF + 1 : 0);
-      if (z1 - z0 < 6) continue;
-      roads.add(roadKit.buildRibbon([[x, z0], [x, z1]], { cls: 'city', y: 0.028 }));
-    }
-  }
+  // S3d: `LAYOUT.grid`'s twelve numbers no longer drive anything in this file. `HALF` survives as
+  // the default road half-width for the handful of emitters that still take one as an optional
+  // argument; `LAYOUT.extent` and the grid ribbon loops are gone.
+  const HALF = LAYOUT.roadW / 2;
   // ---- THE GRAPH ROAD NETWORK (#map=graph) ------------------------------------------------
   //
   // Everything geometric is decided by game/map/ribbons.js, which is pure arithmetic and is
@@ -1865,39 +1838,14 @@ export function createWorld(scene, { roadKit, mapDoc = null }) {
   // it the build order is `blocks.js`'s face-traversal order, and the order-independence test in
   // section 4 below is the one that caught 287 invisible lamp panels in S2.
   const blocks = [];
-  let blockIndex = null;
-  if (GRAPH) {
-    blockIndex = graphBuilt.index;
-    for (const b of graphBuilt.blocks) blocks.push(b);
-    blocks.sort((p, q) => (p.cx - q.cx) || (p.cz - q.cz));
-  }
-  for (let i = 0; i < G.length - 1; i++) {
-    for (let j = 0; j < G.length - 1; j++) {
-      const cx = (G[i] + G[i + 1]) / 2, cz = (G[j] + G[j + 1]) / 2;
-      const w = (G[i + 1] - G[i]) - LAYOUT.roadW - 6;
-      const d = (G[j + 1] - G[j]) - LAYOUT.roadW - 6;
-      // w/d is the paved block (kerb to kerb); bw/bd is the building line, held
-      // back by walkW so there is real pavement for props, awnings and shadows.
-      blocks.push({ cx, cz, w, d, bw: w - LAYOUT.walkW * 2, bd: d - LAYOUT.walkW * 2 });
-
-      const walk = new THREE.Mesh(new THREE.BoxGeometry(w, 0.22, d), kerbMat);
-      walk.position.set(cx, 0.11, cz);
-      walk.receiveShadow = true;
-      // The kerb is the only 22 cm step in the frame and it runs the full length of
-      // every block, so it is the cheapest possible hard shadow: one thin dark line
-      // in the gutter that grounds the pavement onto the road instead of letting the
-      // two abut as one flat grey. Safe to self-shadow — the slab is 22 cm thick,
-      // six times the sun's normalBias, so its own top face never punches through.
-      walk.castShadow = true;
-      group.add(walk);
-      const innerM = new THREE.Mesh(new THREE.BoxGeometry(w - 1.6, 0.24, d - 1.6), walkMat);
-      innerM.position.set(cx, 0.12, cz);
-      innerM.receiveShadow = true;
-      // deliberately NOT a caster: it clears `walk` by 2 cm, so all it could ever
-      // contribute is a sub-centimetre acne fringe on the surface it sits flush with.
-      group.add(innerM);
-    }
-  }
+  // S3d: the grid's 6x6 block construction is DELETED, and with it the two unshared BoxGeometry
+  // meshes per block - 1736 of them at the graph's block count - that used to be the kerb and the
+  // pavement. `blocks` now comes only from `createBlocks(doc)`, and the kerb and pavement are the
+  // two batched chunk-owned geometries per cell that `game/map/pavement.js` extrudes from the face
+  // polygons. `kerbMat` and `walkMat` are still theirs; they did not become unused.
+  const blockIndex = graphBuilt.index;
+  for (const b of graphBuilt.blocks) blocks.push(b);
+  blocks.sort((p, q) => (p.cx - q.cx) || (p.cz - q.cz));
 
   // ---- buildings ------------------------------------------------------
   const styles = ['glass', 'office', 'brick', 'concrete'];
@@ -2872,14 +2820,6 @@ export function createWorld(scene, { roadKit, mapDoc = null }) {
       }
     }
   }
-  for (const z of visitOrder(G)) {
-    for (const x of visitOrder(G)) {
-        const rj = atRng(x, z, S_NODE);
-      // masts land on the pavement (|offset| = 13 m) either side of a 20 m road
-      if (rj() < 0.5) gantry(sink, rj, x - 32, z, 0, 1, -Math.PI / 2, 26, 9.6, rngInt(rj, 2, 3));
-      if (rj() < 0.5) gantry(sink, rj, x, z - 32, 1, 0, Math.PI, 26, 9.6, rngInt(rj, 2, 3));
-    }
-  }
 
   // ---- neon: tubes, bulb strings, spill ------------------------------------
   const neons = [];
@@ -3019,12 +2959,6 @@ export function createWorld(scene, { roadKit, mapDoc = null }) {
   }
   // streetLight() now sets and restores the rotation order itself, so there is nothing for the
   // caller to arrange and nothing for a future caller to forget.
-  for (const z of visitOrder(G)) {
-    for (let x = -EX + 30; x <= EX; x += 62) {
-      streetLight(sink, x, z + HALF + 2.4, Math.PI);
-      streetLight(sink, x + 31, z - HALF - 2.4, 0);
-    }
-  }
 
   // ---- traffic lights ------------------------------------------------------
   const tlPole = pool('tlPole', new THREE.CylinderGeometry(0.13, 0.18, 1, 8), poleMat, { recv: false });
@@ -3052,12 +2986,6 @@ export function createWorld(scene, { roadKit, mapDoc = null }) {
     signalLights.push(new THREE.Vector3(hx, 6.05, hz));
     shadowAt(x, z, 0.24, 1.8, 0.9);
     poles.push({ x, z, rotY: ry, kind: 'signal', hit: false, hide: hidePoles(used) });
-  }
-  for (const x of visitOrder(G)) {
-    for (const z of visitOrder(G)) {
-      trafficLight(sink, x - HALF - 2.6, z + HALF + 2.6, -Math.PI / 2);
-      trafficLight(sink, x + HALF + 2.6, z - HALF - 2.6, Math.PI / 2);
-    }
   }
 
   // ---- overhead wires: DELETED, T2, 2026-08-06 ------------------------------
@@ -3479,17 +3407,6 @@ export function createWorld(scene, { roadKit, mapDoc = null }) {
   }
 
   parkPop = 'rank';
-  for (let j = 0; j < G.length; j++) {
-    for (let i = 0; i < G.length - 1; i++) {
-      const a0 = G[i] + JCLR, a1 = G[i + 1] - JCLR;
-      const rdg = atRng(G[j], (a0 + a1) / 2, S_EDGE);
-      // a kerb only exists where a block backs it
-      if (j < G.length - 1) rank(sink, rdg, 0, G[j], 1, 0, a0, a1, 1);
-      if (j > 0) rank(sink, rdg, 0, G[j], 1, 0, a0, a1, -1);
-      if (j < G.length - 1) rank(sink, rdg, G[j], 0, 0, 1, a0, a1, -1);
-      if (j > 0) rank(sink, rdg, G[j], 0, 0, 1, a0, a1, 1);
-    }
-  }
 
   /**
    * A stopped queue of 2-4 cars in the KERBSIDE lane on one arm of a junction.
@@ -3524,16 +3441,6 @@ export function createWorld(scene, { roadKit, mapDoc = null }) {
   }
   const ARMS = [[1, 0], [-1, 0], [0, 1], [0, -1]];
   parkPop = 'queue';
-  for (const gx of visitOrder(G)) {
-    for (const gz of visitOrder(G)) {
-        const rj = atRng(gx, gz, S_NODE);
-      // ONE arm per junction, was one-or-two. Four would put a queue in every frame of every
-      // cross street; two now also crowds the kerbside lane against the live inner lane at
-      // the junction the player is most likely to be looking through.
-      const k = rngInt(rj, 0, 3);
-      signalQueue(sink, rj, gx, gz, ARMS[k][0], ARMS[k][1]);
-    }
-  }
   // laneTraffic() USED TO BE HERE and it was the defect. It filled BOTH carriageways of every
   // road segment, both directions, both lane centres, all the way down the canyon: 1255 cars
   // standing still in live traffic lanes for no reason. It was added because the references
@@ -3585,11 +3492,6 @@ export function createWorld(scene, { roadKit, mapDoc = null }) {
     push(paintMesh, gx + ax * bar + az * (half * 0.5), PAINT_Y, gz + az * bar - ax * (half * 0.5),
       ry, 0, 0.42, 1, half * 0.94, 0xeeeae0);
   }
-  for (const gx of visitOrder(G)) {
-    for (const gz of visitOrder(G)) {
-      for (const [ax, az] of ARMS) crossing(gx, gz, ax, az);
-    }
-  }
 
   /**
    * Utility cuts and manhole covers. A downtown carriageway is a patchwork of
@@ -3615,14 +3517,6 @@ export function createWorld(scene, { roadKit, mapDoc = null }) {
           // a sheet of paper lying on the road
           rngPick(rng, [0x3d3f43, 0x545350, 0x47494d, 0x585652, 0x34363b]));
       }
-    }
-  }
-  for (let j = 0; j < G.length; j++) {
-    for (let i = 0; i < G.length - 1; i++) {
-      const a0 = G[i] + JCLR, a1 = G[i + 1] - JCLR;
-      const rdg = atRng(G[j], (a0 + a1) / 2, S_EDGE);
-      roadWear(sink, rdg, 0, G[j], 1, 0, a0, a1);
-      roadWear(sink, rdg, G[j], 0, 0, 1, a0, a1);
     }
   }
 
@@ -4160,12 +4054,10 @@ export function createWorld(scene, { roadKit, mapDoc = null }) {
   }
 
   // ---- drive paths ------------------------------------------------------
-  // Built above under `#map=graph` (see `graphPaths`), because `heroDist` needs them at emission
-  // time. The grid literals are untouched.
-  const paths = graphPath || {
-    city: makePath(roundedRect(325, 325, 48, 8), true),
-    highway: makePath([[-1000, HZ + 6.5], [-300, HZ + 6.5], [400, HZ + 6.5], [1000, HZ + 6.5]], false),
-  };
+  // Built above (see `graphPaths`), because `heroDist` needs them at emission time. S3d deletes the
+  // grid fallback: `roundedRect(325, 325, 48, 8)` was a 650 m rounded square in a 4 km city and,
+  // as the S3c brief recorded, it would put every scene in the void.
+  const paths = graphPath;
 
   // ---- FINALIZE: allocate every cell's pools ------------------------------------------
   //
