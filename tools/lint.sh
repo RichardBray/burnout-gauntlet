@@ -12,5 +12,14 @@ for f in game/*.js; do
   fi
 done
 rm -rf "$tmp"
+
+# The road graph is data, and a hand-edited graph must not be able to land broken. T3's rule is
+# that no road may go nowhere, and this is where that is enforced.
+if [ -f game/map/paradise.json ]; then
+  if ! out=$(node game/map/validate.mjs 2>&1); then
+    echo "MAP game/map/paradise.json"; echo "$out" | tail -20; fail=1
+  fi
+fi
+
 [ $fail -eq 0 ] && echo "lint ok"
 exit $fail

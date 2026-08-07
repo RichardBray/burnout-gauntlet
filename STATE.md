@@ -60,8 +60,12 @@ Opening a new wave block is the moment to do this, not later.
 
 ### WAVE T — LIVE. THE MAP. `TASKS.md` wave 4, task T3. Opened session 18, 2026-08-07.
 
-**EXACT NEXT ACTION: build `game/map/paradise.json` and `game/map/validate.mjs` — the `digitise`
-piece. Nothing else in the wave may start until the schema is frozen and the validator is green.**
+**EXACT NEXT ACTION: the `queries` piece — a spatial index over the graph, and port `world.js`'s
+`surfaceAt(x, z)` off `LAYOUT` onto it. Do this BEFORE any mesh generation.** It is the smallest
+consumer, it is already injected into `physics.js` rather than imported, and if the graph cannot
+answer it cheaply per frame the index is wrong and every other consumer inherits that. 937 edges
+with polyline shapes need a grid or R-tree; a linear scan is 937 segment tests per wheel per frame.
+The schema is FROZEN at `version: 1` — `generate` may now start concurrently.
 
 The binding brief is **`tools/WAVE-T-MAP-BRIEF.md`**. Read it and the play brief before anything.
 Its one-sentence version: replace `LAYOUT` in `world.js` with a road GRAPH, generate the world from
@@ -70,15 +74,42 @@ from it.
 
 | piece | owns | state |
 |---|---|---|
-| `digitise` | `game/map/paradise.json`, `game/map/validate.mjs` | **NEXT.** Gates every other piece |
-| `queries` | graph spatial index, `surfaceAt` off `LAYOUT` | not started; needs a frozen schema |
-| `generate` | graph -> roads, kerbs, junctions, buildings | not started; needs a frozen schema |
+| `digitise` | `game/map/paradise.json`, `game/map/validate.mjs` | **DONE.** `verdicts/wave-t/digitise.md` |
+| `queries` | graph spatial index, `surfaceAt` off `LAYOUT` | **NEXT.** Schema is frozen |
+| `generate` | graph -> roads, kerbs, junctions, buildings | can start; schema is frozen |
 | `stream` | chunk build/dispose around the hero | not started; needs `generate` |
 | `rewire` | `traffic.js`, parked ranks, signals, `physics.js` blocks, minimap, spawns | not started; needs `queries` |
 | `skyline` | far LOD / impostors | not started |
 | `perf` | load time and frame time | not started; runs ALONE on the machine |
 
-**WHAT LANDED SO FAR IN THIS WAVE (prep only, no game code touched):**
+**`digitise` IS DONE.** `game/map/paradise.json`: **702 nodes, 937 edges, 76.89 km** of centreline
+over 4000 x 2861 m, ONE connected component, strongly connected, and exactly 2 degree-1 nodes, both
+reviewed and flagged. `game/map/validate.mjs` runs from `tools/lint.sh` and is mutation-tested — a
+severed network, a cleared `deadEnd`, a stranding `oneWay` and a ghost node reference all exit 1
+while the real file exits 0. Rebuild the whole chain with `bash tools/map-build.sh`.
+
+Full write-up, including what is honestly missing, is `verdicts/wave-t/digitise.md`. Three things
+from it that will cost the next session a day if they are rediscovered instead of read:
+
+- **THE OVERLAY IS THE ACCEPTANCE TEST, not a debug convenience.** `verdicts/wave-t/digitise-overlay.png`
+  draws the graph back over the source image. Every numeric check on a road graph passes just as
+  happily on a graph that looks nothing like the city, and the overlay caught two defects that no
+  number in the pipeline would have shown: **the motorway was missing from the map entirely** (it
+  is gold, and the mask was "bright and desaturated"), and then **the classifier found the event
+  pins instead of the motorway** (pins are gold discs too).
+- **Print the kilometre figure at every stage.** Merging nodes by PROXIMITY chained transitively
+  and silently ate 40 of 83 km; contracting short EDGES is bounded and cannot. The stage-by-stage
+  km print is the only reason that was caught.
+- **`deadEnd` is never stamped automatically**, and that is deliberate. Auto-flagging every
+  degree-1 node turns the check into one that cannot fail, which is this project's oldest bug. The
+  41 that failed the first clean run were worked through by hand: 28 snapped into junctions, 11
+  deleted as trace fragments, 2 listed in `REVIEWED_DEAD_ENDS` with what they actually are. A
+  listed entry that stops matching is a hard error.
+
+`oneWay` is false everywhere and `elevationClass` is `ground` everywhere — both honest nulls, since
+a top-down still shows neither. Do not read them as unfinished work to go and fill in blind.
+
+**WHAT LANDED IN THIS WAVE'S PREP (no game code touched):**
 
 - **The source map is sourced and recorded.** `reference/map/street-names.jpg` (1759x1184) is the
   PRIMARY - it is the only candidate carrying district boundaries, and it labels all five
