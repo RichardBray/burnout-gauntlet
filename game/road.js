@@ -5,7 +5,7 @@
 //        Group, NOT a Mesh, and there is no `width` option — the width comes from the class spec.
 //        (This line said "-> THREE.Mesh" and advertised a `width` option until wave T. Both were
 //        wrong, and the wrongness had outlived several waves: do not trust a docstring.)
-//      kit.ribbonInto(sink, pts, nrm, halfW, y, uRepeat, vScale) appends one ribbon into
+//      kit.ribbonInto(sink, pts, nrm, halfW, y, uRepeat, vScale, v0) appends one ribbon into
 //        caller-owned growable arrays — no geometry, no Mesh, no material — and
 //      kit.finishRibbon(sink, cls) turns a filled sink into ONE Mesh on an EXISTING material.
 //        Together these batch many ribbons into one draw call; buildRibbon is a wrapper over them.
@@ -1875,7 +1875,7 @@ export function createRoadKit(rng, opts = {}) {
      *   1 stretches one tile across, which is what the class-width ribbons want.
      * @param vScale  metres of centreline per texture tile along the road.
      */
-    ribbonInto(sink, pts, nrm, halfW, y, uRepeat, vScale) {
+    ribbonInto(sink, pts, nrm, halfW, y, uRepeat, vScale, v0 = 0) {
       const n = pts.length;
       if (n < 2) return;
       const { pos, nor, uv, idx } = sink;
@@ -1883,6 +1883,11 @@ export function createRoadKit(rng, opts = {}) {
       const pv = pts[0].x !== undefined, nv = nrm[0].x !== undefined;
       const base = pos.length / 3;
 
+      // `v0` is the texture V this sub-polyline STARTS at. A ribbon split across chunk
+      // boundaries must carry the V it would have had on the whole edge, or the asphalt restarts
+      // its tile at every boundary and the join is visible even though the vertices match. The
+      // caller passes arclength-along-the-full-edge / vScale. Defaults to 0, so buildRibbon and
+      // every pre-existing caller are unaffected.
       let d = 0;
       let px = pv ? pts[0].x : pts[0][0], pz = pv ? pts[0].y : pts[0][1];
       for (let i = 0; i < n; i++) {
@@ -1896,7 +1901,7 @@ export function createRoadKit(rng, opts = {}) {
         pos.push(x - nx * halfW, y, z - nz * halfW);
         pos.push(x + nx * halfW, y, z + nz * halfW);
         nor.push(0, 1, 0, 0, 1, 0);
-        const v = d / vScale;
+        const v = v0 + d / vScale;
         uv.push(0, v, uRepeat, v);
       }
       for (let i = 0; i < n - 1; i++) {

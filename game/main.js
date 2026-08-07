@@ -180,7 +180,15 @@ export async function boot() {
   // Measured in verdicts/wave-s/perf-r2.md section 3.
   roadKit.setMainCamera(camera);
   await stage('world', 'building the city');
-  const world = createWorld(scene, { rng: makeRng(0xC17E), roadKit });
+  // `#map=graph` builds the city from game/map/paradise.json instead of LAYOUT's 1.1 km grid.
+  // Default is still `grid`, so the visual gate does not move until the flip. The document is
+  // fetched here rather than inside createWorld because createWorld is synchronous and every
+  // consumer of `world` depends on it having finished.
+  let mapDoc = null;
+  if (/(?:^|[#&])map=graph(?:&|$)/.test(location.hash || '')) {
+    mapDoc = await (await fetch('./map/paradise.json')).json();
+  }
+  const world = createWorld(scene, { rng: makeRng(0xC17E), roadKit, mapDoc });
 
   await stage('car', 'assembling the car');
   const car = createCar(makeRng(0xCA5), { paint: 0xd8420f });

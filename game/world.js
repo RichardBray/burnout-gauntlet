@@ -11,6 +11,7 @@
 
 import * as THREE from 'three';
 import { makeCanvas, canvasTexture, makeRng, cellHash, rngRange, rngInt, rngPick, clamp, lerp } from './util.js';
+import { planRoads } from './map/ribbons.js';
 
 export const LAYOUT = {
   grid: [-480, -320, -160, 0, 160, 320, 480],
@@ -1059,7 +1060,14 @@ function patchAtmo(mat, atmo, reflect = 0.0) {
 // ---------------------------------------------------------------------------
 // `rng` is still passed by main.js and is deliberately NOT destructured: nothing in createWorld
 // reads it any more. Deleting the argument at the call site is S5 cleanup.
-export function createWorld(scene, { roadKit }) {
+export function createWorld(scene, { roadKit, mapDoc = null }) {
+  // `#map=graph`. When a parsed paradise.json is handed in, the city comes from the road graph
+  // instead of LAYOUT's 1.1 km grid. S3a builds roads, junctions, kerbs and pavement only, so
+  // every grid-driven population is emptied rather than branched around: `G` and `blocks` are the
+  // two arrays the whole content build iterates, and emptying `G` takes out the grid ribbons, the
+  // lamps, the signals, the ranks and the road wear in one move. The default path is untouched
+  // and `#map=grid` stays pixel-stable.
+  const GRAPH = !!mapDoc;
   installPcss();
   const group = new THREE.Group();
   scene.add(group);
@@ -1505,9 +1513,17 @@ export function createWorld(scene, { roadKit }) {
   group.add(ground);
 
   // ---- roads ---------------------------------------------------------
+  // ONE PLANE FOR THE WHOLE CITY. The grid world dropped every Z ribbon 2 mm (`y: 0.028` below)
+  // purely because its ribbons overlapped at crossings. The graph network retracts every ribbon
+  // and fills the gap with a junction polygon whose corners are the ribbons' own terminal
+  // vertices, so nothing is coplanar with anything and nothing can z-fight. That also matches
+  // road.js's planar-reflection mirror plane, which assumes a single y.
+  const ROAD_Y = 0.03;
+  let roadStats = null;
   const roads = new THREE.Group();
   group.add(roads);
-  const G = LAYOUT.grid, EX = LAYOUT.extent, HALF = LAYOUT.roadW / 2;
+  const G = GRAPH ? [] : LAYOUT.grid;
+  const EX = LAYOUT.extent, HALF = LAYOUT.roadW / 2;
 
   for (const z of G) roads.add(roadKit.buildRibbon([[-EX, z], [EX, z]], { cls: 'city' }));
   for (const x of visitOrder(G)) {
@@ -1519,11 +1535,117 @@ export function createWorld(scene, { roadKit }) {
       roads.add(roadKit.buildRibbon([[x, z0], [x, z1]], { cls: 'city', y: 0.028 }));
     }
   }
+  // ---- THE GRAPH ROAD NETWORK (#map=graph) ------------------------------------------------
+  //
+  // Everything geometric is decided by game/map/ribbons.js, which is pure arithmetic and is
+  // asserted on in node by tools/_ribbons.mjs. This block only turns the plan into meshes.
+  //
+  // ZERO NEW MATERIALS, which is decision 4 and is why the widths work the way they do. There are
+  // 21 distinct edge widths from 9.0 to 49.4 m and exactly two road specs, so option (b) of plan
+  // section 3: the MARKED CARRIAGEWAY is drawn at min(width, spec.widthM) on mats[cls].mat, and
+  // everything out to width/2 + SHOULDER is unmarked shoulder on shoulderMat, which is a flat
+  // colour plus a tiled normal and tiles cleanly at any width. A 49.4 m arterial reads as a 20 m
+  // marked carriageway with 14.7 m of hard shoulder each side; a 9.0 m service road gets a
+  // partial tile, U spanning 9/20, which is what a narrow street should look like.
+  //
+  // Option (a) - repeating the lane texture across a wide road - was NOT taken. The plan flags
+  // its premise as an unverified guess, and it is a bad one: makeRoadTile draws a centre pair at
+  // road.js:351, so a horizontal repeat puts a double yellow line down the middle of every lane.
+  let roadPlan = null;
+  if (GRAPH) {
+    roadPlan = planRoads(mapDoc, { chunk: CHUNK });
+    const specOf = (cls) => (cls === 'motorway' ? 'highway' : 'city');
+    // One sink per (cell, class) for the carriageway and one per cell for the shoulder, so a
+    // whole cell's roads are at most three draw calls.
+    const sinks = new Map();
+    const sinkFor = (key) => {
+      let s2 = sinks.get(key);
+      if (!s2) sinks.set(key, s2 = { pos: [], nor: [], uv: [], idx: [], length: 0 });
+      return s2;
+    };
+
+    for (const cell of roadPlan.cells.values()) {
+      for (const r of cell.ribbons) {
+        const cls = specOf(r.cls);
+        const spec = roadKit.materials[cls].spec;
+        const carriage = Math.min(r.width, spec.widthM) / 2;
+        // The sub-polyline carries `s`, arclength along the FULL edge, so the tile does not
+        // restart at a chunk boundary.
+        const v0 = r.pts[0].s / spec.tileLenM;
+        const pts = r.pts.map((v) => [v.x, v.z]);
+        const nrm = r.pts.map((v) => [v.nx, v.nz]);
+        // shoulder first, so it sits under the carriageway in submission order exactly as
+        // buildRibbon orders its two meshes
+        if (r.paved > carriage + 1e-6) {
+          roadKit.ribbonInto(sinkFor(`${cell.key}|shoulder`), pts, nrm, r.paved,
+            ROAD_Y - 0.02, 1, 12, r.pts[0].s / 12);
+        }
+        roadKit.ribbonInto(sinkFor(`${cell.key}|${cls}`), pts, nrm, carriage,
+          ROAD_Y, (carriage * 2) / spec.widthM, spec.tileLenM, v0);
+      }
+
+      // Junction polygons: a fan from the node centre out to the ring of terminal cross-section
+      // corners. Because those corners ARE the ribbons' terminal vertices there is no coplanar
+      // overlap anywhere in the network, which is what lets every ground road sit at one y and
+      // retires the 2 mm drop the grid world needed at world.js:1185.
+      for (const j of cell.junctions) {
+        const cls = specOf(j.cls);
+        const spec = roadKit.materials[cls].spec;
+        const sk = sinkFor(`${cell.key}|${cls}`);
+        const base = sk.pos.length / 3;
+        const uvOf = (x, z) => [x / spec.widthM, z / spec.tileLenM];
+        sk.pos.push(j.centre[0], ROAD_Y, j.centre[1]);
+        sk.nor.push(0, 1, 0);
+        sk.uv.push(...uvOf(j.centre[0], j.centre[1]));
+        for (const c of j.ring) {
+          sk.pos.push(c[0], ROAD_Y, c[1]);
+          sk.nor.push(0, 1, 0);
+          sk.uv.push(...uvOf(c[0], c[1]));
+        }
+        // Wind CCW seen from above so the surface faces +Y, the same convention ribbonInto uses.
+        for (let i = 0; i < j.ring.length; i++) {
+          const a = base + 1 + i, b = base + 1 + ((i + 1) % j.ring.length);
+          sk.idx.push(base, b, a);
+        }
+      }
+
+      // Degree-2 taper: the only geometry a degree-2 node produces, and only when the two edges'
+      // paved widths differ. The two cross-sections share a normal (ribbons.js computes a joint
+      // one through the node), so this is a clean trapezoid.
+      for (const t of cell.tapers) {
+        const sk = sinkFor(`${cell.key}|shoulder`);
+        const base = sk.pos.length / 3;
+        for (const side of [t.a, t.b]) {
+          const v = side.v;
+          sk.pos.push(v.x - v.nx * side.paved, ROAD_Y - 0.02, v.z - v.nz * side.paved);
+          sk.pos.push(v.x + v.nx * side.paved, ROAD_Y - 0.02, v.z + v.nz * side.paved);
+          sk.nor.push(0, 1, 0, 0, 1, 0);
+          sk.uv.push(0, 0, 1, 0);
+        }
+        sk.idx.push(base, base + 1, base + 2, base + 1, base + 3, base + 2);
+      }
+    }
+
+    for (const [key, sk] of sinks) {
+      if (sk.idx.length < 3) continue;
+      const cls = key.split('|')[1];
+      const mesh = roadKit.finishRibbon(sk, cls);
+      mesh.name = `road:${key}`;
+      roads.add(mesh);
+    }
+    roadStats = {
+      cells: roadPlan.cells.size, meshes: sinks.size,
+      ...roadPlan.stats,
+    };
+  }
+
   const HZ = LAYOUT.highwayZ;
-  roads.add(roadKit.buildRibbon([[-1200, HZ], [1200, HZ]], { cls: 'highway', shoulder: 3 }));
-  roads.add(roadKit.buildRibbon(
-    [[0, -EX], [0, -EX - 40], [-30, HZ + 70], [-70, HZ + 22]], { cls: 'city' },
-  ));
+  if (!GRAPH) {
+    roads.add(roadKit.buildRibbon([[-1200, HZ], [1200, HZ]], { cls: 'highway', shoulder: 3 }));
+    roads.add(roadKit.buildRibbon(
+      [[0, -EX], [0, -EX - 40], [-30, HZ + 70], [-70, HZ + 22]], { cls: 'city' },
+    ));
+  }
 
   // ---- shared materials -------------------------------------------------
   const conc = makeConcrete(R);
@@ -2453,21 +2575,25 @@ export function createWorld(scene, { roadKit }) {
     }
   }
   // highway: sign gantries plus a roadside billboard row on tall posts
-  for (let x = -900; x <= 900; x += 240) {
-      const rj = atRng(x, HZ, S_NODE);
-    gantry(sink, rj, x, HZ, 0, 1, -Math.PI / 2, LAYOUT.highwayW + 16, 10.4, 3);
-  }
-  for (let x = -1000; x <= 1000; x += 105) {
-      const rdg = atRng(x, HZ, S_EDGE);
-    const s = ((x / 105) | 0) % 2 ? 1 : -1;
-    const bz = HZ + s * (LAYOUT.highwayW / 2 + 13);
-    const w = rngRange(rdg, 13, 19), bh = w * 0.36;
-    const by = rngRange(rdg, 9, 13);
-    placeSign(sink, rdg, x, by, bz, s > 0 ? Math.PI : 0, w, bh, { flood: true });
-    for (const t of [-w * 0.3, w * 0.3]) {
-      push(mastMesh, x + t, 0.2 + (by - bh / 2) / 2, bz, 0, 0, 0.42, by - bh / 2, 0.42);
+  if (!GRAPH) {
+    for (let x = -900; x <= 900; x += 240) {
+        const rj = atRng(x, HZ, S_NODE);
+      gantry(sink, rj, x, HZ, 0, 1, -Math.PI / 2, LAYOUT.highwayW + 16, 10.4, 3);
     }
-    shadowAt(x, bz, 0.02, 3.0, 0.7);
+  }
+  if (!GRAPH) {
+    for (let x = -1000; x <= 1000; x += 105) {
+        const rdg = atRng(x, HZ, S_EDGE);
+      const s = ((x / 105) | 0) % 2 ? 1 : -1;
+      const bz = HZ + s * (LAYOUT.highwayW / 2 + 13);
+      const w = rngRange(rdg, 13, 19), bh = w * 0.36;
+      const by = rngRange(rdg, 9, 13);
+      placeSign(sink, rdg, x, by, bz, s > 0 ? Math.PI : 0, w, bh, { flood: true });
+      for (const t of [-w * 0.3, w * 0.3]) {
+        push(mastMesh, x + t, 0.2 + (by - bh / 2) / 2, bz, 0, 0, 0.42, by - bh / 2, 0.42);
+      }
+      shadowAt(x, bz, 0.02, 3.0, 0.7);
+    }
   }
 
   // ---- neon: tubes, bulb strings, spill ------------------------------------
@@ -2614,9 +2740,11 @@ export function createWorld(scene, { roadKit }) {
       streetLight(sink, x + 31, z - HALF - 2.4, 0);
     }
   }
-  for (let x = -600; x <= 600; x += 70) {
-    streetLight(sink, x, HZ + LAYOUT.highwayW / 2 + 4, Math.PI);
-    streetLight(sink, x + 35, HZ - LAYOUT.highwayW / 2 - 4, 0);
+  if (!GRAPH) {
+    for (let x = -600; x <= 600; x += 70) {
+      streetLight(sink, x, HZ + LAYOUT.highwayW / 2 + 4, Math.PI);
+      streetLight(sink, x + 35, HZ - LAYOUT.highwayW / 2 - 4, 0);
+    }
   }
 
   // ---- traffic lights ------------------------------------------------------
@@ -3199,24 +3327,30 @@ export function createWorld(scene, { roadKit }) {
   }
 
   // ---- highway guard rails + overpass concrete -------------------------------
-  for (const s of [-1, 1]) {
-    const rail = new THREE.Mesh(new THREE.BoxGeometry(2400, 0.42, 0.14), railMat);
-    rail.position.set(0, 0.72, HZ + s * (LAYOUT.highwayW / 2 + 2.2));
-    rail.castShadow = true;
-    group.add(rail);
-    const rail2 = rail.clone(); rail2.position.y = 0.38; group.add(rail2);
+  if (!GRAPH) {
+    for (const s of [-1, 1]) {
+      const rail = new THREE.Mesh(new THREE.BoxGeometry(2400, 0.42, 0.14), railMat);
+      rail.position.set(0, 0.72, HZ + s * (LAYOUT.highwayW / 2 + 2.2));
+      rail.castShadow = true;
+      group.add(rail);
+      const rail2 = rail.clone(); rail2.position.y = 0.38; group.add(rail2);
+    }
   }
   const railPost = pool('railPost', boxGeo, poleMat, { recv: false });
-  for (const s of [-1, 1]) {
-    for (let i = 0; i < 240; i++) {
-      push(railPost, -1200 + i * 10, 0.45, HZ + s * (LAYOUT.highwayW / 2 + 2.2), 0, 0, 0.14, 0.9, 0.14);
+  if (!GRAPH) {
+    for (const s of [-1, 1]) {
+      for (let i = 0; i < 240; i++) {
+        push(railPost, -1200 + i * 10, 0.45, HZ + s * (LAYOUT.highwayW / 2 + 2.2), 0, 0, 0.14, 0.9, 0.14);
+      }
     }
   }
 
   // jersey barrier + overpass deck running along the far side of the highway
   const barrier = pool('barrier', boxGeo, concMat, { recv: true });
-  for (let i = 0; i < 240; i++) {
-    push(barrier, -1200 + i * 10, 0.55, HZ - LAYOUT.highwayW / 2 - 5.0, 0, 0, 9.8, 1.1, 0.6);
+  if (!GRAPH) {
+    for (let i = 0; i < 240; i++) {
+      push(barrier, -1200 + i * 10, 0.55, HZ - LAYOUT.highwayW / 2 - 5.0, 0, 0, 9.8, 1.1, 0.6);
+    }
   }
 
   const deck = new THREE.Mesh(new THREE.BoxGeometry(1400, 1.7, 13), concMat);
@@ -3238,9 +3372,11 @@ export function createWorld(scene, { roadKit }) {
   // or hide the row: it is visible in dusk-highway-chase (max delta 146), crash-cam (72) and
   // daytime-downtown (68). At half radius it is invisible in daytime-downtown instead.
   const pier = pool('pier', new THREE.CylinderGeometry(0.75, 0.85, 1, 12), concMat);
-  for (let i = 0; i < 44; i++) {
-    push(pier, -1300 + i * 60, 5.8, HZ - 62, 0, 0, 1, 11.6, 1);
-    shadowAt(-1300 + i * 60, HZ - 62, 0.02, 4.2, 0.9);
+  if (!GRAPH) {
+    for (let i = 0; i < 44; i++) {
+      push(pier, -1300 + i * 60, 5.8, HZ - 62, 0, 0, 1, 11.6, 1);
+      shadowAt(-1300 + i * 60, HZ - 62, 0.02, 4.2, 0.9);
+    }
   }
 
   // ---- contact shadows ------------------------------------------------------
@@ -3465,6 +3601,8 @@ export function createWorld(scene, { roadKit }) {
       instancesPerCell: rc.map((c) => [c.key, c.stats.instances]).sort((a, b) => b[1] - a[1]),
       meshes, instances, geometries: geoms.size, tris,
       overflow: { n: dropStats.n, pools: { ...dropStats.pools } },
+      map: GRAPH ? 'graph' : 'grid',
+      roads: roadStats,
     };
   }
 
