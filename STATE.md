@@ -60,12 +60,17 @@ Opening a new wave block is the moment to do this, not later.
 
 ### WAVE T — LIVE. THE MAP. `TASKS.md` wave 4, task T3. Opened session 18, 2026-08-07.
 
-**EXACT NEXT ACTION: the `queries` piece — a spatial index over the graph, and port `world.js`'s
-`surfaceAt(x, z)` off `LAYOUT` onto it. Do this BEFORE any mesh generation.** It is the smallest
-consumer, it is already injected into `physics.js` rather than imported, and if the graph cannot
-answer it cheaply per frame the index is wrong and every other consumer inherits that. 937 edges
-with polyline shapes need a grid or R-tree; a linear scan is 937 segment tests per wheel per frame.
-The schema is FROZEN at `version: 1` — `generate` may now start concurrently.
+**EXACT NEXT ACTION: the `generate` piece — build roads, kerbs, junctions and buildings FROM the
+graph, and in the same commit flip `world.js`'s `surfaceAt` onto `game/map/graph.js`.** The
+graph-backed `surfaceAt` is written, verified and fast; it is deliberately not wired, because the
+world on screen is still the `LAYOUT` grid and the graph is a different city — pointing it at the
+graph before `generate` would answer 'dirt' everywhere the player is and fire T4's off-road penalty
+on every road. `world.js` carries a comment at the swap point saying so.
+
+Read the chunk contract in the brief BEFORE writing the generator, not after. The rule that decides
+whether this task ships at 3.5 s or 14 s is that **nothing outside the hero's resident chunk set
+may be BUILT during boot** — and it must be asserted on what EXISTS at `__ready`, never inferred
+from a frame time.
 
 The binding brief is **`tools/WAVE-T-MAP-BRIEF.md`**. Read it and the play brief before anything.
 Its one-sentence version: replace `LAYOUT` in `world.js` with a road GRAPH, generate the world from
@@ -75,8 +80,8 @@ from it.
 | piece | owns | state |
 |---|---|---|
 | `digitise` | `game/map/paradise.json`, `game/map/validate.mjs` | **DONE.** `verdicts/wave-t/digitise.md` |
-| `queries` | graph spatial index, `surfaceAt` off `LAYOUT` | **NEXT.** Schema is frozen |
-| `generate` | graph -> roads, kerbs, junctions, buildings | can start; schema is frozen |
+| `queries` | graph spatial index, `surfaceAt` off `LAYOUT` | **DONE.** `verdicts/wave-t/queries.md` |
+| `generate` | graph -> roads, kerbs, junctions, buildings | **NEXT.** Owns the `surfaceAt` swap |
 | `stream` | chunk build/dispose around the hero | not started; needs `generate` |
 | `rewire` | `traffic.js`, parked ranks, signals, `physics.js` blocks, minimap, spawns | not started; needs `queries` |
 | `skyline` | far LOD / impostors | not started |
@@ -123,6 +128,29 @@ from it that will cost the next session a day if they are rediscovered instead o
 
 `oneWay` is false everywhere and `elevationClass` is `ground` everywhere — both honest nulls, since
 a top-down still shows neither. Do not read them as unfinished work to go and fill in blind.
+
+**`queries` IS DONE.** `game/map/graph.js` indexes the graph's 2373 segments into a uniform 64 m
+grid (2944 cells, 2.17 segments per cell, 92 KB, built in 3.0 ms) and answers:
+
+- `surfaceAt(x, z)` at **189 ns**, 43x faster than a brute-force scan and identical to it on all
+  10000 probes. Four wheels for one frame costs **0.00075 ms** of a 16.7 ms budget.
+- `nearest(x, z)` at 760 ns, returning `{ dist, edge, t, x, z, seg }` — the edge, the parameter
+  along it and the closest point, which is what `rewire` needs for traffic lanes and `generate`
+  needs for junctions.
+
+`tools/_mapquery.mjs` is the check and it compares against brute force written separately in the
+harness. **Half the probes are on tarmac on purpose**: uniform random points over a 4000 x 2861 m
+map are almost all dirt, so a uniform-only probe set passes against an index that always says
+`dirt`. 6000 probes walk the segments with a jitter that straddles the kerb face, because the
+boundary is where a grid index fails — by missing a segment registered in the next cell.
+
+Uniform grid over an R-tree because road segments are short, similar in length and evenly spread;
+CSR layout over per-cell arrays because chunk streaming will rebuild indices as the hero moves and
+a few thousand small arrays per rebuild is garbage that world does not need.
+
+One improvement over what it replaces: `LAYOUT` used a single hardcoded `PAVED_HALF = 13.0` for
+every road; the graph version uses each edge's own `width / 2 + 3`, so a motorway's paved corridor
+is properly wider than a service road's.
 
 **WHAT LANDED IN THIS WAVE'S PREP (no game code touched):**
 

@@ -46,6 +46,19 @@ const HIGHWAY_HALF = LAYOUT.highwayW / 2 + 2.2;   // to the guardrail line at wo
  * real terrain, this function grows the classes and SURFACES grows the matching rows; nothing
  * else has to change, because every caller already switches on the returned key.
  */
+// ---- THE SWAP POINT FOR T3'S MAP. READ BEFORE TOUCHING EITHER SIDE. --------------------------
+// `game/map/graph.js` now has a graph-backed `surfaceAt` with identical semantics, verified
+// against brute force on 10000 probes and measured at 189 ns/query. It is NOT wired up here yet,
+// and that is deliberate, not an unfinished edit.
+//
+// The world the car currently drives on is still this LAYOUT grid. The graph describes Paradise
+// City, which is a DIFFERENT city in different coordinates. Pointing this function at the graph
+// before `generate` builds that city would answer 'dirt' almost everywhere the player actually
+// is, and T4's off-road penalty would fire on every road in the game.
+//
+// So the swap belongs to the `generate` piece, in the same commit that makes the graph the thing
+// on screen: replace this body with a call into the injected graph, keep the same two return keys,
+// and the caller in `physics.js` needs no edit because it already switches on the key.
 export function surfaceAt(x, z) {
   if (Math.abs(z - LAYOUT.highwayZ) <= HIGHWAY_HALF) return 'tarmac';
   const EX = LAYOUT.extent;
