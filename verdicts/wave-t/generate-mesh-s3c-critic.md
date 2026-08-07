@@ -355,3 +355,43 @@ baseline coverage miss rather than curing it.
   mesh contact. No visual wave was opened.
 - I could not test road-ribbon/junction ground contact because the physics exposes no such signal;
   the probe correctly disclaims it.
+
+## ROUND 4 — PASS
+
+**PROVENANCE OF THIS SECTION: the round-4 critic returned this verdict but did NOT write it to the
+file; it ended by saying the verdict "should be appended". The orchestrator transcribed its reply
+here verbatim rather than re-judging the step. The runtime numbers throughout are the
+ORCHESTRATOR's runs, which the critic explicitly declined to claim as its own.**
+
+The round-3 blocker is genuinely fixed.
+
+- Missed boundaries now call `findDriver(..., true)`, preserving `provenance: 'DRIVER'`.
+- Fatal DRIVER findings reach `process.exitCode = 1`.
+- The driver poison confirms the separation: 2 fatal DRIVER findings, 0 WORLD failures.
+- The baseline physically crossed every enumerated boundary: downtown 2/2, harbor 2/2, palmbay 3/3,
+  silverlake 2/2, mountain 2/2.
+
+**Question 3 ruling — may the baseline be green while Silver Lake fails `driver reaches route end`
+at `END_RADIUS = 2`? YES.** The trajectory crossed Silver Lake's complete 2/2 boundary set; reaching
+the endpoint is a **non-fatal controller-completion diagnostic, not additional seam coverage.**
+Record this exactly as residual driver-wander debt owned elsewhere.
+
+**NON-BLOCKING — Silver Lake endpoint.** The tighter 2 m radius exposes that the follower cannot
+satisfy the endpoint diagnostic. **Do not represent that route as fully finishable.** This does not
+reopen S3c's boundary-coverage blocker.
+
+**Green was bought honestly.** Against `b0c8f40`: routes and boundary enumeration unchanged,
+`BOUNDARY_TOLERANCE` remains 18, no teleport, and `END_RADIUS` 10 -> 2 TIGHTENS completion.
+
+`game/` is untouched in `a267ad3`. The probe still honestly disclaims ribbon/junction mesh contact,
+consistent with `game/physics.js:1973` forcing `pos.y = 0`.
+
+**WHAT THIS PROBE IS WORTH, STATED SO IT IS NOT OVERSOLD LATER:** it is worth retaining as an
+authored-corridor, block-clearance, junction-route and driven chunk-boundary check. **It is NOT
+evidence of ribbon/junction render-mesh continuity or ground contact.**
+
+### Checks the round-4 critic could not run
+
+Chromium, any browser mode, and all visual checks: localhost binding fails with `listen EPERM`. The
+four runtime results are the orchestrator's, not the critic's. It verified syntax and source/commit
+diffs only.
