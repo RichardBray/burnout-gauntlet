@@ -12,6 +12,9 @@
 import * as THREE from 'three';
 import { makeCanvas, canvasTexture, makeRng, cellHash, rngRange, rngInt, rngPick, clamp, lerp } from './util.js';
 import { planRoads } from './map/ribbons.js';
+import { planPavement } from './map/pavement.js';
+import { createBlocks } from './map/blocks.js';
+import { createRoadGraph } from './map/graph.js';
 
 export const LAYOUT = {
   grid: [-480, -320, -160, 0, 160, 320, 480],
@@ -1679,6 +1682,51 @@ export function createWorld(scene, { roadKit, mapDoc = null }) {
   const railMat = patchAtmo(new THREE.MeshStandardMaterial({
     color: 0x9aa0aa, roughness: 0.38, metalness: 0.9,
   }), atmo, 0.25);
+
+  // ---- THE GRAPH KERBS AND PAVEMENT (#map=graph) ------------------------------------------
+  //
+  // Risk 12 of tools/WAVE-T-GENERATE-MESH-PLAN.md, which is the rule that decides this block:
+  // the block AABB is INSCRIBED and buildings sit on it, and the drawn kerb and pavement follow
+  // the FACE POLYGON and are always OUTSIDE the AABB. Both directions are failure modes and only
+  // one of them - "no block overlaps tarmac" - was ever checked. tools/_pavement.mjs measures
+  // both and prints both numbers.
+  //
+  // Everything geometric is decided by game/map/pavement.js, which is pure arithmetic and is
+  // asserted on in node. This block only turns two arrays per cell into two BufferGeometries.
+  //
+  // ZERO NEW MATERIALS: kerbMat and walkMat are the grid world's own, declared 30 lines above,
+  // with the grid world's own 0.22 m step and 0.24 m slab. What changes is the DISCIPLINE - the
+  // grid builds two unshared BoxGeometry meshes per block (world.js:1694 and :1704, and at 868
+  // blocks that would be 1736 unshared geometries), where this emits ONE batched extrusion per
+  // cell per material, which is what plan section 2's six-geometries-per-chunk cap requires.
+  let pavementStats = null;
+  if (GRAPH) {
+    const mapGraph = createRoadGraph(mapDoc);
+    const built = createBlocks(mapDoc);
+    const pav = planPavement(mapDoc, built.faces, { chunk: CHUNK, graph: mapGraph });
+    const mk = (sink, mat, name, cast) => {
+      if (sink.idx.length < 3) return;
+      const g2 = new THREE.BufferGeometry();
+      g2.setAttribute('position', new THREE.Float32BufferAttribute(sink.pos, 3));
+      g2.setAttribute('normal', new THREE.Float32BufferAttribute(sink.nor, 3));
+      g2.setAttribute('uv', new THREE.Float32BufferAttribute(sink.uv, 2));
+      g2.setIndex(sink.idx);
+      g2.computeBoundingSphere();
+      const m = new THREE.Mesh(g2, mat);
+      m.name = name;
+      m.receiveShadow = true;
+      // Same call as the grid world makes: the kerb casts (its 22 cm step is the one hard shadow
+      // in the gutter that grounds the pavement onto the road), the pavement does not (it clears
+      // the kerb top by 2 cm, so all it could contribute is a sub-centimetre acne fringe).
+      m.castShadow = cast;
+      group.add(m);
+    };
+    for (const cell of pav.cells.values()) {
+      mk(cell.kerb, kerbMat, `kerb:${cell.key}`, true);
+      mk(cell.walk, walkMat, `walk:${cell.key}`, false);
+    }
+    pavementStats = { ...pav.stats, sourceBlocks: built.blocks.length };
+  }
 
   // ---- sidewalks + kerbs ---------------------------------------------
   const blocks = [];
@@ -3603,6 +3651,7 @@ export function createWorld(scene, { roadKit, mapDoc = null }) {
       overflow: { n: dropStats.n, pools: { ...dropStats.pools } },
       map: GRAPH ? 'graph' : 'grid',
       roads: roadStats,
+      pavement: pavementStats,
     };
   }
 

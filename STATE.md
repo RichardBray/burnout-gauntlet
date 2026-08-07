@@ -60,14 +60,16 @@ Opening a new wave block is the moment to do this, not later.
 
 ### WAVE T — LIVE. THE MAP. `TASKS.md` wave 4, task T3. Opened session 18, 2026-08-07.
 
-**EXACT NEXT ACTION: finish S3a - write the KERB AND PAVEMENT extrusion from `blocks.js`'s FACE
-polygons, under `#map=graph`.** `game/map/blocks.js` is done and committed and gives you
-`createBlocks(doc)` -> 868 blocks, the face polygons and `buildBlockIndex`. Nothing of the kerb or
-pavement side is implemented - not half-done, untouched. The rule is risk 12 of
-`tools/WAVE-T-GENERATE-MESH-PLAN.md`: **the AABB is inscribed, buildings sit on the AABB, and the
-drawn kerb and pavement follow the FACE polygon and are always OUTSIDE the AABB.** Then S3b.
+**EXACT NEXT ACTION: S3b - buildings, signage, neon, props and parked cars under `#map=graph`, from
+`createBlocks(doc).blocks`.** `tools/WAVE-T-GENERATE-MESH-PLAN.md:855-859`. **S3a IS NOW COMPLETE**;
+kerbs and pavement landed in `game/map/pavement.js`, `verdicts/wave-t/generate-mesh-s3a-kerbs.md`.
+S3b publishes `world.blocks` and `world.blockIndex`, which S3a-kerbs deliberately left empty because
+868 collidable AABBs in a step with no buildings is 868 invisible walls.
 
-Superseded next-action from session 18, kept only so the reasoning is not lost:
+Superseded next-actions, kept only so the reasoning is not lost:
+
+**~~finish S3a - write the KERB AND PAVEMENT extrusion from `blocks.js`'s FACE polygons, under
+`#map=graph`.~~ DONE.**
 
 **~~the `generate` piece — build roads, kerbs, junctions and buildings FROM the
 graph, and in the same commit flip `world.js`'s `surfaceAt` onto `game/map/graph.js`.** The
@@ -372,6 +374,58 @@ page then hung at boot with NO console error**, costing a full revert of `world.
 are now anchored on unique comments, each verified by printing the line it guards. **Never bulk-edit
 `world.js` by pattern match. Boot the page before handing the tree to the next step.**
 
+**`generate-mesh` S3a IS NOW COMPLETE.** `verdicts/wave-t/generate-mesh-s3a-kerbs.md`.
+`game/map/pavement.js` extrudes the kerb and pavement from `createBlocks(doc).faces`, batched to
+**exactly two chunk-owned geometries per cell** over 181 cells - against the 1736 unshared
+`BoxGeometry` meshes the grid world's two-boxes-per-block discipline would have produced at 868
+blocks. **Zero new materials; `#map=grid` stays at 131 programs and every one of the seven scenes
+is at or under its own same-tree noise floor.** Graph mode went 99 -> 101 programs and that is NOT
+two new materials: `kerbMat` and `walkMat` always existed and were simply never DRAWN under
+`#map=graph` before, so they were never compiled; both are already inside grid's 131.
+
+**BOTH DIRECTIONS OF RISK 12 ARE NOW MEASURED, and the second one had never been:**
+**pavement-in-road 0 of 1,213,824 band samples**, and **0 of 26,798 drawn kerb vertices inside a
+block AABB with 0 kerb segments crossing one**, tightest clearance 0.460 m against `blocks.js`'s own
+`KERB_MARGIN = 0.5`. Boundary continuity: the plan built TWICE as separate computations, 32,720
+values over the on-plane vertices, **0 differing**, 1 ULP poison control caught. Order-independence:
+**260,400 canonical triangles, five shuffled face orders, 0 differing.**
+
+Four findings from it that must not be rediscovered:
+
+- **THE OBVIOUS CONSTRUCTION IS WRONG AND `blocks.js` ALREADY SAID SO IN ITS OWN COMMENTS.**
+  Offsetting a face polygon inward by its own bounding edges' paved half-widths puts pavement on the
+  road, because road corridors do not respect faces (`blocks.js:244-250`). Every cross-section is
+  MARCHED against `surfaceAt` instead - pushed out, pulled back, and the band truncated at the next
+  tarmac inward. 16,803 pushed (mean 2.58 m, max 23.99 m), 10,880 pulled back, 966 truncated.
+- **A STATION-WISE GUARANTEE IS NOT A SURFACE-WISE GUARANTEE, AND THEN A VERTEX-WISE ONE IS NOT AN
+  EDGE-WISE ONE.** With every cross-section individually marched clear, **3.03% of the drawn band
+  was still on tarmac** - the quad BETWEEN two stations sweeps a wedge across a corner. And with not
+  one of 15,578 kerb vertices inside a block AABB, **51 kerb SEGMENTS still cut a block corner, the
+  worst 4.01 m deep**, on 17-35 m corner chords. Fixed by testing each quad and by subdividing and
+  re-marching any chord over 7.0 m. Both went to zero; both were invisible to the check one level up.
+- **A REFLEX CORNER MUST NOT BE MITERED.** At a convex corner the two offset lines converge and
+  their intersection lies ON both, hence exactly `h` from each road. At a reflex corner they diverge
+  and the miter runs `h / sin(theta/2)` up the bisector - 5.7x the paved half-width at a 340 degree
+  interior angle - which put 14 kerb vertices up to 7.54 m inside a block. A round join at radius
+  `h` about the ring vertex fixes it and is also what makes the junction mouths read right.
+- **THE SIGNED NEAREST-KERB TEST IS THE WRONG INSTRUMENT for "is the AABB outside the pavement".**
+  It reported 159 samples outside at 25.99 m worst; every one was a correct block on a big face's
+  40 m frontage ring measured against a kerb 37 m away and round a corner. The exact test needs no
+  orientation and no closed ring: no drawn kerb vertex inside an AABB, no drawn kerb segment
+  crossing one.
+
+Honestly open at S3a's close: the pavement is a **7.8 m BAND, not a filled plot**, and **7% of the
+ring length has no pavement at all** (2,118 of 29,635 cross-sections dropped, 887 quads cut) where a
+foreign corridor comes within `MIN_BAND` of the face boundary. Visible from 500 m as short breaks.
+And `planPavement` is 499 ms + `createBlocks` 351 ms run over the WHOLE map at boot under
+`#map=graph` - the eager build rule 1 forbids, correct for S3a, an S4 item. `planPavement` already
+takes the cell size and restricts trivially.
+
+One cross-runtime caveat, measured: node and headless chromium classify exactly ONE of 29,635
+stations differently (a station sitting on the corridor boundary where the round join's `Math.cos`
+differs in the last bit). Within one runtime the result is bit-exact. Do not read a node-vs-browser
+dump difference as a bug.
+
 Read the chunk contract in the brief BEFORE writing the generator, not after. The rule that decides
 whether this task ships at 3.5 s or 14 s is that **nothing outside the hero's resident chunk set
 may be BUILT during boot** — and it must be asserted on what EXISTS at `__ready`, never inferred
@@ -388,7 +442,7 @@ from it.
 | `queries` | graph spatial index, `surfaceAt` off `LAYOUT` | **DONE.** `verdicts/wave-t/queries.md` |
 | `generate` | graph -> roads, kerbs, junctions, buildings | **SPLIT INTO THREE.** See below. Owns the `surfaceAt` swap |
 | ├ `generate-blocks` | `game/map/blocks.js`, graph faces -> building blocks | **DONE.** 3 rounds. `verdicts/wave-t/generate-blocks{,-critic,-critic-r2}.md` |
-| ├ `generate-mesh` | per-chunk emitters in `world.js` | **DESIGNED** (`tools/WAVE-T-GENERATE-MESH-PLAN.md`). **S0-S2 DONE** (S0+S1 critic-passed). **S3a PARTIAL: roads+junctions in, KERBS AND PAVEMENT NOT WRITTEN** |
+| ├ `generate-mesh` | per-chunk emitters in `world.js` | **DESIGNED** (`tools/WAVE-T-GENERATE-MESH-PLAN.md`). **S0-S2 DONE** (S0+S1 critic-passed). **S3a DONE**: roads, junctions, kerbs and pavement. **S3b next** |
 | └ `generate-wire` | `surfaceAt` swap, `paths`, `bounds`, harness coords | not started; lands with `generate-mesh` |
 | `stream` | chunk build/dispose around the hero | not started; needs `generate` |
 | `rewire` | `traffic.js`, parked ranks, signals, `physics.js` blocks, minimap, spawns | not started; needs `queries` |
