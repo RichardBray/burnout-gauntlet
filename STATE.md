@@ -60,7 +60,32 @@ Opening a new wave block is the moment to do this, not later.
 
 ### WAVE T — LIVE. THE MAP. `TASKS.md` wave 4, task T3. Opened session 18, 2026-08-07.
 
-**EXACT NEXT ACTION: A CRITIC ON S3c ROUND 3** (`b0c8f40`). **THE CONFOUND IS FIXED AND THE PROOF IS
+**EXACT NEXT ACTION: S3c ROUND 4 IS RUNNING** (gpt, `tools/BRIEF-S3C-R4.md`). If this says RUNNING
+and `verdicts/wave-t/generate-mesh-s3c.md` has no `## ROUND 4`, that round was killed - re-run it.
+
+**THE r3 CRITIC PASSED EVERYTHING EXCEPT ONE THING, AND THAT ONE THING IS WORTH THE ROUND.** Verified
+good and NOT to be disturbed: the WORLD/DRIVER split is genuine IN THE CODE, not just in the output;
+the WORLD assertions were NOT weakened to buy the green baseline; all five chains independently pass
+connectivity, tarmac and block checks; `game/` untouched; the `pos.y = 0` limitation honestly
+disclaimed. **Route length ruled NON-BLOCKING** - about 130 m per district is a useful local seam
+check provided the car actually traverses its junctions and planes. Do not lengthen routes for their
+own sake.
+
+**THE BLOCKING FINDING: THE BASELINE EXITS GREEN WHILE THE CAR NEVER DRIVES THREE OF THE BOUNDARIES
+ITS OWN ROUTES ENUMERATE** - harbor 1/2, palmbay 2/3, mountain 1/2. The probe DETECTS the miss at
+`tools/_s3c-drive.mjs:353-354`, but at `:384-392` only `fatal` driver findings affect the exit code
+and boundary misses default to `fatal = false`. **A check cannot close the seam risk at a boundary it
+did not traverse.** Authored geometry crossing a plane is preflight, not a driven seam test.
+
+Minimum to pass, and round 4 is scoped to exactly this: make a missed authored boundary
+BASELINE-FATAL (as a DRIVER failure, never a WORLD accusation, provenance split preserved), and make
+the baseline genuinely drive every enumerated boundary in all five districts. **The trap is getting
+to green by making the boundaries easier to hit** - deleting one from the enumeration, widening
+`BOUNDARY_TOLERANCE` (18) until a miss counts as a hit, shortening a route to dodge a plane, or
+teleporting the car. Any of those fails round 4 outright. **If a boundary genuinely cannot be driven,
+an honest red passes the round; a tolerated miss does not.**
+
+Superseded: ~~A CRITIC ON S3c ROUND 3~~ (`b0c8f40`). **THE CONFOUND IS FIXED AND THE PROOF IS
 CLEAN.** All four modes run by the MAIN AGENT (a delegate cannot bind a socket; the builder honestly
 declined to claim a run):
 
@@ -731,7 +756,7 @@ from it.
 | `generate` | graph -> roads, kerbs, junctions, buildings | **SPLIT INTO THREE.** See below. Owns the `surfaceAt` swap |
 | ├ `generate-blocks` | `game/map/blocks.js`, graph faces -> building blocks | **DONE.** 3 rounds. `verdicts/wave-t/generate-blocks{,-critic,-critic-r2}.md` |
 | ├ `generate-mesh` | per-chunk emitters in `world.js` | **DESIGNED** (`tools/WAVE-T-GENERATE-MESH-PLAN.md`). **S0-S2 DONE** (S0+S1 critic-passed). **S3a DONE**: roads, junctions, kerbs and pavement. **S3b DONE**: the city - blocks, districts, buildings, signage, neon, props, cars, street furniture, `world.blocks` + `world.blockIndex`. **The 2-scene `#map=graph` boot failure is FIXED** (`generate-mesh-s3b-hotfix.md`); all 7 boot, grid unaffected. **S3c next** |
-| └ `generate-wire` | `surfaceAt` swap, `paths`, `bounds`, harness coords | **r3 LANDED (`b0c8f40`); r3 CRITIC RUNNING** (gpt) - if this says CRITIC RUNNING and `generate-mesh-s3c-critic.md` has no `## ROUND 3`, that round was killed, re-run it. r1 and r2 were CRITIC-FAILED; r3 split WORLD from DRIVER provenance and the driver poison now yields 0 WORLD / 9 DRIVER, baseline exit 0. Open: routes shortened to ~130 m, and the driver misses some authored boundaries. `paths.city` PASSES; both blocking findings are on the PROBE - false-red baseline (it confounds driver error with world error) and single-edge routes that cross no junction. **ROUND 3 = fix the probe, not the world.** r1 `d696581` was CRITIC-FAILED; r2 fixed both blocking findings and built `tools/_s3c-drive.mjs`, which **EXISTS, RUNS AND IS RED - 5 failures over 3 districts, poison controls green.** Likely `blocks.js` + `digitise` debt rather than S3c, but **the critic rules that, not the builder and not the orchestrator.** `verdicts/wave-t/generate-mesh-s3c.md` + `-critic.md`. **Do not start a third builder.** Two delegated grok-4.5 attempts died at the CLI with zero edits; it was built in the main agent. **CRITIC-FAILED at r1** (gpt, `verdicts/wave-t/generate-mesh-s3c-critic.md`): the drive probe was omitted and the physics cannot observe it, and `paths.city` runs 164.707 m on `service` edges 323/369 against decision 7. Constant table 16/16 matched. **ROUND 2 NEEDED** |
+| └ `generate-wire` | `surfaceAt` swap, `paths`, `bounds`, harness coords | **r3 CRITIC-FAILED; r4 RUNNING.** r3's provenance split, unweakened WORLD assertions and five clean chains all PASSED; it failed only because the baseline exits green while the driver skips 3 enumerated boundaries. r4 makes that miss fatal and makes the drive happen. r1 and r2 were CRITIC-FAILED; r3 split WORLD from DRIVER provenance and the driver poison now yields 0 WORLD / 9 DRIVER, baseline exit 0. Open: routes shortened to ~130 m, and the driver misses some authored boundaries. `paths.city` PASSES; both blocking findings are on the PROBE - false-red baseline (it confounds driver error with world error) and single-edge routes that cross no junction. **ROUND 3 = fix the probe, not the world.** r1 `d696581` was CRITIC-FAILED; r2 fixed both blocking findings and built `tools/_s3c-drive.mjs`, which **EXISTS, RUNS AND IS RED - 5 failures over 3 districts, poison controls green.** Likely `blocks.js` + `digitise` debt rather than S3c, but **the critic rules that, not the builder and not the orchestrator.** `verdicts/wave-t/generate-mesh-s3c.md` + `-critic.md`. **Do not start a third builder.** Two delegated grok-4.5 attempts died at the CLI with zero edits; it was built in the main agent. **CRITIC-FAILED at r1** (gpt, `verdicts/wave-t/generate-mesh-s3c-critic.md`): the drive probe was omitted and the physics cannot observe it, and `paths.city` runs 164.707 m on `service` edges 323/369 against decision 7. Constant table 16/16 matched. **ROUND 2 NEEDED** |
 | `stream` | chunk build/dispose around the hero | not started; needs `generate` |
 | `rewire` | `traffic.js`, parked ranks, signals, `physics.js` blocks, minimap, spawns | not started; needs `queries` |
 | `skyline` | far LOD / impostors | not started |
