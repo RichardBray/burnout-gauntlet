@@ -272,6 +272,53 @@ Six findings, none blocking, all for S2 to absorb:
 5. `SIGN_CAP = 1000` is left as dead code, and the cap count is **53, not 51**.
 6. The `Array.isArray(material)` guard and its comment were deleted from the bucketing.
 
+**`generate-mesh` S2 IS DONE** (`c31cb1b` fixes, `bcc0037` S2), `verdicts/wave-t/generate-mesh-s2.md`.
+The world is now built on the 200 m lattice with `cellHash` seeding, `R` is nulled in the emitter
+scope, and the `neonSign` injected-`rng` leak is fixed. **Determinism: 50 cells, 3816986 values per
+run, SEVEN runs - one rebuild and six with the population order shuffled - all 0 differing**, with a
+1e-4 poison control firing on exactly 1 value in 1 cell.
+
+**THE ORDER-INDEPENDENCE TEST PAID FOR ITSELF ON ITS FIRST RUN, AND WHAT IT FOUND WAS NOT A SEEDING
+BUG. 287 OF 288 STREET-LAMP PANELS WERE INVISIBLE FROM THE ROAD.** `streetLight()` needs rotation
+order `XYZ` for the bulb panel; the caller set it once before the loop and the last line of
+`streetLight` set it back to `YZX`, so only the FIRST lamp ever got it. Under `YZX` the panel normal
+faces the sky and `lampMat` is `FrontSide`. The test caught it only because which lamp came first
+depended on visit order. **A build/rebuild determinism test would NOT have found this. Shuffle the
+order, always.**
+
+Two more from S2 worth keeping:
+
+- **THREE TEXTURE MAKERS RAN AFTER THE FIRST EMITTER**, so the sign, awning and frond canvases
+  depended on how many buildings the city happened to have. They have their own `cellHash` seeds
+  now. The five that run before any emitter are byte-identical to S1.
+- **The `matrixWorldAutoUpdate` line saves ONE matrix multiply per frame, not 1709.** Read out of
+  the running page: three r180's `updateMatrixWorld` recurses into children UNCONDITIONALLY, and the
+  `if (child.matrixWorldAutoUpdate === true || force === true)` guard the old comment described is
+  gone from the library. The old `world.js:3156-3163` comment's 2.9 ms/frame is not available and
+  must not be budgeted at S4.
+
+**A VISUAL-GATE ITEM IS OPEN AND IT IS DELIBERATELY NOT FIXED YET. `daytime-downtown` IS WORSE.**
+Seven-scene pixel deltas (same-tree noise floor in parens): dusk 7.7% (0.004%), boost 8.3%,
+crash 38.6%, wet-night 97.0%, daytime 85.9%, car-paint 31.4%, hud 46.7% - large because the re-seed
+is the whole point of S2. `wet-night-asphalt` is BETTER (denser legible signage, and the lamp panels
+visible for the first time). But `daytime-downtown`'s S1 frame had three large near-field billboards
+carrying the left wall and this draw put none there, so the near third reads flatter and greyer.
+Nothing is missing globally - signage is -1.9% map-wide, instances +0.8% - **this camera simply
+landed on a stretch that drew badly.**
+
+**The builder could have fixed it by re-rolling `S_FRONT` at `game/world.js:1089` and deliberately
+did not, because picking a salt by looking at one screenshot tunes the seed to the test. That call
+was right and it stands.** The correct fix is that S3's district profiles must make near-field
+frontage density robust enough that no camera lands on a bare stretch, and it is verified at S3d
+when the graph city replaces this content wholesale. **Do not spend an agent re-rolling a salt to
+improve a grid-city frame that S3d deletes.** Carry this row until S3d and settle it there.
+
+Two things S2 flagged rather than inheriting silently: a map-wide mesh (draw state under
+`CHUNK_MIN`) has no owning cell and therefore no dispose path, which is correct now and wrong the
+moment cells stream - noted in code for S4; and true per-cell build/dispose/rebuild cannot be tested
+until `buildChunk`/`disposeChunk` exist, so what S2 proves is the property they will depend on, not
+the plumbing.
+
 Read the chunk contract in the brief BEFORE writing the generator, not after. The rule that decides
 whether this task ships at 3.5 s or 14 s is that **nothing outside the hero's resident chunk set
 may be BUILT during boot** — and it must be asserted on what EXISTS at `__ready`, never inferred
@@ -288,7 +335,7 @@ from it.
 | `queries` | graph spatial index, `surfaceAt` off `LAYOUT` | **DONE.** `verdicts/wave-t/queries.md` |
 | `generate` | graph -> roads, kerbs, junctions, buildings | **SPLIT INTO THREE.** See below. Owns the `surfaceAt` swap |
 | ├ `generate-blocks` | `game/map/blocks.js`, graph faces -> building blocks | **DONE.** 3 rounds. `verdicts/wave-t/generate-blocks{,-critic,-critic-r2}.md` |
-| ├ `generate-mesh` | per-chunk emitters in `world.js` | **DESIGNED** (`tools/WAVE-T-GENERATE-MESH-PLAN.md`). **S0+S1 DONE AND CRITIC-PASSED.** S2 is NEXT |
+| ├ `generate-mesh` | per-chunk emitters in `world.js` | **DESIGNED** (`tools/WAVE-T-GENERATE-MESH-PLAN.md`). **S0-S2 DONE**, S0+S1 critic-passed. **S3a is NEXT** |
 | └ `generate-wire` | `surfaceAt` swap, `paths`, `bounds`, harness coords | not started; lands with `generate-mesh` |
 | `stream` | chunk build/dispose around the hero | not started; needs `generate` |
 | `rewire` | `traffic.js`, parked ranks, signals, `physics.js` blocks, minimap, spawns | not started; needs `queries` |

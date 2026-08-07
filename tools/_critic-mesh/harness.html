@@ -1,0 +1,28 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>critic mesh harness</title>
+<script type="importmap">
+{ "imports": {
+    "three": "https://esm.sh/three@0.180.0",
+    "three/webgpu": "https://esm.sh/three@0.180.0/webgpu",
+    "three/tsl": "https://esm.sh/three@0.180.0/tsl",
+    "three/addons/": "https://esm.sh/three@0.180.0/examples/jsm/" } }
+</script>
+<script>
+  // Both modules patch THREE.ShaderChunk.shadowmap_pars_fragment once each; two module
+  // instances would double-patch. This comparison is of instance data, not shaders.
+  globalThis.__noPcss = true;
+  window.__err = [];
+  window.addEventListener('error', (e) => window.__err.push(String(e.error || e.message)));
+  window.addEventListener('unhandledrejection', (e) => window.__err.push(String(e.reason)));
+</script>
+</head>
+<body style="margin:0;background:#000">
+<canvas id="gl" width="320" height="200"></canvas>
+<script type="module">
+  try {
+    const m = await import('./cmp.js');
+    window.__result = await m.run();
+  } catch (e) { window.__err.push(String(e && (e.stack || e.message) || e)); window.__result = { fatal: true }; }
+  window.__done = true;
+</script>
+</body></html>

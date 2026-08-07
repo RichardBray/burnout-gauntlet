@@ -1,0 +1,15 @@
+<!doctype html><html><head><meta charset="utf-8">
+<script type="importmap">
+{ "imports": { "three": "https://esm.sh/three@0.180.0",
+  "three/webgpu": "https://esm.sh/three@0.180.0/webgpu",
+  "three/tsl": "https://esm.sh/three@0.180.0/tsl",
+  "three/addons/": "https://esm.sh/three@0.180.0/examples/jsm/" } }
+</script>
+<script>globalThis.__noPcss = true; window.__err = [];
+window.addEventListener('error', (e) => window.__err.push(String(e.error || e.message)));</script>
+</head><body style="margin:0"><canvas id="gl" width="320" height="200"></canvas>
+<script type="module">
+try { const m = await import('./census.js' + location.search); window.__result = m.run(); }
+catch (e) { window.__err.push(String(e && (e.stack || e.message) || e)); }
+window.__done = true;
+</script></body></html>
