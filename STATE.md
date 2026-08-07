@@ -60,7 +60,23 @@ Opening a new wave block is the moment to do this, not later.
 
 ### WAVE T — LIVE. THE MAP. `TASKS.md` wave 4, task T3. Opened session 18, 2026-08-07.
 
-**EXACT NEXT ACTION: S3c.** The two-scene boot failure is **FIXED** —
+**EXACT NEXT ACTION: A CRITIC ON S3c, THEN S3d.** S3c is BUILT and self-verified (`d696581`,
+`verdicts/wave-t/generate-mesh-s3c.md`): `paths.city` is the largest-area downtown planar face
+(face 90, 1978 m), `paths.highway` the longest motorway chain (11 edges, 1190.5 m), `heroDist` is a
+900-sample scan, `world.surfaceAt` is published and injected by `main.js`, and `physics.js` `bounds`
+is 1400 -> 2000. 7/7 scenes spawn on tarmac, both paths 900/900 on tarmac, grid inside its noise
+floor. It has NOT been through a critic.
+
+**AND READ THIS BEFORE STARTING ANYTHING: TWO ORCHESTRATORS WERE RUNNING ON THIS REPO AT ONCE
+DURING SESSION 20 AND IT NEARLY COST THE PIECE.** `tools/_t4-surface.mjs` changed on disk WHILE IT
+WAS BEING RUN, and `tools/BRIEF-S3C.md`, `tools/BRIEF-S3C-CRITIC.md` and `tools/_s3c-check.mjs`
+appeared from a second agent; an `opencode` process was still live. `game/world.js` was saved and
+md5-verified before committing, so the landed build is clean - but that was luck, and two writers on
+`world.js` would have silently destroyed one side. **Those four foreign files are UNCOMMITTED and
+UNVERIFIED in the working tree. Check `ps` for a live `opencode`/`grok`/`codex` before you write to
+`game/`.**
+
+The two-scene boot failure is **FIXED** —
 `verdicts/wave-t/generate-mesh-s3b-hotfix.md`. **It was never a hang.** Shot mode's tick loop at
 `main.js:896` runs BEFORE `window.__ready` and is not wrapped, so one throw inside it leaves a live,
 console-clean page that never signals. The throw was
@@ -73,7 +89,16 @@ pole in the first four simulated seconds.** All seven scenes now boot under `#ma
 on all seven, and `tools/_polefall-probe.mjs` asserts the hide on the SUBMITTED INSTANCE MATRICES
 with a poison control that fires on the pre-fix tree. Now
 **S3c - `paths`, `heroDist`, `surfaceAt` and `bounds` under `#map=graph`**,
-`tools/WAVE-T-GENERATE-MESH-PLAN.md:861-865`, decisions 7 and 8. **S3b IS OTHERWISE DONE** -
+`tools/WAVE-T-GENERATE-MESH-PLAN.md:861-865`, decisions 7 and 8.
+
+**SESSION 20 WROTE THE TWO S3c BRIEFS AND THEY ARE REUSABLE IF THIS ROUND IS ALSO KILLED:
+`tools/BRIEF-S3C.md` (builder) and `tools/BRIEF-S3C-CRITIC.md` (critic).** Session 19's builder was
+killed before it wrote anything - no verdict, no commit. The builder brief carries the four
+consumers, the `GRAPH`-flag gating rule, the checks, and the S3b fact that the 52 `motorway` edges
+are TWENTY connected components so `paths.highway` must walk ONE chain. The critic brief carries the
+poison-control requirement on the drive probe and the "already known, not a finding" list.
+
+**S3b IS OTHERWISE DONE** -
 `verdicts/wave-t/generate-mesh-s3b.md`. Two things S3b left for S3c specifically: `heroDist`
 (`game/world.js:3339`) RETURNS `Infinity` UNDER `#map=graph`, so the parked population is not culled
 away from the hero's driving line - it cannot be, because `paths.city` is still the grid's
@@ -536,7 +561,7 @@ from it.
 | `generate` | graph -> roads, kerbs, junctions, buildings | **SPLIT INTO THREE.** See below. Owns the `surfaceAt` swap |
 | ├ `generate-blocks` | `game/map/blocks.js`, graph faces -> building blocks | **DONE.** 3 rounds. `verdicts/wave-t/generate-blocks{,-critic,-critic-r2}.md` |
 | ├ `generate-mesh` | per-chunk emitters in `world.js` | **DESIGNED** (`tools/WAVE-T-GENERATE-MESH-PLAN.md`). **S0-S2 DONE** (S0+S1 critic-passed). **S3a DONE**: roads, junctions, kerbs and pavement. **S3b DONE**: the city - blocks, districts, buildings, signage, neon, props, cars, street furniture, `world.blocks` + `world.blockIndex`. **The 2-scene `#map=graph` boot failure is FIXED** (`generate-mesh-s3b-hotfix.md`); all 7 boot, grid unaffected. **S3c next** |
-| └ `generate-wire` | `surfaceAt` swap, `paths`, `bounds`, harness coords | folded into `generate-mesh` S3c, **BUILDER RUNNING** (grok-4.5, session 19). If this row still says RUNNING and no `verdicts/wave-t/generate-mesh-s3c.md` exists, the round was killed - re-run it |
+| └ `generate-wire` | `surfaceAt` swap, `paths`, `bounds`, harness coords | **DONE as `generate-mesh` S3c**, commit `d696581`, `verdicts/wave-t/generate-mesh-s3c.md`. NOT yet critic-passed. **NOTHING IS RUNNING ON IT - do not start a third builder.** Two delegated grok-4.5 attempts died at the CLI with zero edits; it was built in the main agent |
 | `stream` | chunk build/dispose around the hero | not started; needs `generate` |
 | `rewire` | `traffic.js`, parked ranks, signals, `physics.js` blocks, minimap, spawns | not started; needs `queries` |
 | `skyline` | far LOD / impostors | not started |
