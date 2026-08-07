@@ -239,6 +239,39 @@ median 32 / max 64 m; 30 of the 31 sit on a ring face. Both the builder and the 
 them at ~200 m before facades go on. If the probe dislikes them the fix belongs in `blocks.js`, not
 in `rewire`.
 
+**S0+S1 PASSED THEIR CRITIC** - `verdicts/wave-t/generate-mesh-s01-critic.md`. It re-ran the whole
+proof independently: modules genuinely separate (HEAD's `chunkStats` is an OBJECT, the new one a
+FUNCTION), a deliberate 1e-4 poison control fires, 0 differing values of 3786909 ordered AND
+0 rows differing in an unordered multiset over all 199311 instance rows. It also **closed a hole
+the builder left**: Pass A/B were instanced-only, so it compared the 279 PLAIN meshes too - the road
+ribbons and kerbs that S0's `buildRibbon` rewrite actually builds - 0 diffs of 30684.
+
+**THE 199311 vs 203540 INSTANCE GAP IS RESOLVED EXACTLY, WITH NO REMAINDER, AND THE STALE NUMBER IS
+IN THE PLAN, NOT THE CODE.** `tools/perf-probe.mjs:955-978` adds `totalInst++` for every PLAIN mesh
+as well as `o.count` for instanced ones, and the same run reports `plainObjs: 567`. Censusing six
+historical trees: `40d2f1c` (where the comment was written) = 202973 = 203540 - 567 exactly, then
+-640 for the -20% NPC change, -1510 for parked cars halved, -1512 for the deleted overhead wires.
+567 + 640 + 1510 + 1512 = 4229. **Do not re-open this.**
+
+Six findings, none blocking, all for S2 to absorb:
+
+1. **`finalize()` never frees `p._m`/`p._c` (`world.js:1259`) - 18.45 MB + 2.05 MB retained across
+   67 descriptors**, despite the plan saying "freed at finalize". Not a regression (total instance
+   memory went 45.02 -> 33.95 MB) but it IS the "dispose path that does not dispose" that chunk
+   contract rule 3 is about, and it will present at S4 as a memory creep blamed on streaming.
+2. **"Risk 2 HANDLED" IS A COMMENT, NOT CODE** - exactly 1 object in the subtree has
+   `matrixWorldAutoUpdate === false`, the same as HEAD. That is rule 5's exact shape. **And the
+   hazard is not real**: a Group added post-boot composes correctly on both trees because
+   `Object3D.updateMatrix()` forces the Scene subtree every frame. **Which also means HEAD's claimed
+   2.9 ms/frame saving from the opt-out at the old `world.js:3156-3163` IS NOT BEING DELIVERED.**
+   Two corrections in one finding: fix the comment, and do not budget for that 2.9 ms.
+3. **The `hidePoles` bug was BIGGER than the builder claimed**: `tlArm`/`tlHead` had it too, not
+   just `slArm`/`slHead`. 5 lamps + 5 signals sink 30 instances on HEAD against 50 now. Four pools,
+   not two. Fix verified idempotent, distinct slots, no over-hide, `_phantom-probe.mjs` clean.
+4. `resolve()` drops HEAD's write-to-source fallback, so a future miss fails silently.
+5. `SIGN_CAP = 1000` is left as dead code, and the cap count is **53, not 51**.
+6. The `Array.isArray(material)` guard and its comment were deleted from the bucketing.
+
 Read the chunk contract in the brief BEFORE writing the generator, not after. The rule that decides
 whether this task ships at 3.5 s or 14 s is that **nothing outside the hero's resident chunk set
 may be BUILT during boot** — and it must be asserted on what EXISTS at `__ready`, never inferred
@@ -255,7 +288,7 @@ from it.
 | `queries` | graph spatial index, `surfaceAt` off `LAYOUT` | **DONE.** `verdicts/wave-t/queries.md` |
 | `generate` | graph -> roads, kerbs, junctions, buildings | **SPLIT INTO THREE.** See below. Owns the `surfaceAt` swap |
 | ├ `generate-blocks` | `game/map/blocks.js`, graph faces -> building blocks | **DONE.** 3 rounds. `verdicts/wave-t/generate-blocks{,-critic,-critic-r2}.md` |
-| ├ `generate-mesh` | per-chunk emitters in `world.js` | **DESIGNED** (`tools/WAVE-T-GENERATE-MESH-PLAN.md`). **S0+S1 DONE**, `verdicts/wave-t/generate-mesh-s[01].md`. S1 in critique |
+| ├ `generate-mesh` | per-chunk emitters in `world.js` | **DESIGNED** (`tools/WAVE-T-GENERATE-MESH-PLAN.md`). **S0+S1 DONE AND CRITIC-PASSED.** S2 is NEXT |
 | └ `generate-wire` | `surfaceAt` swap, `paths`, `bounds`, harness coords | not started; lands with `generate-mesh` |
 | `stream` | chunk build/dispose around the hero | not started; needs `generate` |
 | `rewire` | `traffic.js`, parked ranks, signals, `physics.js` blocks, minimap, spawns | not started; needs `queries` |
