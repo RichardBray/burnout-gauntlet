@@ -67,6 +67,15 @@ Opening a new wave block is the moment to do this, not later.
 is 1400 -> 2000. 7/7 scenes spawn on tarmac, both paths 900/900 on tarmac, grid inside its noise
 floor. It has NOT been through a critic.
 
+**THE CRITIC IS RUNNING AND IT WAS POINTED AT ONE THING FIRST: S3c NEVER RAN THE DRIVE PROBE.** Its
+brief required one (`tools/BRIEF-S3C.md` §3.4) and the verdict defers it - "full drive probe across
+chunk boundaries belongs to `stream`/`rewire`". That may be legitimate, but it is the map brief's
+THIRD wave-ending failure mode: the validator and both path checks assert on the graph DATA, and
+**900 samples all on tarmac proves the graph is fine and proves nothing about what was BUILT.** The
+critic is asked to judge the deferral on its merits and to run the probe if it can. Whatever it
+answers, the probe is owed before this wave closes - if the critic rules the deferral legitimate,
+the debt moves to `stream`, it does not disappear.
+
 **AND READ THIS BEFORE STARTING ANYTHING: TWO ORCHESTRATORS WERE RUNNING ON THIS REPO AT ONCE
 DURING SESSION 20 AND IT NEARLY COST THE PIECE.** `tools/_t4-surface.mjs` changed on disk WHILE IT
 WAS BEING RUN, and `tools/BRIEF-S3C.md`, `tools/BRIEF-S3C-CRITIC.md` and `tools/_s3c-check.mjs`
@@ -561,7 +570,7 @@ from it.
 | `generate` | graph -> roads, kerbs, junctions, buildings | **SPLIT INTO THREE.** See below. Owns the `surfaceAt` swap |
 | ├ `generate-blocks` | `game/map/blocks.js`, graph faces -> building blocks | **DONE.** 3 rounds. `verdicts/wave-t/generate-blocks{,-critic,-critic-r2}.md` |
 | ├ `generate-mesh` | per-chunk emitters in `world.js` | **DESIGNED** (`tools/WAVE-T-GENERATE-MESH-PLAN.md`). **S0-S2 DONE** (S0+S1 critic-passed). **S3a DONE**: roads, junctions, kerbs and pavement. **S3b DONE**: the city - blocks, districts, buildings, signage, neon, props, cars, street furniture, `world.blocks` + `world.blockIndex`. **The 2-scene `#map=graph` boot failure is FIXED** (`generate-mesh-s3b-hotfix.md`); all 7 boot, grid unaffected. **S3c next** |
-| └ `generate-wire` | `surfaceAt` swap, `paths`, `bounds`, harness coords | **DONE as `generate-mesh` S3c**, commit `d696581`, `verdicts/wave-t/generate-mesh-s3c.md`. NOT yet critic-passed. **NOTHING IS RUNNING ON IT - do not start a third builder.** Two delegated grok-4.5 attempts died at the CLI with zero edits; it was built in the main agent |
+| └ `generate-wire` | `surfaceAt` swap, `paths`, `bounds`, harness coords | **DONE as `generate-mesh` S3c**, commit `d696581`, `verdicts/wave-t/generate-mesh-s3c.md`. NOT yet critic-passed. **Do not start a third builder.** Two delegated grok-4.5 attempts died at the CLI with zero edits; it was built in the main agent. **CRITIC RUNNING** (gpt via `codex exec`, session 20, against `tools/BRIEF-S3C-CRITIC.md`) - gpt not grok, because of those two CLI deaths. If this row says CRITIC RUNNING and no `verdicts/wave-t/generate-mesh-s3c-critic.md` exists, that round was killed - re-run it |
 | `stream` | chunk build/dispose around the hero | not started; needs `generate` |
 | `rewire` | `traffic.js`, parked ranks, signals, `physics.js` blocks, minimap, spawns | not started; needs `queries` |
 | `skyline` | far LOD / impostors | not started |
