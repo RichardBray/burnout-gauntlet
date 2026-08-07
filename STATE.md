@@ -203,6 +203,42 @@ Three things from S1 that outlive it:
 - **`car-paint-closeup` has exactly ONE bistable pixel, at (331,607), and BOTH trees produce BOTH
   values.** Traced across nine renders. Anyone chasing a maxd 17 in that scene should stop here.
 
+**`generate-blocks` IS DONE**, three rounds, critic-passed at r2 with two defects fixed in r3.
+`game/map/blocks.js` extracts the planar FACES of the road graph (half-edge twins, bearing sort on
+the first segment leaving the node, next-clockwise walk) and fills them with axis-aligned
+rectangles. **868 blocks, 1.848 km2, largest 140x112 m, zero blocks over 200 m on both sides,
+0 tarmac violations of 7561948 probes at 0.5 m, min clearance 0.5050 m against
+`KERB_MARGIN = 0.5`.** Build 352 ms, all-or-nothing. `buildBlockIndex` is published alongside the
+flat array. `paradise.json` is NOT modified: the four shared-node crossings are split in a deep copy
+at build time, 5.3 ms, so the file on disk is still non-planar and the published edge ids are
+stable.
+
+Four things from this piece that generalise:
+
+- **`V - E + F = 2` IS THE PLANARITY CHECK. THE SIGNED-AREA IDENTITY IS A TAUTOLOGY.** See the
+  critic block above. Round 1 shipped chi = -4 with six faces merged and every area check green.
+- **A GIANT FACE EMITS A RING OF PERIMETER RECTANGLES, NEVER ONE SLAB.** `BIG_FACE_AREA = 40000`,
+  `RING_DEPTH = 40.0`. The interior of an un-roaded loop is terrain and must stay drivable. Round 1
+  put a 352x872 m solid AABB on what the overlay later showed to be **a lake with boats on it**.
+- **DO NOT MEASURE "IS THERE A ROAD HERE" WITH `_maptrace.mjs`'s MASK.** Round 3 withdrew its own
+  numeric 5a/5b split after re-rendering the reference and looking: the mask reads bright BARE ROCK
+  as road, which is exactly the failure `digitise.md` already records as "a coverage metric over a
+  noisy mask measures the noise". The replacement is five faces individually eyeballed - 90, 130,
+  63, 171, 146, 0.598 km2 of face, 86 blocks - **stated as a floor with no total claimed.** Note
+  face 221's apparent interior road is the RAILWAY, which `digitise` deliberately leaves untraced.
+- **The block index was verified at the one parameter value where its bug could not appear.**
+  `index.at(x, z, pad)` duplicated results for every `pad > 0` - 1054 of 8000 probes at `pad = 1.0`,
+  which is exactly `physics.js:922`'s `hx = b.w/2 + 1.0` - while the harness only ever called
+  `pad = 0`, where `reach = 0` makes it structurally impossible. Fixed by mark-and-sweep against a
+  generation counter (not a `Set` per call; this runs at 240 Hz per car). The honest consequence:
+  **the published speedup fell from 38x to 4x** once it was timed at the pad the caller uses.
+
+**KNOWN INPUT TO THE DRIVE PROBE, deferred on purpose and not overlooked:** 31 frontage strips up to
+432 m long are still single AABBs, so each is an unbroken 432 m collision face. Short side min 20 /
+median 32 / max 64 m; 30 of the 31 sit on a ring face. Both the builder and the critic would cut
+them at ~200 m before facades go on. If the probe dislikes them the fix belongs in `blocks.js`, not
+in `rewire`.
+
 Read the chunk contract in the brief BEFORE writing the generator, not after. The rule that decides
 whether this task ships at 3.5 s or 14 s is that **nothing outside the hero's resident chunk set
 may be BUILT during boot** — and it must be asserted on what EXISTS at `__ready`, never inferred
@@ -218,7 +254,7 @@ from it.
 | `digitise` | `game/map/paradise.json`, `game/map/validate.mjs` | **DONE.** `verdicts/wave-t/digitise.md` |
 | `queries` | graph spatial index, `surfaceAt` off `LAYOUT` | **DONE.** `verdicts/wave-t/queries.md` |
 | `generate` | graph -> roads, kerbs, junctions, buildings | **SPLIT INTO THREE.** See below. Owns the `surfaceAt` swap |
-| ├ `generate-blocks` | `game/map/blocks.js`, graph faces -> building blocks | **R2 PASSED** (`verdicts/wave-t/generate-blocks-critic-r2.md`). R3 running: 2 defects |
+| ├ `generate-blocks` | `game/map/blocks.js`, graph faces -> building blocks | **DONE.** 3 rounds. `verdicts/wave-t/generate-blocks{,-critic,-critic-r2}.md` |
 | ├ `generate-mesh` | per-chunk emitters in `world.js` | **DESIGNED** (`tools/WAVE-T-GENERATE-MESH-PLAN.md`). **S0+S1 DONE**, `verdicts/wave-t/generate-mesh-s[01].md`. S1 in critique |
 | └ `generate-wire` | `surfaceAt` swap, `paths`, `bounds`, harness coords | not started; lands with `generate-mesh` |
 | `stream` | chunk build/dispose around the hero | not started; needs `generate` |
