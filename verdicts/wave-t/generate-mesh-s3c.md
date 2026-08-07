@@ -246,3 +246,64 @@ claimed.
 
 `node --check game/world.js`, `node --check tools/_s3c-drive.mjs`, and `bash tools/lint.sh` all exit
 0 (`lint ok`). No frame-time number was taken or reported.
+
+## ROUND 3
+
+Round 3 changes only `tools/_s3c-drive.mjs`: it fixes the probe's attribution and replaces the five
+single-edge routes with connected three-edge chains. `paths.city`, `paths.highway`, and everything
+under `game/` are untouched.
+
+### Authored routes: pure-data preflight
+
+The same path construction, 4 m sampling, `createRoadGraph(doc).surfaceAt`, `createBlocks(doc)`,
+1.0 m hero expansion, and 200 m plane enumeration used by the probe were run in pure Node before
+any browser driving. Every chain is connected; “junctions” counts the two distinct shared nodes.
+
+| district | edge ids in order | length m | junctions | chunk boundaries | tarmac | expanded block hits |
+|---|---|---:|---:|---:|---:|---:|
+| Downtown | 602, 904, 903 | 128.255 | 2 | 2 | 34/34 | 0 |
+| Harbor | 925, 924, 792 | 132.525 | 2 | 2 | 35/35 | 0 |
+| Palm Bay | 447, 431, 404 | 135.732 | 2 | 3 | 35/35 | 0 |
+| Silver Lake | 126, 135, 151 | 125.685 | 2 | 2 | 33/33 | 0 |
+| Mountain | 806, 813, 832 | 137.713 | 2 | 2 | 36/36 | 0 |
+
+Route literals changed from one `[edge,entry]` pair per district at old lines 34-38 to the three
+pairs per district at `tools/_s3c-drive.mjs:41-45`. The only new numeric literal is
+`DRIVER_POISON_OFFSET = 120` m at `tools/_s3c-drive.mjs:36`; all existing strictness constants are
+unchanged.
+
+### WORLD versus DRIVER provenance
+
+`worldFailures` is populated only during the all-route preflight at `tools/_s3c-drive.mjs:216-303`:
+edge existence/district/orientation, connected chain, at least two junctions and chunk boundaries,
+100% authored-sample tarmac, and zero expanded-`world.blocks` intersections. Any WORLD failure
+returns before physics drives. No world assertion was deleted or loosened.
+
+`driverFindings` is populated only from the driven trajectory at
+`tools/_s3c-drive.mjs:305-365`: end progress, stuck time, bounds, driven `surfaceAt`, driven block
+contacts, crossed planes, and exact polyline lateral distance. Each route result always includes
+`driver.maxLateralDeparture` in metres. Baseline DRIVER findings are loud diagnostics but nonfatal;
+they can never become WORLD failures. Only the explicit driver poison finding is fatal.
+
+### Baseline and poisons
+
+**Probe written, not executed, blocked by listen EPERM.** The probe and all four browser modes need
+WebGL-built `world.blocks`; I did not fake a run, add a Node fallback, or claim an exit result.
+
+| invocation | authored mechanism / pure-data control | browser result here |
+|---|---|---|
+| baseline | clean WORLD preflight above; runtime reports every route's max lateral departure | not executed |
+| `--poison=wall` | 14 x 14 m block at Downtown u=0.52; pure data hits 3 authored segments | not executed; designed WORLD red / exit 1 |
+| `--poison=sever` | appends edge 598 at node 450 after route exit node 476; connectivity is false | not executed; designed chain red / exit 1 |
+| `--poison=driver` | one 120 m lateral shove of physics state; never mutates world data | not executed; designed fatal DRIVER finding / exit 1 with zero WORLD failures |
+
+Fresh local checks: `node --check tools/_s3c-drive.mjs`, `node --check game/map/graph.js`,
+`node --check game/map/blocks.js`, and `bash tools/lint.sh` exit 0 (`lint ok`). The patch adds zero
+materials and changes no files under `game/`; protected `POOL = 24` and `NPC_DENSITY = 0.16` remain
+untouched. No frame-time number or visual wave was opened.
+
+### Honest limitation
+
+The probe still cannot see a missing road ribbon or a ribbon/junction render-mesh seam. Physics has
+no ground-contact signal against road triangles, and `game/physics.js:1973` forces
+`state.pos.y = 0`. This remains a real, explicitly uncovered gap; the probe makes no contrary claim.

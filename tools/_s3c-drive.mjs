@@ -1,13 +1,19 @@
-// S3c round-2 built-collision drive probe.
+// S3c round-3 built-collision drive probe.
 //
-// This probe asserts on `world.blocks` collision and `surfaceAt` continuity along one authored
-// graph route per district. It does NOT assert ribbon/junction mesh contact, because physics has no
-// such signal: game/physics.js:1973 forces `state.pos.y = 0`. That gap is real and belongs to a
-// later piece; deleting the road render mesh cannot make this probe red.
+// WORLD assertions inspect only each AUTHORED graph-route corridor: chain connectivity, chunk-plane
+// coverage, `surfaceAt`, and expanded `world.blocks`. DRIVER findings inspect only the DRIVEN
+// trajectory: lateral departure, driven surface/block contacts, progress, bounds, and stuck time.
+// These provenances are never merged, so leaving the route cannot accuse the world corridor.
+//
+// This probe does NOT assert ribbon/junction render-mesh contact or detect a missing ribbon/seam,
+// because physics has no road-triangle ground-contact signal: game/physics.js:1973 forces
+// `state.pos.y = 0`. That gap is real and belongs to a later piece; deleting the road render mesh
+// cannot make this probe red.
 //
 // Baseline (must exit 0):       node tools/_s3c-drive.mjs
 // Wall poison (must exit 1):   node tools/_s3c-drive.mjs --poison=wall
-// Sever poison (must exit 1): node tools/_s3c-drive.mjs --poison=sever
+// Sever poison (must exit 1):  node tools/_s3c-drive.mjs --poison=sever
+// Driver poison (must exit 1): node tools/_s3c-drive.mjs --poison=driver
 //
 // The browser is required: `world.blocks` must come from the WebGL-built graph world. There is no
 // Node fallback. In a delegated sandbox the localhost listen may honestly fail with `listen EPERM`.
@@ -27,21 +33,22 @@ const END_RADIUS = 10;
 const BOUNDARY_TOLERANCE = 18;
 const STUCK_SPEED = 2;
 const STUCK_SECONDS = 2;
+const DRIVER_POISON_OFFSET = 120;
 
 // Authored from paradise.json. `[edge id, entry node]`; every edge's declared district is checked
-// before driving. These long, simple routes cross chunk planes without manufacturing graph joins.
+// before driving. Each connected chain traverses two graph junctions and at least two chunk planes.
 const ROUTES = [
-  { district: 'downtown', edges: [[595, 447]] },
-  { district: 'harbor', edges: [[741, 567]] },
-  { district: 'palmbay', edges: [[94, 71]] },
-  { district: 'silverlake', edges: [[100, 77]] },
-  { district: 'mountain', edges: [[339, 253]] },
+  { district: 'downtown', edges: [[602, 453], [904, 477], [903, 679]] },
+  { district: 'harbor', edges: [[925, 602], [924, 686], [792, 608]] },
+  { district: 'palmbay', edges: [[447, 339], [431, 338], [404, 323]] },
+  { district: 'silverlake', edges: [[126, 111], [135, 104], [151, 116]] },
+  { district: 'mountain', edges: [[806, 621], [813, 626], [832, 641]] },
 ];
 
 const poisonArg = process.argv.find((s) => s.startsWith('--poison='));
 const poison = poisonArg ? poisonArg.slice('--poison='.length) : null;
-if (poison && poison !== 'wall' && poison !== 'sever') {
-  console.error(`unknown poison ${JSON.stringify(poison)}; expected wall or sever`);
+if (poison && poison !== 'wall' && poison !== 'sever' && poison !== 'driver') {
+  console.error(`unknown poison ${JSON.stringify(poison)}; expected wall, sever, or driver`);
   process.exit(2);
 }
 
@@ -97,8 +104,14 @@ try {
     physics.setParkedBodies([]);
     physics.setTrafficBodies(() => []);
 
-    const failures = [];
-    const fail = (district, assertion, detail) => failures.push({ district, assertion, detail });
+    const worldFailures = [];
+    const driverFindings = [];
+    const failWorld = (district, assertion, detail) => {
+      worldFailures.push({ provenance: 'WORLD', district, assertion, detail });
+    };
+    const findDriver = (district, assertion, detail, fatal = false) => {
+      driverFindings.push({ provenance: 'DRIVER', district, assertion, detail, fatal });
+    };
     const docPromise = fetch('/map/paradise.json').then((r) => r.json());
 
     const makePath = (points) => {
@@ -133,12 +146,21 @@ try {
           return { x: (b.x - a.x) / n, y: 0, z: (b.z - a.z) / n, normalize() { return this; } };
         },
         nearest(v) {
-          let best = samples[0], bestD2 = Infinity;
-          for (const s of samples) {
-            const d2 = (s.x - v.x) ** 2 + (s.z - v.z) ** 2;
-            if (d2 < bestD2) { best = s; bestD2 = d2; }
+          let best = points[0], bestD2 = Infinity, bestDistance = 0;
+          for (let i = 1; i < points.length; i++) {
+            const a = points[i - 1], b = points[i];
+            const dx = b.x - a.x, dz = b.z - a.z, len2 = dx * dx + dz * dz;
+            const t = len2 > 0
+              ? Math.max(0, Math.min(1, ((v.x - a.x) * dx + (v.z - a.z) * dz) / len2)) : 0;
+            const point = { x: a.x + dx * t, y: 0, z: a.z + dz * t };
+            const d2 = (point.x - v.x) ** 2 + (point.z - v.z) ** 2;
+            if (d2 < bestD2) {
+              best = point;
+              bestD2 = d2;
+              bestDistance = cumulative[i - 1] + Math.sqrt(len2) * t;
+            }
           }
-          return { u: best.distance / length, point: best, dist: Math.sqrt(bestD2) };
+          return { u: bestDistance / length, point: best, dist: Math.sqrt(bestD2) };
         },
       };
     };
@@ -196,21 +218,29 @@ try {
       const edge = new Map(doc.edges.map((e) => [e.id, e]));
       const authored = routes.map((route) => {
         const points = [];
+        const junctionNodes = new Set();
         let previousExit = null;
         const specs = route.edges.map((pair) => pair.slice());
         if (poisonMode === 'sever' && route.district === 'downtown') specs.push([598, 450]);
         for (const [id, entry] of specs) {
           const e = edge.get(id);
-          if (!e) { fail(route.district, 'authored route exists', `missing edge ${id}`); continue; }
+          if (!e) {
+            failWorld(route.district, 'authored route exists', `missing edge ${id}`);
+            continue;
+          }
           if (e.district !== route.district) {
-            fail(route.district, 'edge district', `edge ${id} declares ${e.district}`);
+            failWorld(route.district, 'authored edge district', `edge ${id} declares ${e.district}`);
           }
           if (entry !== e.a && entry !== e.b) {
-            fail(route.district, 'route orientation', `edge ${id} does not touch entry node ${entry}`);
+            failWorld(route.district, 'authored route orientation',
+              `edge ${id} does not touch entry node ${entry}`);
             continue;
           }
           if (previousExit !== null && entry !== previousExit) {
-            fail(route.district, 'connected edge chain', `expected node ${previousExit}, got ${entry}`);
+            failWorld(route.district, 'connected edge chain',
+              `expected node ${previousExit}, got ${entry}`);
+          } else if (previousExit !== null) {
+            junctionNodes.add(entry);
           }
           const raw = [node.get(e.a), ...e.shape, node.get(e.b)];
           if (entry === e.b) raw.reverse();
@@ -219,10 +249,13 @@ try {
           }
           previousExit = entry === e.a ? e.b : e.a;
         }
-        return { ...route, path: points.length >= 2 ? makePath(points) : null };
+        const path = points.length >= 2 ? makePath(points) : null;
+        if (junctionNodes.size < 2) {
+          failWorld(route.district, 'authored route traverses at least two graph junctions',
+            `${junctionNodes.size}/2`);
+        }
+        return { ...route, specs, path, junctions: junctionNodes.size };
       });
-
-      if (poisonMode === 'sever') return { poisonMode, routes: [], failures, page: 'graph' };
 
       let poisonBlock = null;
       if (poisonMode === 'wall') {
@@ -232,29 +265,67 @@ try {
         world.blocks.push(poisonBlock);
       }
 
+      // WORLD preflight is complete for every authored route before the first physics step.
       const routeResults = [];
       for (const route of authored) {
         const path = route.path;
         if (!path) continue;
-        const boundaries = boundariesOf(path), crossed = new Set(), corridorBlocks = new Set();
+        const boundaries = boundariesOf(path), authoredBlocks = new Set();
+        const authoredOffTarmac = path.samples.reduce((n, sample) =>
+          n + (world.surfaceAt(sample.x, sample.z) === 'tarmac' ? 0 : 1), 0);
         for (let i = 1; i < path.samples.length; i++) for (let bi = 0; bi < world.blocks.length; bi++) {
-          if (segmentHitsAabb(path.samples[i - 1], path.samples[i], world.blocks[bi])) corridorBlocks.add(bi);
+          if (segmentHitsAabb(path.samples[i - 1], path.samples[i], world.blocks[bi])) {
+            authoredBlocks.add(bi);
+          }
         }
+        if (boundaries.length < 2) failWorld(route.district,
+          'authored route crosses at least two 200 m chunk boundaries', `${boundaries.length}/2`);
+        if (authoredOffTarmac) failWorld(route.district, 'authored centreline remains tarmac',
+          `${path.samples.length - authoredOffTarmac}/${path.samples.length} samples`);
+        if (authoredBlocks.size) failWorld(route.district, 'world.blocks clears authored corridor',
+          `block indices ${[...authoredBlocks].join(',')}`);
+        routeResults.push({
+          district: route.district,
+          edgeIds: route.specs.map(([id]) => id),
+          length: +path.length.toFixed(3),
+          junctions: route.junctions,
+          boundaries: boundaries.length,
+          authoredTarmac: `${path.samples.length - authoredOffTarmac}/${path.samples.length}`,
+          authoredBlockHits: authoredBlocks.size,
+          driver: null,
+        });
+      }
 
+      if (worldFailures.length) {
+        if (poisonBlock) world.blocks.pop();
+        return { poisonMode, routes: routeResults, worldFailures, driverFindings,
+          probeFailures: [], page: world.chunkStats().map };
+      }
+
+      for (let ri = 0; ri < authored.length; ri++) {
+        const route = authored[ri], path = route.path;
+        const boundaries = boundariesOf(path), crossed = new Set(), drivenBlocks = new Set();
         physics.reset(path.at(0), Math.atan2(path.tangentAt(0).x, path.tangentAt(0).z), constants.START_SPEED);
         physics.followPath(path, constants.LOOKAHEAD);
         let prev = { x: physics.state.pos.x, z: physics.state.pos.z };
         let stuckFrames = 0, maxStuckFrames = 0, offTarmac = 0, outOfBounds = 0;
-        let reachedEnd = false, steps = 0;
+        let reachedEnd = false, steps = 0, maxLateralDeparture = 0, driverPoisonApplied = false;
         const maxSteps = Math.ceil((path.length / 6 + 12) / constants.FIXED_DT);
         for (; steps < maxSteps; steps++) {
           physics.step(constants.FIXED_DT);
+          if (poisonMode === 'driver' && route.district === 'downtown' && steps === 30) {
+            const near = path.nearest(physics.state.pos), tangent = path.tangentAt(near.u);
+            physics.state.pos.x += tangent.z * constants.DRIVER_POISON_OFFSET;
+            physics.state.pos.z -= tangent.x * constants.DRIVER_POISON_OFFSET;
+            driverPoisonApplied = true;
+          }
           const cur = { x: physics.state.pos.x, z: physics.state.pos.z };
+          maxLateralDeparture = Math.max(maxLateralDeparture, path.nearest(cur).dist);
           boundaries.forEach((b, i) => { if (!crossed.has(i) && crossesBoundary(prev, cur, b)) crossed.add(i); });
           if (world.surfaceAt(cur.x, cur.z) !== 'tarmac') offTarmac++;
           if (Math.abs(cur.x) > world.bounds || Math.abs(cur.z) > world.bounds) outOfBounds++;
           for (let bi = 0; bi < world.blocks.length; bi++) {
-            if (segmentHitsAabb(prev, cur, world.blocks[bi])) corridorBlocks.add(bi);
+            if (segmentHitsAabb(prev, cur, world.blocks[bi])) drivenBlocks.add(bi);
           }
           const end = path.at(1), endDistance = Math.hypot(cur.x - end.x, cur.z - end.z);
           if (endDistance <= constants.END_RADIUS && path.nearest(cur).u >= 0.9) {
@@ -271,40 +342,52 @@ try {
 
         const end = path.at(1), endDistance = Math.hypot(prev.x - end.x, prev.z - end.z);
         const stuckLimit = Math.ceil(constants.STUCK_SECONDS / constants.FIXED_DT);
-        if (!reachedEnd) fail(route.district, 'reaches route end', `${endDistance.toFixed(2)} m away`);
-        if (maxStuckFrames >= stuckLimit) fail(route.district, 'never stopped/stuck', `${maxStuckFrames} low-speed frames`);
-        if (outOfBounds) fail(route.district, 'never leaves bounds', `${outOfBounds} samples`);
-        if (offTarmac) fail(route.district, 'surfaceAt remains tarmac', `${offTarmac} samples`);
-        if (corridorBlocks.size) fail(route.district, 'world.blocks clears driven corridor',
-          `block indices ${[...corridorBlocks].join(',')}`);
-        if (crossed.size !== boundaries.length) fail(route.district, 'crosses every 200 m boundary',
-          `${crossed.size}/${boundaries.length}`);
-        routeResults.push({
-          district: route.district, edgeIds: route.edges.map(([id]) => id),
-          length: +path.length.toFixed(3), boundaries: boundaries.length, crossed: crossed.size,
+        if (!reachedEnd) findDriver(route.district, 'driver reaches route end',
+          `${endDistance.toFixed(2)} m away`);
+        if (maxStuckFrames >= stuckLimit) findDriver(route.district, 'driver never stopped/stuck',
+          `${maxStuckFrames} low-speed frames`);
+        if (outOfBounds) findDriver(route.district, 'driver stays inside bounds', `${outOfBounds} samples`);
+        if (offTarmac) findDriver(route.district, 'driver surfaceAt remains tarmac', `${offTarmac} samples`);
+        if (drivenBlocks.size) findDriver(route.district, 'driver trajectory clears world.blocks',
+          `block indices ${[...drivenBlocks].join(',')}`);
+        if (crossed.size !== boundaries.length) findDriver(route.district,
+          'driver crosses every authored 200 m boundary', `${crossed.size}/${boundaries.length}`);
+        if (maxLateralDeparture >= 25) findDriver(route.district, 'driver lateral excursion',
+          `${maxLateralDeparture.toFixed(3)} m maximum`);
+        if (driverPoisonApplied) findDriver(route.district, 'driver poison excursion',
+          `${maxLateralDeparture.toFixed(3)} m maximum after ${constants.DRIVER_POISON_OFFSET} m shove`, true);
+        routeResults[ri].driver = {
+          crossed: crossed.size,
           reachedEnd, endDistance: +endDistance.toFixed(3), offTarmac, outOfBounds,
+          maxLateralDeparture: +maxLateralDeparture.toFixed(3),
           maxStuckSeconds: +(maxStuckFrames * constants.FIXED_DT).toFixed(3),
-          corridorBlockHits: corridorBlocks.size, steps,
-        });
+          drivenBlockHits: drivenBlocks.size, steps,
+        };
       }
       if (poisonBlock) world.blocks.pop();
-      return { poisonMode, routes: routeResults, failures, page: world.chunkStats().map };
+      return { poisonMode, routes: routeResults, worldFailures, driverFindings,
+        probeFailures: [], page: world.chunkStats().map };
     });
   }, {
     routes: ROUTES,
     poisonMode: poison,
     constants: {
       CHUNK, HERO_RADIUS, FIXED_DT, START_SPEED, LOOKAHEAD, END_RADIUS,
-      BOUNDARY_TOLERANCE, STUCK_SPEED, STUCK_SECONDS,
+      BOUNDARY_TOLERANCE, STUCK_SPEED, STUCK_SECONDS, DRIVER_POISON_OFFSET,
     },
   });
 
   result.pageErrors = pageErrors;
-  if (pageErrors.length) result.failures.push({ district: 'page', assertion: 'no page errors', detail: pageErrors });
+  if (pageErrors.length) result.probeFailures.push({ provenance: 'PROBE', district: 'page',
+    assertion: 'no page errors', detail: pageErrors });
   console.log(JSON.stringify(result, null, 2));
-  if (result.failures.length) {
-    console.error(`S3C_PROBE_RED ${result.failures.length} failure(s)`);
+  const fatalDriverFindings = result.driverFindings.filter((finding) => finding.fatal);
+  if (result.worldFailures.length || fatalDriverFindings.length || result.probeFailures.length) {
+    console.error(`S3C_PROBE_RED WORLD=${result.worldFailures.length} `
+      + `DRIVER=${fatalDriverFindings.length} PROBE=${result.probeFailures.length}`);
     process.exitCode = 1;
+  } else if (result.driverFindings.length) {
+    console.warn(`S3C_PROBE_GREEN DRIVER_FINDINGS=${result.driverFindings.length}`);
   } else {
     console.log('S3C_PROBE_GREEN');
   }
