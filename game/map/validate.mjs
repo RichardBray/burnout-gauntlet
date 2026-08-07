@@ -1,7 +1,7 @@
 // Validate `game/map/paradise.json`. Wave T, the `digitise` piece. Runs from `tools/lint.sh`.
 //
 // The user's rule for T3 is that NO ROAD MAY GO NOWHERE: every drivable segment is reachable from
-// every other by driving on road only. That is a property of the DATA, so it is enforced on the
+// every other by driving on road only, AND nothing dead-ends. Every node has degree 2 or more. That is a property of the DATA, so it is enforced on the
 // data at build time rather than eyeballed in a screenshot.
 //
 // WHAT THIS FILE DOES NOT DO, and it matters more than what it does. It checks the GRAPH. It says
@@ -145,26 +145,30 @@ if (undirComps.length !== 1) {
   }
 }
 
-// ---- 3. degree-1 nodes must be DELIBERATE ---------------------------------------------------------
-// A turning circle is legitimate; a road that stops mid-block because the digitising missed a
-// junction is the bug, and NOTHING CAN TELL THEM APART FROM THE DATA. So the flag is explicit and
-// this check is the one that must stay able to fail: auto-stamping `deadEnd: true` on every
-// degree-1 node during generation would turn it into a check that cannot fail, which is the exact
-// failure this project has shipped five times.
+// ---- 3. NO DEAD ENDS. AT ALL. --------------------------------------------------------------------
+// The user's rule, stated directly: no hanging roads, no cul-de-sacs, no dead ends, everything
+// connects. So this does NOT accept a `deadEnd: true` flag as permission. Every node must have
+// degree 2 or more - you can always drive out of anywhere by a different way than you came in.
+//
+// This replaces an earlier, weaker check that passed a degree-1 node if it was explicitly flagged.
+// That was the brief's rule, and the brief was less strict than the person who has to drive it.
+// A flag is an annotation, not a road; the car still stops.
 {
   const deg = new Map(nodes.map((n) => [n.id, 0]));
   for (const e of edges) {
     if (deg.has(e.a)) deg.set(e.a, deg.get(e.a) + 1);
     if (deg.has(e.b)) deg.set(e.b, deg.get(e.b) + 1);
   }
-  const unflagged = nodes.filter((n) => deg.get(n.id) === 1 && !n.deadEnd);
-  if (unflagged.length) {
-    err(`${unflagged.length} degree-1 nodes are not flagged deadEnd. Each is either a real ` +
-        `cul-de-sac (set deadEnd: true, deliberately) or a missed junction (fix the graph):\n` +
-        unflagged.slice(0, 40).map((n) => `      node ${n.id} at [${n.p}]`).join('\n') +
-        (unflagged.length > 40 ? `\n      ... and ${unflagged.length - 40} more` : ''));
+  const tips = nodes.filter((n) => deg.get(n.id) === 1);
+  if (tips.length) {
+    err(`${tips.length} DEAD END${tips.length > 1 ? 'S' : ''} - nodes with only one road. Every ` +
+        `node must have degree 2 or more. A deadEnd flag does NOT excuse this:\n` +
+        tips.slice(0, 40).map((n) => `      node ${n.id} at [${n.p}]${n.deadEnd ? ' (flagged deadEnd - not accepted)' : ''}`).join('\n') +
+        (tips.length > 40 ? `\n      ... and ${tips.length - 40} more` : ''));
   }
   const flagged = nodes.filter((n) => n.deadEnd).length;
+  if (flagged) err(`${flagged} nodes carry deadEnd: true. Dead ends are not permitted at all, so ` +
+                   `this flag must be false everywhere - fix the graph, do not annotate it.`);
   const orphan = nodes.filter((n) => deg.get(n.id) === 0).length;
   if (orphan) err(`${orphan} nodes have no edges at all`);
 
@@ -181,7 +185,8 @@ if (undirComps.length !== 1) {
   console.log(`  map ${doc.extent.x[0]}..${doc.extent.x[1]} x ${doc.extent.z[0]}..${doc.extent.z[1]} m`);
   console.log(`  ${nodes.length} nodes, ${edges.length} edges, ${km.toFixed(2)} km of centreline`);
   console.log(`  components: ${undirComps.length} undirected`);
-  console.log(`  degree-1: ${[...deg.values()].filter((d) => d === 1).length} (${flagged} flagged deadEnd)`);
+  console.log(`  dead ends: ${[...deg.values()].filter((d) => d === 1).length} (must be 0)`);
+  console.log(`  min degree: ${Math.min(...deg.values())}, mean degree: ${([...deg.values()].reduce((a, b) => a + b, 0) / deg.size).toFixed(2)}`);
   console.log(`  classes: ${Object.entries(byClass).map(([k, v]) => `${k} ${v}`).join(', ')}`);
   console.log(`  districts: ${[...districts].join(', ')}`);
 }

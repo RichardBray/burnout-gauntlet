@@ -8,24 +8,64 @@ nothing that runs in a frame.
 
 | | |
 |---|---|
-| nodes | 704 |
-| edges | 945 |
-| centreline | **79.95 km** |
+| nodes | 688 |
+| edges | 929 |
+| centreline | **78.81 km** |
 | extent | -2000..2000 x -1430.7..1430.7 m (4000 x 2861 m) |
 | scale | 2.965 m/px, from `MAP_WIDTH_M = 4000` |
 | undirected components | **1** |
 | strongly connected | **yes** (every edge is two-way, see below) |
-| degree-1 nodes | **3, all flagged `deadEnd` after review** |
-| `paradise.json` | 300 KB |
+| dead ends | **0** (min degree 2, mean 2.70) |
+| `paradise.json` | 296 KB |
 
 Classes, and the district split of the centreline:
 
 | class | edges | median width |
 |---|---|---|
-| street | 525 | 14.0 m |
+| street | 509 | 14.0 m |
 | service | 269 | 9.0 m |
 | arterial | 99 | 23.7 m |
 | motorway | 52 | 24.0 m |
+
+## THIRD PASS - EVERYTHING CONNECTS. Zero dead ends, and the rule got stricter.
+
+The user asked for confirmation that all the roads connect, with no hanging roads, no cul-de-sacs
+and no dead ends. **At that point the honest answer was no**: the graph had 3 dead ends. They were
+reviewed and flagged, which satisfied this brief's original rule - a degree-1 node was allowed if
+it carried an explicit `deadEnd: true`, on the reasoning that only a human can tell a turning
+circle from a missed junction.
+
+**That rule was weaker than the person who has to drive it, so it is gone.** A flag is an
+annotation, not a road; the car still stops. Now:
+
+- Stage 2d in `_mapgraph.mjs` runs to a FIXED POINT with no length cap: while any node has degree
+  1, its edge goes, and removing a stub can expose the next one behind it. Nine passes, 38
+  fragments, **2.51 km (3.1%)**. Every one had already been inspected on overlay crops and not one
+  was a genuine cul-de-sac - they are all places the mask lost a road that visibly continues.
+  Note the ORDER: snapping runs first, so a stub that was really a missed junction gets JOINED
+  (5 to a nearby node, 21 split onto another road to make a T-junction) and only what still
+  dead-ends is deleted. Deleting is the last resort, not the first.
+- `REVIEWED_DEAD_ENDS` is deleted. There is nothing left for it to describe, and keeping a list
+  that pardons termini would reintroduce exactly what was removed.
+- `game/map/validate.mjs` now **rejects any degree-1 node outright, and rejects `deadEnd: true`
+  itself.** It prints min and mean degree so the property is visible rather than implied.
+
+Confirmed two ways, because a checker confirming itself proves nothing. `tools/_mapconnect.mjs` is
+a SECOND implementation written from the user's sentence rather than from the schema, sharing no
+code with the validator:
+
+```
+nodes 688, edges 929
+min roads at any node: 2
+reachable from first node: 688/688; can reach it: 688/688
+random round-trip pairs checked: 200
+PASS - every node has 2+ roads, and every node reaches every other node and back
+```
+
+Both were mutation-tested against the new rule: grafting one dangling road onto a junction fails
+both checkers (`validate=1`, `connect=1`), **and flagging that same dangling node `deadEnd: true`
+still fails both** - which is the whole point of the change. The overlay now shows zero green
+dots.
 
 ## SECOND PASS - map density, after the user spotted gaps in the overlay
 

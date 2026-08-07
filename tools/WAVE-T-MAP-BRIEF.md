@@ -115,8 +115,9 @@ Field rules, each of which exists because something downstream breaks without it
 - **`elevationClass` is one of `ground` | `elevated` | `tunnel` | `bridge`.** Neither source image
   shows elevation, so this is authored by judgement - see `SOURCES.md`. It exists in v1 even though
   v1 may set every edge to `ground`, because adding it later means re-authoring every edge.
-- **`deadEnd` is DELIBERATE and defaults to false.** See the validator below. Never set it to
-  silence a validator failure you have not looked at.
+- **`deadEnd` must be `false` on every node.** It is retained because the schema is frozen at v1
+  and because the validator reads it, but there are no dead ends to describe - see the validator
+  below. Setting it does not make a terminus legal; it makes the graph INVALID.
 - **`district` on an edge is denormalised on purpose.** Point-in-polygon per edge per query is
   exactly the kind of per-frame cost this project keeps having to remove.
 
@@ -130,15 +131,20 @@ Runs from `tools/lint.sh`. Non-zero exit fails the build. It must report, and re
 2. **One strongly connected component, respecting `oneWay`.** A district you can drive into and
    never leave is exactly the orphan the user is banning. Run Tarjan or a two-pass Kosaraju; do
    not hand-roll a reachability check that only tests the forward direction.
-3. **Every degree-1 node carries `deadEnd: true`.** Any degree-1 node without it FAILS, and the
-   error prints its coordinates. A turning circle is legitimate; a road that stops mid-block
-   because the digitising missed a junction is the bug, and the validator cannot tell them apart -
-   which is the entire reason the flag has to be explicit.
+3. **ZERO degree-1 nodes. Every node has degree 2 or more.** No hanging roads, no cul-de-sacs, no
+   dead ends - you can always drive out of anywhere by a road other than the one you came in on.
+
+   **This is stricter than what this brief originally said, and the change was the user's**, made
+   after they looked at the traced overlay: the first rule allowed a degree-1 node if it carried an
+   explicit `deadEnd: true`, on the reasoning that a turning circle is legitimate and only a human
+   can tell one from a missed junction. The user's answer is that it all has to connect. A flag is
+   an annotation, not a road - the car still stops. `deadEnd` stays in the schema, must be `false`
+   everywhere, and the validator now REJECTS a graph that sets it.
 4. **No duplicate edge, no self-loop, no edge referencing a missing node id.**
 5. **Every edge's `district` names a district that exists**, and both endpoints lie inside or on
    that district's polygon.
 
-It must also print the counts - components, degree-1 nodes, edges, total centreline kilometres -
+It must also print the counts - components, dead ends, min and mean degree, edges, total centreline kilometres -
 because those are the numbers the next session needs to know the graph did not silently shrink.
 
 **The validator checks the DATA. It does not check the BUILT WORLD, and the gap between those two
@@ -248,7 +254,7 @@ These are not new. They are here because a fresh agent reads this file and not t
 
 | piece | deliverable | judged by |
 |---|---|---|
-| digitise | `game/map/paradise.json` + `validate.mjs` | validator green; minimap overlay vs `reference/map/street-names.jpg` |
+| digitise | `game/map/paradise.json` + `validate.mjs` | validator green; `tools/_mapconnect.mjs` green; overlay vs `reference/map/` |
 | queries | graph spatial index; `surfaceAt` ported off `LAYOUT` | T4's surface tests still pass; per-frame query cost stated |
 | generate | graph -> roads, kerbs, junctions, buildings, props | visual regression gate over every scene |
 | stream | chunk build/dispose around the hero | boot-residency assert; no hitch >30 ms; memory flat over 10 min |

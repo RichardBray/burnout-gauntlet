@@ -82,10 +82,17 @@ from it.
 | `skyline` | far LOD / impostors | not started |
 | `perf` | load time and frame time | not started; runs ALONE on the machine |
 
-**`digitise` IS DONE**, including a second density pass the user asked for after spotting gaps in
-the overlay. `game/map/paradise.json`: **704 nodes, 945 edges, 79.95 km** of centreline over
-4000 x 2861 m, ONE connected component, strongly connected, and exactly 3 degree-1 nodes, all
-reviewed and flagged. `game/map/validate.mjs` runs from `tools/lint.sh` and is mutation-tested — a
+**`digitise` IS DONE**, including two follow-up passes the user asked for. `game/map/paradise.json`:
+**688 nodes, 929 edges, 78.81 km** of centreline over 4000 x 2861 m, ONE connected component,
+strongly connected, **min degree 2, ZERO dead ends**.
+
+**THE USER'S RULE IS STRICTER THAN THE BRIEF'S WAS, AND IT WINS: no hanging roads, no cul-de-sacs,
+no dead ends, it all connects.** The brief originally allowed a degree-1 node if it was explicitly
+flagged `deadEnd: true`. That is gone. Every node has degree 2 or more, `deadEnd` must be `false`
+everywhere, and the validator rejects a graph that sets it - a flag is an annotation, not a road,
+and the car still stops. Confirmed by `game/map/validate.mjs` AND independently by
+`tools/_mapconnect.mjs`, a second implementation sharing no code with it: every node reaches every
+other node and back, 200 random pairs round-tripped. `game/map/validate.mjs` runs from `tools/lint.sh` and is mutation-tested — a
 severed network, a cleared `deadEnd`, a stranding `oneWay` and a ghost node reference all exit 1
 while the real file exits 0. Rebuild the whole chain with `bash tools/map-build.sh`.
 
@@ -108,11 +115,11 @@ from it that will cost the next session a day if they are rediscovered instead o
 - **A coverage metric over a noisy mask measures the noise.** Asking what share of the ROAD MASK
   had no graph edge near it returned 43.6%, which was rock, surf, beach and roofs. The honest
   quantity is coverage of the traced CENTRELINE: 13.5%, now 12.9%.
-- **`deadEnd` is never stamped automatically**, and that is deliberate. Auto-flagging every
-  degree-1 node turns the check into one that cannot fail, which is this project's oldest bug. The
-  41 that failed the first clean run were worked through by hand: 28 snapped into junctions, 11
-  deleted as trace fragments, 2 listed in `REVIEWED_DEAD_ENDS` with what they actually are. A
-  listed entry that stops matching is a hard error.
+- **Dead ends are removed, not annotated.** Stubs are first SNAPPED into the network wherever a
+  real junction was missed - 5 to a nearby node, 21 split onto the middle of another road to make a
+  T-junction - and only what still dead-ends after that is deleted, 38 fragments totalling 2.51 km
+  (3.1%). Every one was inspected on overlay crops first and not one was a genuine cul-de-sac; they
+  are all places the mask lost a road that visibly continues.
 
 `oneWay` is false everywhere and `elevationClass` is `ground` everywhere — both honest nulls, since
 a top-down still shows neither. Do not read them as unfinished work to go and fill in blind.

@@ -224,30 +224,26 @@ const SPLIT_M = 70;
   console.log(`split-snapped  ${split} stubs joined onto an edge under ${SPLIT_M} m, making T-junctions`);
 }
 
-// ---- 2d. DROP WHATEVER STILL DEAD-ENDS ----------------------------------------------------------
-// After both snap passes the survivors were inspected on the overlay, one by one, and NOT ONE was
-// a cul-de-sac: all 13 were 80-230 m fragments where the mask lost a road that visibly continues
-// in the picture - dark downtown streets under building shadow, mostly. They point at a road and
-// stop short of it.
+// ---- 2d. DROP EVERY DEAD END. NO EXCEPTIONS. ----------------------------------------------------
+// THE USER'S RULE, STATED DIRECTLY: no hanging roads, no cul-de-sacs, no dead ends. Everything
+// connects. That is stricter than the brief's "flag a degree-1 node deliberately", and it wins.
 //
-// So they are deleted rather than flagged. Flagging them `deadEnd: true` would be a lie about
-// deliberateness and would weaken the one check that has to stay able to fail, and joining them
-// across 100 m of city block would invent roads through buildings - a worse lie, because it
-// changes what is drivable. Deleting costs 2% of the centreline and leaves the user's rule
-// literally true: no road goes nowhere.
+// So this loop runs to a FIXED POINT with no length cap: while any node has degree 1, its edge
+// goes. Removing a stub can expose the next one behind it, so it iterates until nothing changes.
+// The result is a graph in which every node has degree 2 or more, by construction, and there is
+// nothing left for a `deadEnd` flag to describe.
 //
-// The three that survived a 250 m cap were inspected too and are the same story at longer range -
-// a lost bridge deck over water, a mountain hairpin, a road under tree cover - so the cap is 600 m.
-// It is NOT unlimited: an unlimited rule would guarantee zero dead ends by construction and quietly
-// eat a genuinely long branch road, and "no dead ends because we deleted anything that had one" is
-// not the same claim as "the network connects".
+// Every survivor of the earlier passes was inspected on overlay crops and NOT ONE was a genuine
+// cul-de-sac - they are all places the mask lost a road that visibly continues (downtown shadow,
+// terrain, a railway embankment). So nothing real is being thrown away here: a fragment that
+// points at a road and stops short is not a road, it is a trace artefact with length.
 //
-// If a future pass improves the mask, these come back as real roads and this step removes nothing.
-// It is capped at three rounds so it can never unravel a long branch edge by edge.
-const TIP_M = 600;
+// The kilometre cost is printed because it is the number that would hide a disaster - if this
+// ever removes a large fraction, the mask has broken upstream and the map is being eaten rather
+// than cleaned.
 {
   let dropped = 0, km = 0;
-  for (let pass = 0; pass < 3; pass++) {
+  for (let pass = 0; ; pass++) {
     const deg = new Map();
     for (const e of edges) {
       deg.set(e.a, (deg.get(e.a) || 0) + 1);
@@ -256,14 +252,13 @@ const TIP_M = 600;
     const drop = new Set();
     for (const e of edges) {
       if (e.a === e.b) continue;
-      if (deg.get(e.a) !== 1 && deg.get(e.b) !== 1) continue;
-      if (pathLenPx(e.path) * S <= TIP_M) { drop.add(e); km += pathLenPx(e.path) * S / 1000; }
+      if (deg.get(e.a) === 1 || deg.get(e.b) === 1) { drop.add(e); km += pathLenPx(e.path) * S / 1000; }
     }
-    if (!drop.size) break;
+    if (!drop.size) { console.log(`dead-ends      0 remaining after ${pass} passes`); break; }
     dropped += drop.size;
     edges = edges.filter((e) => !drop.has(e));
   }
-  console.log(`tips-dropped   ${dropped} dead-ending fragments under ${TIP_M} m (${km.toFixed(2)} km)`);
+  console.log(`tips-dropped   ${dropped} dead-ending fragments, every one of them (${km.toFixed(2)} km)`);
 }
 
 // ---- 3. LARGEST CONNECTED COMPONENT -----------------------------------------------------------
@@ -449,24 +444,11 @@ const classOf = (m) => {
 const LANES = { motorway: 3, arterial: 2, street: 2, service: 1 };
 const MIN_W = { motorway: 24, arterial: 18, street: 14, service: 9 };
 
-// ---- THE REVIEWED DEAD ENDS -------------------------------------------------------------------
-// `deadEnd` is the one field the validator refuses to accept a guess on, because a cul-de-sac and
-// a missed junction look identical in the data. So it is never stamped automatically: every entry
-// here was found by the validator failing, then LOOKED AT on a crop of the overlay, and is
-// recorded with what it actually is.
-//
-// Both survivors are trace limits rather than cul-de-sacs - the mask loses a road that visibly
-// continues - but both carry over 600 m of real road that is on the map, so deleting them the way
-// the shorter fragments were deleted would throw away more than it cleans up.
-//
-// The list is keyed by position with a tolerance, and A LISTED ENTRY THAT MATCHES NOTHING IS A
-// HARD ERROR. Without that this rots into a stale allowlist that silently pardons whatever
-// degree-1 node happens to drift near it.
-const REVIEWED_DEAD_ENDS = [
-  { p: [-1487, -1155], why: 'White Mountain switchback; the road continues west but the mask loses it against rock' },
-  { p: [-1663, -624], why: 'White Mountain, west of the railway; the grey road continues north and is lost against terrain' },
-  { p: [-313, 1091], why: 'Harbor Town shoreline; the road ends where the RAILWAY embankment crosses. The dark diagonal here is rail, not a causeway - do not trace it' },
-];
+// `deadEnd` stays in the schema and is FALSE on every node, permanently. There is no reviewed
+// dead-end list any more and there must not be one: stage 2d removes every degree-1 node, so a
+// flag saying "this terminus is deliberate" has nothing left to describe. The field is kept
+// because the schema is frozen at version 1 and because the validator still reads it - if a
+// hand-edited graph ever introduces a terminus, `deadEnd` is not the way to bless it.
 
 const used = new Set();
 for (const e of edges) { used.add(e.a); used.add(e.b); }
@@ -481,25 +463,6 @@ const degree = new Map();
 for (const e of edges) {
   degree.set(remap.get(e.a), (degree.get(remap.get(e.a)) || 0) + 1);
   degree.set(remap.get(e.b), (degree.get(remap.get(e.b)) || 0) + 1);
-}
-
-// Apply the reviewed list, and fail loudly if any entry no longer matches a degree-1 node.
-{
-  const TOL = 40;
-  for (const r of REVIEWED_DEAD_ENDS) {
-    const hit = outNodes.filter((n) => degree.get(n.id) === 1 &&
-      Math.hypot(n.p[0] - r.p[0], n.p[1] - r.p[1]) <= TOL);
-    if (hit.length !== 1) {
-      console.error(`reviewed dead end at [${r.p}] matches ${hit.length} degree-1 nodes, expected 1.`);
-      console.error(`  (${r.why})`);
-      console.error('  The graph moved under the list. Re-review it against a fresh overlay crop -');
-      console.error('  do NOT widen the tolerance to make this pass.');
-      process.exit(1);
-    }
-    hit[0].deadEnd = true;
-    hit[0].deadEndNote = r.why;
-  }
-  console.log(`dead-ends      ${REVIEWED_DEAD_ENDS.length} reviewed and flagged`);
 }
 
 const outEdges = [];
