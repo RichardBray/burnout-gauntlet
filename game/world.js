@@ -1261,6 +1261,10 @@ export function createWorld(scene, { rng: injectedRng, roadKit }) {
     const buckets = new Map();
     for (const p of sink.pools) {
       if (p.count < 1) continue;
+      // A multi-material pool would need its geometry groups carried across too. None exists
+      // here, and silently merging two of them by a shared undefined uuid is exactly the kind of
+      // bug that only ever shows up as one wrong-coloured object somewhere in the city.
+      if (Array.isArray(p._mat)) throw new Error(`pool ${p.name}: multi-material pools are not supported`);
       const key = `${p._geo.uuid}|${p._mat.uuid}`
         + `|${p.castShadow ? 1 : 0}${p.receiveShadow ? 1 : 0}|${p.renderOrder}`;
       let b = buckets.get(key);
@@ -1344,7 +1348,22 @@ export function createWorld(scene, { rng: injectedRng, roadKit }) {
         meshes++; cells++; instances += refs.length;
       }
     }
-    return { meshes, cells, instances, states: buckets.size };
+
+    // RELEASE THE SCRATCH. `_m` and `_c` are the growable staging buffers; once their contents
+    // have been copied into an InstancedMesh's own attribute arrays they are pure garbage, and
+    // holding them pins 18.45 MB of matrices plus 2.05 MB of colours across the 67 descriptors
+    // for the lifetime of the world. That is not a leak today because the world is built once,
+    // but a descriptor whose dispose path does not actually free is chunk-contract rule 3's
+    // failure exactly, and under streaming it would present as memory creep and be blamed on the
+    // streamer rather than on the sink. Free it at the only moment we know it is dead.
+    let freedBytes = 0;
+    for (const p of sink.pools) {
+      freedBytes += p._m.byteLength + (p._c ? p._c.byteLength : 0);
+      p._m = null;
+      p._c = null;
+      p._cap = 0;
+    }
+    return { meshes, cells, instances, states: buckets.size, freedBytes };
   }
 
   /**
@@ -1356,7 +1375,15 @@ export function createWorld(scene, { rng: injectedRng, roadKit }) {
    */
   function resolve(p, i) {
     const r = sink.remap.get(p);
-    return (r && r.get(i)) || null;
+    const t = r && r.get(i);
+    // NOT `return null`. HEAD's equivalent fell back to writing the source pool, which at least
+    // landed somewhere visible; a descriptor is a Group with no setMatrixAt, so there is nothing
+    // to fall back to and a miss would simply do nothing at all. Every index handed to this
+    // function was recorded by an emitter at push time against a pool that finalize() then
+    // allocated, so a miss is a broken invariant, not a runtime condition - and a silent one
+    // would be the fourth bug in this file to hide behind a green check. Fail loudly instead.
+    if (!t) throw new Error(`resolve: no finalized instance for pool ${p && p.name} index ${i}`);
+    return t;
   }
   sink.resolve = resolve;
   /**
@@ -2044,10 +2071,6 @@ export function createWorld(scene, { rng: injectedRng, roadKit }) {
   const SIGN_KINDS = [0, 1, 2, 3, 0, 1, 2, 3, 0, 3, 4, 4];
   const GREEN0 = 10;                              // index of the first green-panel variant
   const SIGN_VARIANTS = SIGN_KINDS.length;
-  // Headroom: every double-sided sign (blade, gantry, rooftop) is now two real
-  // FrontSide panels instead of one DoubleSide one, and push() silently DROPS
-  // instances past the cap — a too-tight cap would read as "signs vanished".
-  const SIGN_CAP = 1000;
   const signMeshes = [], signMats = [];
   const planeGeo = new THREE.PlaneGeometry(1, 1);
   for (let v = 0; v < SIGN_VARIANTS; v++) {
@@ -2418,10 +2441,9 @@ export function createWorld(scene, { rng: injectedRng, roadKit }) {
     dummy.updateMatrix();
     dummy.rotation.order = 'YZX';
     for (const [m, i] of used) {
-      const t = resolve(m, i);
-      if (!t) continue;
-      t[0].setMatrixAt(t[1], dummy.matrix);
-      t[0].instanceMatrix.needsUpdate = true;
+      const [tm, ti] = resolve(m, i);
+      tm.setMatrixAt(ti, dummy.matrix);
+      tm.instanceMatrix.needsUpdate = true;
     }
   };
 
@@ -2832,10 +2854,9 @@ export function createWorld(scene, { rng: injectedRng, roadKit }) {
         // the descriptor is the bug that left a phantom parked car on screen (visible, no
         // collider) while its promoted wreck slid away, so this must go through resolve().
         for (const [m, i] of used) {
-          const t = resolve(m, i);
-          if (!t) continue;
-          t[0].setMatrixAt(t[1], dummy.matrix);
-          t[0].instanceMatrix.needsUpdate = true;
+          const [tm, ti] = resolve(m, i);
+          tm.setMatrixAt(ti, dummy.matrix);
+          tm.instanceMatrix.needsUpdate = true;
         }
       },
     });
@@ -3263,19 +3284,35 @@ export function createWorld(scene, { rng: injectedRng, roadKit }) {
     group, sink, stats: buildStats,
   });
 
-  // ---- STATIC TRANSFORMS. The cut multiplies the object count in this subtree, and every one
-  // of those objects would otherwise have its world matrix recomposed on every
-  // renderer.render() — measured at 2.9 ms/frame BEFORE the cells existed. Nothing under
-  // world.group ever moves: the city is built once at fixed coordinates, and the only things
-  // that change afterwards are visibility flags, material uniforms and instance matrices, none
-  // of which are object transforms. So compose the subtree's matrices once and then opt out.
+  // ---- STATIC TRANSFORMS, AND A SAVING THAT IS NOT BEING DELIVERED ------------------------
   //
-  // THIS IS PER CHUNK FROM HERE ON, NOT ONCE. three's updateMatrixWorld() skips recursing into a
-  // child whose matrixWorldAutoUpdate is false unless it is called with force = true, so a chunk
-  // Group added to this subtree AFTER boot never composes its world matrix and renders at the
-  // identity transform or not at all. Anything that adds a chunk later must call
-  // `rec.group.updateMatrixWorld(true)` on it. That failure presents as "the streamed chunks are
-  // invisible or in the wrong place" and will be blamed on the emitter, so it is called out here.
+  // Nothing under world.group ever moves: the city is built once at fixed coordinates, and the
+  // only things that change afterwards are visibility flags, material uniforms and instance
+  // matrices, none of which are object transforms. So the intent below is to compose the
+  // subtree's matrices once and then opt out of recomposing them every frame, which the comment
+  // this replaces claimed was worth 2.9 ms/frame.
+  //
+  // IT IS NOT WORTH THAT, AND IT HAS NOT BEEN FOR SOME THREE VERSIONS. Measured on the live page
+  // (three r180): exactly ONE object out of the 1710 in this subtree has
+  // `matrixWorldAutoUpdate === false` — this Group — and mutating a boot-time descendant's
+  // position still has its `matrixWorld` follow across a plain `composer.render()` with no
+  // explicit update call. Read r180's Object3D.updateMatrixWorld and the reason is plain: the
+  // recursion into children is UNCONDITIONAL. `matrixWorldAutoUpdate === false` suppresses only
+  // this object's own matrixWorld composition; it does not prune the walk, and every descendant
+  // still runs updateMatrix() (their own matrixAutoUpdate is true, and that sets
+  // matrixWorldNeedsUpdate) and is recomposed. Older three had an
+  // `if (child.matrixWorldAutoUpdate === true || force === true)` guard on that loop, which is
+  // the behaviour the old comment described. The guard is gone.
+  //
+  // So this line saves ONE matrix multiply per frame, not 1709 of them. Do not budget for the
+  // 2.9 ms anywhere. Getting that saving back means `matrixAutoUpdate = false` on the children,
+  // which is a real and available optimisation and is `perf`'s to take, not this piece's.
+  //
+  // The same measurement retires risk 2 of WAVE-T-GENERATE-MESH-PLAN.md:897-902, which predicted
+  // that a chunk Group added after boot would never compose and would render at the identity
+  // transform. Verified false on both this tree and HEAD: a Group added post-boot at (123,45,67)
+  // has the correct matrixWorld after one render. The unconditional recursion is why. No
+  // per-chunk `updateMatrixWorld(true)` call is needed, and S2 does not add one.
   group.updateMatrixWorld(true);
   group.matrixWorldAutoUpdate = false;
 

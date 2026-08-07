@@ -18,7 +18,13 @@ BEFORE and AFTER line.
 | `CHUNK_MIN` | `400` at `world.js:3062` (HEAD) | `400` at `game/world.js:1236` |
 | `POOL` (point lights) | `10` at `world.js:2977` (HEAD) | `10` at `game/world.js:3191` |
 | `NPC_DENSITY` | `0.16` | `0.16` at `game/world.js:2749` - untouched, it is user-set |
-| every `inst()` cap: `40000`, `190000`, `22000`, `9600`, `1000`, ... | 51 literal caps | **deleted**. The cap is now `p.count` at `finalize()` time |
+| every pool cap: `40000`, `190000`, `22000`, `9600`, `TOWER_CAP`, `SIGN_CAP`, ... | **53** literal caps | **deleted**. The cap is now `p.count` at `finalize()` time |
+
+> CORRECTED after critic review: 53, not 51. The 50 `inst()` call sites plus three hand-built
+> pool declarations that each carried their own literal - `TOWER_CAP = 900`, `podiumMesh`'s
+> inline `900`, and `SIGN_CAP = 1000`. Those 53 caps covered **67 pool descriptors**, because
+> `TOWER_CAP` served 4 shaft styles and `SIGN_CAP` served 12 sign variants. `contactMesh` keeps
+> its literal and is counted separately in section 1.
 
 The caps are the substantive deletion. Every one of them was hand-sized for a 1.1 km square, and
 `push()`'s response to exceeding one was `if (m.count >= m.userData.cap) return;` - a silent drop,
@@ -243,12 +249,17 @@ exit 0. `lint ok` does not mean runnable, so the page was booted.
 
 ## 4. WHAT IS **NOT** A NO-OP, AND IT IS NOT THE ONE I WAS WARNED ABOUT
 
+> CORRECTED after critic review (`verdicts/wave-t/generate-mesh-s01-critic.md`). The first version
+> of this section said two pools and 55 -> 65. It is **four pools and 30 -> 50**. The original
+> measurement only knocked over lamps; traffic lights have the identical defect and were missed.
+> Re-measured against the true pre-refactor tree at `77d8d71`.
+
 The boot state is identical. One POST-BOOT path is not, and it is a bug fix I did not go looking
 for.
 
-**`polefall` never hid a street lamp's arm or head.**
+**`polefall` never hid a street lamp's arm or head, nor a traffic light's arm or head.**
 
-HEAD's `hidePoles` (`world.js:2206`) is:
+The pre-refactor `hidePoles` (`world.js:2206` at `77d8d71`) is:
 
 ```js
 for (const [m, i] of used) { m.setMatrixAt(i, dummy.matrix); m.instanceMatrix.needsUpdate = true; }
@@ -260,30 +271,31 @@ layer-disabled, so that write landed on a mesh that draws nothing. This is preci
 phantom-parked-car bug the comment at `world.js:2617-2621` describes as fixed - fixed for cars,
 never fixed for poles.
 
-Measured. Knock down five street lamps and five parked cars, then count instances sunk to y < -500,
-per pool:
+Measured. Knock down five street lamps and five traffic lights, then count instances sunk to
+y < -500:
 
-| pool (via its bucket host) | HEAD | new |
+| pool (via its bucket host) | `77d8d71` | after |
 |---|---|---|
-| `slPole` | 5 | 5 |
+| `slPole` + `tlPole` | 10 | 10 |
 | `slBulb` | 5 | 5 |
-| `slArm` -> `strutMesh:chunk` | **0** | **5** |
-| `slHead` -> `signFrame:chunk` | **0** | **5** |
-| `carBody` | 10 | 10 |
-| `carCab` | 5 | 5 |
-| `carTrim` -> `benchSeat:chunk` | 10 | 10 |
-| `carWheel:chunk` | 20 | 20 |
-| **total** | **55** | **65** |
+| `tlLens` | 15 | 15 |
+| `slArm` + `tlArm` -> `strutMesh:chunk` | **0** | **10** |
+| `slHead` + `tlHead` -> `signFrame:chunk` | **0** | **10** |
+| **total** | **30** | **50** |
 
-`slPole` and `slBulb` are in draw states under `CHUNK_MIN`, so they were never cut, so the source
-still drew and the naive write happened to work. `slArm` and `slHead` merge into large boxGeo
-buckets that were cut, so they silently did nothing. On HEAD, knocking over a street lamp leaves its
-arm and its lamp head hanging in mid-air.
+Four pools, not two. `slPole`, `tlPole`, `slBulb` and `tlLens` are in draw states under
+`CHUNK_MIN` or in buckets that were never cut, so the source still drew and the naive write
+happened to work. `slArm`, `slHead`, `tlArm` and `tlHead` all merge into large boxGeo buckets that
+were cut, so they silently did nothing. Before this change, knocking over a street lamp or a
+traffic light left its arm and its head hanging in mid-air.
 
 Routing every hide through `resolve()` fixes it, because there is now exactly one way to reach a
-baked instance. I did not preserve the bug to keep the no-op tidy: deliberately reintroducing a
-write to a dead mesh is not a defensible option, and it affects none of the seven scene renders,
-which are boot-state frames with nothing knocked down.
+baked instance. The fix is idempotent: hiding the same five poles a second time leaves the total at
+50 and throws nothing. It affects none of the seven scene renders, which are boot-state frames with
+nothing knocked down.
+
+I did not preserve the bug to keep the no-op tidy: deliberately reintroducing a write to a dead
+mesh is not a defensible option.
 
 ## 5. THE `neonSign` STREAM - MEASURED, AND **NOT** LANDED
 
@@ -331,17 +343,54 @@ thing S1 exists to establish.
 So it is reverted, measured, and queued. It is a two-line change when S2 wants it: `injectedRng()`
 -> `rng()` at `game/world.js:2374`, and drop the now-dead binding at `game/world.js:1060`.
 
-## 6. RISK 2 FROM SECTION 10, HANDLED
+## 6. RISK 2 FROM SECTION 10 - MEASURED, AND IT IS NOT REAL
 
-`world.js:3165` at HEAD set `group.matrixWorldAutoUpdate = false` once, for the whole subtree. A
-chunk `Group` added after boot would then never compose its world matrix and would render at the
-identity transform or not at all - which presents as "streaming is broken" and gets blamed on the
-emitter.
+> CORRECTED after critic review. The first version of this section claimed the risk was "handled".
+> It was handled by a COMMENT, which is rule 5's exact shape, and I had written the very thing the
+> rule exists to catch. Worse, the hazard the comment described does not exist in this three
+> version. Both halves re-measured on the live page.
 
-The discipline is kept and is now documented as per-chunk at `game/world.js:3271-3280`: the comment
-states in the code that anything adding a chunk after boot must call
-`rec.group.updateMatrixWorld(true)` on it. The boot path still calls
-`group.updateMatrixWorld(true)` before opting out, so S1's behaviour is unchanged.
+`WAVE-T-GENERATE-MESH-PLAN.md:897-902` predicts that because `group.matrixWorldAutoUpdate = false`
+is set once for the subtree, a chunk `Group` added after boot never composes its world matrix and
+renders at the identity transform or not at all.
+
+**Measured false, on both trees.** A `THREE.Group` added to `world.group` post-boot at
+(123, 45, 67) has `matrixWorld` translation exactly `123,45,67` after one `composer.render()`, on
+`77d8d71` and on this tree alike. Mutating a boot-time descendant's `position.y` by 77 likewise has
+its `matrixWorld` follow across a plain render with no explicit update call.
+
+The mechanism, read off `THREE.Object3D.prototype.updateMatrixWorld` in the running page
+(`THREE.REVISION === "180"`):
+
+```js
+updateMatrixWorld(force) {
+  this.matrixAutoUpdate && this.updateMatrix();
+  (this.matrixWorldNeedsUpdate || force) && (
+    this.matrixWorldAutoUpdate === true && (/* compose */), this.matrixWorldNeedsUpdate = false, force = true);
+  const c = this.children;
+  for (let i = 0; i < c.length; i++) c[i].updateMatrixWorld(force);   // <- UNCONDITIONAL
+}
+```
+
+The recursion into children has no guard. `matrixWorldAutoUpdate === false` suppresses only that
+one object's own `matrixWorld` composition. Older three had
+`if (child.matrixWorldAutoUpdate === true || force === true)` around that loop, which is exactly
+the behaviour the deleted comment described - it was documenting a library version this project no
+longer uses. Another instance of the project's rule: do not trust a comment, including one
+inherited from a working codebase.
+
+**The second-order consequence, which matters more than the risk did.** The old comment at
+`world.js:3156-3163` justified the opt-out as worth **2.9 ms/frame**. It is not delivering that.
+Exactly **one object out of 1710** in this subtree has `matrixWorldAutoUpdate === false` - the root
+Group itself - identical to the pre-refactor tree's 1 of 1690. Every one of the other 1709 still
+runs `updateMatrix()` every frame (their own `matrixAutoUpdate` is true, and `updateMatrix()` sets
+`matrixWorldNeedsUpdate`) and is then recomposed. The line saves ONE matrix multiply per frame.
+
+**Do not budget for the 2.9 ms at S4.** Recovering it means `matrixAutoUpdate = false` on the
+children, which is a real and available optimisation, and it belongs to `perf`.
+
+`game/world.js:3287-3317` now states all of this in the code, and S2 adds no per-chunk
+`updateMatrixWorld(true)` call because none is needed.
 
 ## 7. WHAT S2 INHERITS
 
@@ -361,3 +410,31 @@ states in the code that anything adding a chunk after boot must call
   counter.
 
 No frame-time number is reported. Peer agents are running; S1 has no frame-time deliverable.
+
+## 8. POST-CRITIC FIXES
+
+Six items from `verdicts/wave-t/generate-mesh-s01-critic.md`, landed as one commit on top of S1.
+
+1. **`finalize()` now frees the scratch buffers** (`game/world.js:1350-1366`). `p._m` and `p._c`
+   are the growable staging arrays; once copied into an InstancedMesh's own attributes they are
+   garbage, and holding them pinned 18.45 MB of matrices plus 2.05 MB of colours across the 67
+   descriptors. `finalize()` nulls both and reports `freedBytes`. Not a regression, but a
+   descriptor whose teardown does not free is chunk-contract rule 3's failure, and at S4 it would
+   have read as streaming memory creep.
+2. **The `matrixWorldAutoUpdate` comment now says what is true.** Section 6 above, rewritten from
+   measurement.
+3. **Section 4 corrected**: four pools, 30 -> 50, not two pools and 55 -> 65.
+4. **`resolve()` throws on a miss** (`game/world.js:1376-1386`). It returned `null` and both
+   callers did `if (!t) continue;`, so a broken remap would have failed silently - the wrong
+   failure mode in a file that has now produced three bugs behind one green check. There is no
+   fallback to restore: the pre-refactor code fell back to writing the source InstancedMesh, and a
+   descriptor is a Group with no `setMatrixAt`. Every index reaching `resolve()` was recorded by an
+   emitter against a pool `finalize()` then allocated, so a miss is a broken invariant. Verified
+   the throw does not fire on legitimate repeat hides: hiding the same five poles twice leaves the
+   sunk total at 50 and throws nothing.
+5. **`SIGN_CAP = 1000` deleted** - dead since the sign pools moved to the sink. Cap count corrected
+   to 53 over 67 descriptors.
+6. **The `Array.isArray(material)` guard is restored**, with its comment, at
+   `game/world.js:1264-1267`. It is now a `throw` rather than a `continue`: silently skipping a
+   multi-material pool would drop it from the world entirely, which is worse than the merge it was
+   guarding against.
