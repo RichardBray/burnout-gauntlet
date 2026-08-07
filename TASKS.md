@@ -560,6 +560,9 @@ connected while the built road has a gap the car falls through.
 ### Acceptance criteria
 
 - 60 fps sustained at 1280x720 real pixels while driving across district boundaries, p99 stated.
+- **Cold load must not exceed 5.0 s**, measured with `node tools/_loadtime.mjs` at 1280x720, with
+  the per-stage split quoted. See the load budget below for where the 5.0 s comes from and why the
+  obvious implementation blows straight through it.
 - No hitch above 30 ms at a chunk boundary. Streaming work must be amortised or off-thread.
 - The road graph is recognisably Paradise City when the minimap is compared to the source map.
 - The connectivity validator reports exactly one component, both undirected and directed, and
@@ -569,6 +572,47 @@ connected while the built road has a gap the car falls through.
 - Memory stable over a 10-minute drive across the whole map. No chunk leak.
 - Traffic, parked cars, signals and the boost event stream all work anywhere on the map.
 - Visual regression gate holds for every scene in `scenes.js` (respawn them onto the new map).
+
+### The load-time budget, and the trap in it
+
+**Measured 2026-08-07, before any map work, so it is a real baseline rather than a guess.**
+`node tools/_loadtime.mjs --runs 3`, headless chromium at 1280x720, served from local disk,
+timed from navigation to `window.__ready` on the PLAYER's path (no `?shot=1`):
+
+| | |
+|---|---|
+| cold | **3493 ms** median (4138, 3493, 3477) |
+| warm (reload) | 3276 ms median |
+| served | 180 requests, 13.72 MB from disk; `three` comes from esm.sh on top and is NOT counted |
+
+Per-stage, cold: **warm (shader compile) 2173 ms**, road 566, world 235, car 187, sim 85, sky 47,
+post 26.
+
+Two things follow, and the second is the one that will actually bite.
+
+**1. Geometry generation scales with area, and streaming is what stops it mattering.** Road plus
+world is 801 ms today for a world of `extent = 560`, roughly a 1.1 km square. Paradise City is
+about 4x4 km, some 12.7x the area. Generated EAGERLY the way `createWorld()` builds today, that is
+roughly 10 s of extra generation and a ~14 s cold load. Chunked streaming is already required by
+the scope above, and if it is honoured the boot builds only the 4-8 resident chunks, which is LESS
+geometry than today - **cold load should go DOWN, not up.**
+
+The failure mode to forbid explicitly: building the whole graph's meshes at boot and using the
+chunk system only for disposal. That passes every functional test in this task and quietly turns
+3.5 s into 14 s. **Nothing outside the hero's resident chunk set may be built during boot**, and
+the acceptance criterion above is what catches it if it is.
+
+**2. Shader compilation does NOT scale with area, and it is already 62% of the load.** 2173 ms of
+3493 ms is the `warm` stage. It scales with the number of MATERIAL VARIANTS, so it is indifferent
+to how good the streaming is - a district, an airfield, a quarry and mountain roads each bring new
+materials, and every one of them is paid at boot on every load, forever.
+
+T3's scope already says to keep the current material and lighting vocabulary. That line was written
+to protect the visual regression gate. **It protects load time too, and that is now a second,
+independent reason not to relax it.** Prefer a new texture or new instance data over a new material
+every time. If a variant genuinely has to be added, state its measured cost in the `warm` stage in
+the same commit that adds it, because by the tenth one nobody will be able to say where the seconds
+went.
 
 ### Gauntlet setup
 
