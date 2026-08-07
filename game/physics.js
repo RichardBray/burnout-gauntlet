@@ -693,7 +693,12 @@ function latCapacity(mu, fz, fx, alpha, sat) {
   return cap * Math.sqrt(Math.max(0, 1 - used * used));
 }
 
-export function createPhysics({ blocks = [], bounds = 1400 } = {}) {
+// WORLD CLAMP. Was 1400, raised to 2000 at wave T's S3c (decision 8). This is nominally the
+// `rewire` piece's number, and it was taken early on purpose: the graph map is 4000 x 2861 m, so
+// a +/-1400 m clamp puts roughly four fifths of the road network out of reach and NO drive check
+// on the built world is possible. 2000 is the graph's own half-extent on the long axis.
+// The grid world is 1.1 km across and never approaches either value, so it cannot notice.
+export function createPhysics({ blocks = [], bounds = 2000 } = {}) {
   const state = {
     pos: new THREE.Vector3(0, 0, 0),
     yaw: 0,

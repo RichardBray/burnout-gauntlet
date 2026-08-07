@@ -50,19 +50,22 @@ const HIGHWAY_HALF = LAYOUT.highwayW / 2 + 2.2;   // to the guardrail line at wo
  * real terrain, this function grows the classes and SURFACES grows the matching rows; nothing
  * else has to change, because every caller already switches on the returned key.
  */
-// ---- THE SWAP POINT FOR T3'S MAP. READ BEFORE TOUCHING EITHER SIDE. --------------------------
-// `game/map/graph.js` now has a graph-backed `surfaceAt` with identical semantics, verified
-// against brute force on 10000 probes and measured at 189 ns/query. It is NOT wired up here yet,
-// and that is deliberate, not an unfinished edit.
+// ---- THE SWAP POINT FOR T3'S MAP. THE SWAP HAS HAPPENED, AT S3c. -----------------------------
+// This function is the GRID world's answer and it stays exactly as it was, because `#map=grid` is
+// still the default and the visual regression gate. The GRAPH world's answer is `graph.js`'s own
+// `surfaceAt`, which has identical semantics and the same two return keys, verified against brute
+// force on 10000 probes and measured at 189 ns/query.
 //
-// The world the car currently drives on is still this LAYOUT grid. The graph describes Paradise
-// City, which is a DIFFERENT city in different coordinates. Pointing this function at the graph
-// before `generate` builds that city would answer 'dirt' almost everywhere the player actually
-// is, and T4's off-road penalty would fire on every road in the game.
+// SELECTION IS BY PUBLICATION, NOT BY A BRANCH IN HERE. `createWorld` publishes whichever one
+// belongs to the world it just built as `world.surfaceAt`, and `main.js` injects THAT into
+// physics. This function cannot make the choice itself: it is module scope and has no idea which
+// world was built, and giving it a module-level mutable flag would make the answer depend on
+// construction order. `physics.js` needed no edit either way - it already switches on the key.
 //
-// So the swap belongs to the `generate` piece, in the same commit that makes the graph the thing
-// on screen: replace this body with a call into the injected graph, keep the same two return keys,
-// and the caller in `physics.js` needs no edit because it already switches on the key.
+// The swap could not be made before S3c, and the reason is worth keeping: the graph describes a
+// DIFFERENT city in different coordinates, so pointing the query at it before the graph was the
+// thing on screen would have answered 'dirt' almost everywhere the player actually was, and T4's
+// off-road penalty would have fired on every road in the game.
 export function surfaceAt(x, z) {
   if (Math.abs(z - LAYOUT.highwayZ) <= HIGHWAY_HALF) return 'tarmac';
   const EX = LAYOUT.extent;
@@ -104,6 +107,95 @@ function makePath(points, closed) {
       }
       return { i: best, u: best / (N - 1), point: samples[best], tangent: tangents[best], dist: Math.sqrt(bd) };
     },
+  };
+}
+
+/**
+ * `paths.city` and `paths.highway` for the GRAPH world. Decision 7.
+ *
+ * All seven gate scenes spawn the hero through these two curves (`scenes.js:10`, `:132`, `:204`),
+ * so under `#map=graph` the grid's `roundedRect(325, 325, 48)` would put every scene in the void.
+ * Both curves must lie ON the road network, because a scene spawning on dirt fires T4's off-road
+ * penalty on the first frame of its own screenshot.
+ *
+ * THE CITY LOOP IS A PLANAR FACE, NOT A SEARCHED CYCLE. The demolition table asks for "the
+ * largest-area cycle in the arterial-union-street subgraph that passes through downtown", and a
+ * general largest-area cycle search is exponential. It is also unnecessary: `blocks.js` already
+ * walks every planar FACE of the graph, and a face's boundary IS a closed cycle over road
+ * centrelines by construction. So the largest-area downtown face is the largest-area downtown
+ * cycle, already computed, for free, and it cannot leave the road network. Measured: face 90,
+ * 15.3 ha, 55 ring vertices, 1989 m perimeter, and all 55 vertices AND all 55 edge midpoints
+ * answer `tarmac`. The grid's rounded rectangle it replaces is ~2500 m, so the scale matches.
+ *
+ * THE RING IS DENSIFIED BEFORE IT IS SMOOTHED. `makePath` runs a uniform Catmull-Rom of tension
+ * 0.5 through its control points, which OVERSHOOTS at a sharp corner between two long segments -
+ * and an overshoot here is the hero spawning through a building. Splitting every segment longer
+ * than `STEP` makes the spline hug the polyline instead, because a Catmull-Rom through closely
+ * spaced points is the polyline.
+ *
+ * THE HIGHWAY IS THE LONGEST SIMPLE CHAIN OF THE MOTORWAY SUBGRAPH, and it is SHORT: the 52
+ * motorway edges are 20 connected components (S3b measured this), and the longest chain through
+ * the largest is 11 edges / 1190 m against the grid's straight 2000 m. That is the graph we
+ * digitised, not a defect here; `makePath` clamps `u` on an open path, so a scene still spawns
+ * correctly on it. Exhaustive DFS is fine at 52 edges and is deterministic because both the edge
+ * scan and the adjacency lists are in id order.
+ */
+const PATH_STEP = 15.0;   // m; max control-point spacing fed to makePath's Catmull-Rom
+export function graphPaths(plan, faces) {
+  // ---- city: the largest-area downtown face's ring --------------------------------------------
+  const dt = faces.filter((f) => f.district === 'downtown');
+  // Tie-break on id so the choice cannot depend on face order.
+  dt.sort((a, b) => (b.area - a.area) || (a.id - b.id));
+  if (!dt.length) throw new Error('graphPaths: no downtown face');
+  const ring = dt[0].polygon;
+  const city = [];
+  for (let i = 0; i < ring.length; i++) {
+    const a = ring[i], b = ring[(i + 1) % ring.length];
+    const n = Math.max(1, Math.ceil(Math.hypot(b[0] - a[0], b[1] - a[1]) / PATH_STEP));
+    for (let k = 0; k < n; k++) city.push([a[0] + (b[0] - a[0]) * k / n, a[1] + (b[1] - a[1]) * k / n]);
+  }
+
+  // ---- highway: the longest simple chain of motorway edges ------------------------------------
+  const mw = plan.edges.filter((e) => e.cls === 'motorway');
+  const adj = new Map();
+  for (const e of mw) for (const n of [e.a, e.b]) {
+    if (!adj.has(n)) adj.set(n, []);
+    adj.get(n).push(e);
+  }
+  let bestLen = -1, bestSeq = [];
+  const walk = (e, from, used, seq, len) => {
+    const to = e.a === from ? e.b : e.a;
+    const s2 = seq.concat([[e, from]]), l2 = len + e.length;
+    if (l2 > bestLen) { bestLen = l2; bestSeq = s2; }
+    for (const nx of adj.get(to) || []) {
+      if (used.has(nx.id)) continue;
+      used.add(nx.id);
+      walk(nx, to, used, s2, l2);
+      used.delete(nx.id);
+    }
+  };
+  for (const e of mw) for (const from of [e.a, e.b]) walk(e, from, new Set([e.id]), [], 0);
+
+  const hw = [];
+  for (const [e, from] of bestSeq) {
+    // `vs` runs a -> b, so an edge entered at `b` contributes its polyline reversed. The shared
+    // node between two chain links is emitted once, by the link that arrives at it.
+    const vs = e.a === from ? e.vs : e.vs.slice().reverse();
+    for (let i = hw.length ? 1 : 0; i < vs.length; i++) hw.push([vs[i].x, vs[i].z]);
+  }
+  const highway = [];
+  for (let i = 0; i < hw.length - 1; i++) {
+    const a = hw[i], b = hw[i + 1];
+    const n = Math.max(1, Math.ceil(Math.hypot(b[0] - a[0], b[1] - a[1]) / PATH_STEP));
+    for (let k = 0; k < n; k++) highway.push([a[0] + (b[0] - a[0]) * k / n, a[1] + (b[1] - a[1]) * k / n]);
+  }
+  highway.push(hw[hw.length - 1]);
+
+  return {
+    city: makePath(city, true),
+    highway: makePath(highway, false),
+    stats: { faceId: dt[0].id, faceArea: dt[0].area, cityPts: city.length,
+      hwEdges: bestSeq.length, hwLen: bestLen, hwPts: highway.length },
   };
 }
 
@@ -1704,9 +1796,13 @@ export function createWorld(scene, { roadKit, mapDoc = null }) {
   // result for `blocks` / `world.blocks` / `world.blockIndex`. Calling it twice would be 351 ms of
   // boot for a second copy of an identical answer.
   let graphBuilt = null, graphIdx = null;
+  // The drive paths are built HERE and not at the `paths` block near the end of createWorld,
+  // because `heroDist` consumes `paths.city` during EMISSION (`tryPark`), which runs first.
+  let graphPath = null;
   if (GRAPH) {
     const mapGraph = graphIdx = createRoadGraph(mapDoc);
     const built = graphBuilt = createBlocks(mapDoc);
+    graphPath = graphPaths(roadPlan, built.faces);
     const pav = planPavement(mapDoc, built.faces, { chunk: CHUNK, graph: mapGraph });
     const mk = (sink, mat, name, cast) => {
       if (sink.idx.length < 3) return;
@@ -3327,12 +3423,23 @@ export function createWorld(scene, { roadKit, mapDoc = null }) {
    * head-on collision.
    */
   function heroDist(x, z) {
-    // `paths.city` is still the grid's roundedRect under `#map=graph` - re-deriving it from the
-    // graph is decision 7 and lands in S3c. Until then the SDF describes a ring road that does not
-    // exist in the graph city, so applying it would carve a ring-shaped hole in the parked
-    // population 277 m from the origin for no reason. Culling nothing is the honest S3b answer;
-    // S3c re-points this at the real `paths.city` and the cull comes back.
-    if (GRAPH) return Infinity;
+    // S3C: THE GRAPH PATH IS A POLYLINE, SO THERE IS NO SDF - the distance is the nearest of the
+    // path's 900 samples. The clearance literals at the call sites are unchanged; only the shape
+    // of the driving line moved.
+    // ponytail: a linear scan of the path's 900 samples, called once per parked-car candidate.
+    // MEASURED IN THE PAGE, not estimated: 1042 calls, 12.9 ms total, under `#map=graph` on
+    // `hud-overlay`. That is not worth indexing at build time. If a caller ever runs this per
+    // FRAME, bucket the samples into the same uniform grid `graph.js:66-86` builds.
+    if (GRAPH) {
+      const s = graphPath.city.samples;
+      let bd = Infinity;
+      for (let i = 0; i < s.length; i++) {
+        const dx = x - s[i].x, dz = z - s[i].z;
+        const d = dx * dx + dz * dz;
+        if (d < bd) bd = d;
+      }
+      return Math.sqrt(bd);
+    }
     const qx = Math.abs(x) - 277, qz = Math.abs(z) - 277;
     return Math.abs(Math.hypot(Math.max(qx, 0), Math.max(qz, 0))
       + Math.min(Math.max(qx, qz), 0) - 48);
@@ -4090,7 +4197,9 @@ export function createWorld(scene, { roadKit, mapDoc = null }) {
   }
 
   // ---- drive paths ------------------------------------------------------
-  const paths = {
+  // Built above under `#map=graph` (see `graphPaths`), because `heroDist` needs them at emission
+  // time. The grid literals are untouched.
+  const paths = graphPath || {
     city: makePath(roundedRect(325, 325, 48, 8), true),
     highway: makePath([[-1000, HZ + 6.5], [-300, HZ + 6.5], [400, HZ + 6.5], [1000, HZ + 6.5]], false),
   };
@@ -4202,8 +4311,23 @@ export function createWorld(scene, { roadKit, mapDoc = null }) {
     lensMat.color.setScalar(night ? 1.5 : 0.55);
   }
 
+  // S3c decision 8: physics half-extent clamp, published so main.js does not hardcode 2000 twice.
+  // Graph extent is x[-2000,2000] x z[-1430.7,1430.7]; long half-axis is 2000 m.
+  // Grid is 1.1 km and never approaches either literal.
+  const bounds = GRAPH
+    ? Math.max(
+      Math.abs(mapDoc.extent.x[0]), Math.abs(mapDoc.extent.x[1]),
+      Math.abs(mapDoc.extent.z[0]), Math.abs(mapDoc.extent.z[1]),
+    )
+    : 1400;
+
   const world = {
     group, LAYOUT, paths, blocks, buildings, neons, lampPositions, lamps,
+    // S3c, decision 7's neighbour: the surface query for the world that was ACTUALLY built.
+    // `main.js` injects this into physics rather than the module-level grid function.
+    surfaceAt: GRAPH ? graphIdx.surfaceAt : surfaceAt,
+    // S3c decision 8 (taken early so the drive probe can reach the graph): half-extent clamp.
+    bounds,
     // Published for `rewire` (risk 5). `physics.js:922` scans `world.blocks` linearly per collide
     // call at SUBSTEP = 1/240, and the list goes 36 -> 868 under `#map=graph`. The index is
     // `createBlocks`' own, mark-and-sweep deduplicated, and is null on the grid path where 36

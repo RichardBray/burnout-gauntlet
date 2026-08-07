@@ -197,7 +197,8 @@ export async function boot() {
   scene.add(carRoot);
 
   await stage('sim', 'physics and effects');
-  const physics = createPhysics({ blocks: world.blocks });
+  // S3c decision 8: bounds come from the world (1400 grid / graph extent), not a second literal.
+  const physics = createPhysics({ blocks: world.blocks, bounds: world.bounds });
   const camRig = createCamRig(camera);
   const boostFx = createBoost(car);
   scene.add(boostFx.group);
@@ -233,9 +234,11 @@ export async function boot() {
   // traffic.js keeps owning the NPC side of the same contact — the knock-forward and shove.
   // A wreck-grade hit surfaces through the existing drainWreck() path below.
   physics.setTrafficBodies(() => traffic.vehicles);
-  // T4. The road network is the grid in world.LAYOUT, so the surface class is arithmetic rather
-  // than a raycast; physics.js takes it injected so it stays ignorant of the world layout.
-  physics.setSurfaceQuery(surfaceAt);
+  // T4. The surface class is arithmetic rather than a raycast; physics.js takes it injected so it
+  // stays ignorant of the world layout. S3c: `world.surfaceAt` is the query for the world that was
+  // actually built - the LAYOUT grid's under `#map=grid`, `graph.js`'s under `#map=graph`. The
+  // module-level import stays as the fallback for any world that does not publish one.
+  physics.setSurfaceQuery(world.surfaceAt || surfaceAt);
   physics.setParkedBodies(world.parkedCars);
   // Cosmetic side of the same join: sparks + grit at the contact point of a survivable
   // traffic hit. Wreck-grade contacts get the full cinematic through drainWreck() instead,
