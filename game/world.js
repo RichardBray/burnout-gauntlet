@@ -1700,9 +1700,13 @@ export function createWorld(scene, { roadKit, mapDoc = null }) {
   // blocks that would be 1736 unshared geometries), where this emits ONE batched extrusion per
   // cell per material, which is what plan section 2's six-geometries-per-chunk cap requires.
   let pavementStats = null;
+  // Hoisted out of the pavement block at S3b: `createBlocks` costs 351 ms and S3b needs the same
+  // result for `blocks` / `world.blocks` / `world.blockIndex`. Calling it twice would be 351 ms of
+  // boot for a second copy of an identical answer.
+  let graphBuilt = null, graphIdx = null;
   if (GRAPH) {
-    const mapGraph = createRoadGraph(mapDoc);
-    const built = createBlocks(mapDoc);
+    const mapGraph = graphIdx = createRoadGraph(mapDoc);
+    const built = graphBuilt = createBlocks(mapDoc);
     const pav = planPavement(mapDoc, built.faces, { chunk: CHUNK, graph: mapGraph });
     const mk = (sink, mat, name, cast) => {
       if (sink.idx.length < 3) return;
@@ -1729,7 +1733,22 @@ export function createWorld(scene, { roadKit, mapDoc = null }) {
   }
 
   // ---- sidewalks + kerbs ---------------------------------------------
+  //
+  // THE BLOCK LIST IS THE SPINE OF THE WHOLE CONTENT BUILD. Towers, the perimeter street wall,
+  // pavement furniture and the guard railing all iterate it, and signage and neon iterate the
+  // `frontages` / `towers` arrays those two produce. So under `#map=graph` the ONLY thing that has
+  // to change for the city to exist is what goes in here.
+  //
+  // Canonical order, `sort by (cx, cz)`, is plan section 5's rule and it is not cosmetic: without
+  // it the build order is `blocks.js`'s face-traversal order, and the order-independence test in
+  // section 4 below is the one that caught 287 invisible lamp panels in S2.
   const blocks = [];
+  let blockIndex = null;
+  if (GRAPH) {
+    blockIndex = graphBuilt.index;
+    for (const b of graphBuilt.blocks) blocks.push(b);
+    blocks.sort((p, q) => (p.cx - q.cx) || (p.cz - q.cz));
+  }
   for (let i = 0; i < G.length - 1; i++) {
     for (let j = 0; j < G.length - 1; j++) {
       const cx = (G[i] + G[i + 1]) / 2, cz = (G[j] + G[j + 1]) / 2;
@@ -2183,7 +2202,108 @@ export function createWorld(scene, { roadKit, mapDoc = null }) {
     }
   }
 
-  const downtown = (b) => Math.hypot(b.cx, b.cz) < 260;
+  // ---- THE FIVE DISTRICT PROFILES (plan section 5) ----------------------------------------
+  //
+  // WHAT THIS REPLACES. `const downtown = (b) => Math.hypot(b.cx, b.cz) < 260;` decided the entire
+  // character of every building from a radius about the origin, which is the only thing available
+  // when the city is a 1.1 km square of identical blocks. The graph carries a `district` on every
+  // edge and `createBlocks` votes it onto every block, so the radius is gone.
+  //
+  // THE RULE THAT PROTECTS THE VISUAL GATE, AND IT IS WHY THIS TABLE LOOKS LOPSIDED: the two
+  // profiles that carry the existing skyline are copied VERBATIM from the literals they replace.
+  // `downtown` reproduces the old inner branch and `palmbay` the old outer branch, expression for
+  // expression, so under `#map=grid` - where a block has no district and the fallback below is the
+  // old radius test - not one random draw moves and not one pixel moves. Only `silverlake`,
+  // `harbor` and `mountain` carry new numbers, and nothing on the default path can reach them.
+  //
+  // `massFill` is the profile's masses-per-block, expressed as a FRACTION of the mass grid rather
+  // than as a literal count, because the grid world's blocks are all 134 m and the graph's run from
+  // 20 m to 432 m. On the grid's 2 x 2 grid it evaluates back to the literal it replaces:
+  // downtown `rngInt(rb, 3, 4)`, palmbay `rngInt(rb, 3, 3)`. See MASS_CELL below.
+  const DISTRICTS = {
+    downtown: {
+      towerH: (r) => rngRange(r, 40, 138),          // verbatim, old inner branch
+      wallH: (r) => rngRange(r, 13, 36),            // verbatim, old inner branch
+      massFill: [0.75, 1.00],                       // == rngInt(rb, 3, 4) on a 2 x 2 grid
+      towerStyles: ['glass', 'office', 'glass', 'concrete'],          // verbatim
+      wallStyles: ['office', 'concrete', 'brick', 'glass'],           // verbatim
+      rich: true,                                   // the fine facade kit on the ground shaft
+    },
+    palmbay: {
+      towerH: (r) => rngRange(r, 13, 46),           // verbatim, old outer branch
+      wallH: (r) => rngRange(r, 10, 22),            // verbatim, old outer branch
+      massFill: [0.75, 0.75],                       // == rngInt(rb, 3, 3) on a 2 x 2 grid
+      towerStyles: ['brick', 'office', 'concrete'],                   // verbatim
+      wallStyles: ['brick', 'brick', 'office', 'concrete'],           // verbatim
+      rich: false,
+    },
+    silverlake: {
+      towerH: (r) => rngRange(r, 24, 70),
+      wallH: (r) => rngRange(r, 12, 28),
+      massFill: [0.75, 1.00],
+      towerStyles: ['office', 'concrete', 'glass'],
+      wallStyles: ['office', 'concrete', 'brick'],
+      rich: true,
+    },
+    harbor: {
+      towerH: (r) => rngRange(r, 10, 30),
+      wallH: (r) => rngRange(r, 8, 18),
+      massFill: [0.50, 0.75],
+      towerStyles: ['brick', 'brick', 'concrete'],
+      wallStyles: ['brick', 'brick', 'concrete'],
+      rich: false,
+    },
+    mountain: {
+      towerH: (r) => rngRange(r, 10, 24),
+      wallH: (r) => rngRange(r, 8, 16),
+      massFill: [0.25, 0.50],
+      towerStyles: ['concrete', 'brick'],
+      wallStyles: ['concrete', 'brick'],
+      rich: false,
+    },
+  };
+  /**
+   * PALM SHARE IS A SEPARATE TABLE, KEYED ON THE DISTRICT ID AND NOT ON THE PROFILE, AND THE
+   * REASON IS A REGRESSION THIS STEP CAUGHT ON ITSELF.
+   *
+   * Plan section 5 raises Palm Bay's palm share from 0.075 to about 0.16 and drops the harbour's
+   * to 0. Putting those on the profile objects looked right and was wrong: a `#map=grid` block has
+   * no district and falls back to the `palmbay` PROFILE, so the raise landed on every outer grid
+   * block too. Measured: `palmTrunk` 340 -> 578 and `frondMesh` 2724 -> 4624 on the default path,
+   * and because the palm branch consumes RNG draws the whole prop stream downstream re-rolled -
+   * `benchSeat` 2150 -> 2342, `binMesh` 1114 -> 822 - for a 15.1% pixel change in `crash-cam`.
+   * Keyed on `b.district`, a grid block cannot reach either number.
+   */
+  const PALM_SHARE = { palmbay: 0.16, harbor: 0.0 };
+  const PALM_SHARE_DEFAULT = 0.075;                 // the grid world's own literal
+
+  /**
+   * A block's profile. The `#map=grid` fallback IS the old radius test, and it is here rather than
+   * as a standalone helper because it is now the only thing that keeps the default path
+   * pixel-stable: a grid block has no `district`, so it resolves to the verbatim `downtown` or
+   * `palmbay` profile exactly as `Math.hypot(b.cx, b.cz) < 260` used to choose the branch.
+   */
+  const profileOf = (b) => DISTRICTS[b.district]
+    || (Math.hypot(b.cx, b.cz) < 260 ? DISTRICTS.downtown : DISTRICTS.palmbay);
+
+  /**
+   * Target plan size of one building mass, metres, and the reason the mass grid is no longer a
+   * hardcoded 2 x 2.
+   *
+   * The grid world has 36 identical blocks with `bw = bd = 120`, so `cols = rows = 2` gives a 60 m
+   * cell and was a fine constant. `createBlocks` produces 868 blocks whose building line runs from
+   * 6 m to 418 m, and 31 of them are frontage strips up to 432 m long that are a SINGLE AABB
+   * (`verdicts/wave-t/generate-blocks.md`). At a fixed 2 x 2 those become two 200 m building boxes
+   * end to end, which is not a city, it is a wall.
+   *
+   * 60.0 is chosen so `round(120 / 60) === 2` and the grid world's mass grid is unchanged to the
+   * draw - this constant may not be moved without re-rendering the seven scenes.
+   */
+  const MASS_CELL = 60.0;
+  const MASS_GRID_MAX = 8;                          // 418 m / 60 = 7 cols; the cap is a backstop
+  /** Tallest a mass may be as a multiple of its own shortest plan dimension. Graph blocks only. */
+  const MAX_SLENDER = 6.0;
+  const massGrid = (extent) => Math.max(1, Math.min(MASS_GRID_MAX, Math.round(extent / MASS_CELL)));
   const towers = [];      // {x,z,w,d,h} tall masses — rooftop billboards / neon
   const frontages = [];   // {x,y,z,ry,along,h} street-facing walls — cantilevered signage
 
@@ -2211,9 +2331,15 @@ export function createWorld(scene, { roadKit, mapDoc = null }) {
 
   for (const b of visitOrder(blocks)) {
       const rb = atRng(b.cx, b.cz, S_BLOCK);
-    const innerB = downtown(b);
-    const n = rngInt(rb, 3, innerB ? 4 : 3);
-    const cols = 2, rows = 2;
+    const prof = profileOf(b);
+    const innerB = prof.rich;
+    // The mass grid, sized from the block rather than fixed at 2 x 2. On a grid block
+    // (bw = bd = 120) this is exactly 2 x 2 and `n` is exactly the `rngInt(rb, 3, 4)` /
+    // `rngInt(rb, 3, 3)` it replaces, so the draw and the stream are unchanged on the default path.
+    const cols = massGrid(b.bw), rows = massGrid(b.bd);
+    const nCells = cols * rows;
+    const n = rngInt(rb, Math.max(1, Math.round(prof.massFill[0] * nCells)),
+      Math.max(1, Math.round(prof.massFill[1] * nCells)));
     const cells = [];
     for (let i = 0; i < cols; i++) for (let j = 0; j < rows; j++) cells.push([i, j]);
     for (let k = cells.length - 1; k > 0; k--) {
@@ -2226,10 +2352,15 @@ export function createWorld(scene, { roadKit, mapDoc = null }) {
       const pz = b.cz - b.bd / 2 + cd * (cj + 0.5) + rngRange(rb, -3, 3);
       const w = cw * rngRange(rb, 0.66, 0.94);
       const d = cd * rngRange(rb, 0.66, 0.94);
-      const base = innerB ? rngRange(rb, 40, 138) : rngRange(rb, 13, 46);
-      const h = base * (rb() < 0.14 ? 1.65 : 1.0);
-      const style = innerB ? rngPick(rb, ['glass', 'office', 'glass', 'concrete'])
-        : rngPick(rb, ['brick', 'office', 'concrete']);
+      const base = prof.towerH(rb);
+      let h = base * (rb() < 0.14 ? 1.65 : 1.0);
+      // SLENDERNESS CLAMP, GRAPH ONLY. A grid block's mass is never narrower than 39.6 m, so a
+      // 40-138 m downtown shaft is at worst 5.75:1 and the ratio never binds; `createBlocks`
+      // produces plots down to 6 m wide, where the same draw is a 138 m needle on a 6 m footprint.
+      // Gated on `b.district` - which only a graph block carries - so the default path cannot
+      // reach it and the seven scenes cannot move. Drawn AFTER `h`, so the stream is untouched.
+      if (b.district) h = Math.min(h, Math.min(w, d) * MAX_SLENDER);
+      const style = rngPick(rb, prof.towerStyles);
 
       // storefront podium with its own heavy cornice
       const tm = towerMesh[style];
@@ -2294,7 +2425,7 @@ export function createWorld(scene, { roadKit, mapDoc = null }) {
   // stepped, greebled wall instead of isolated prisms behind an empty apron.
   for (const b of visitOrder(blocks)) {
       const rb = atRng(b.cx, b.cz, S_WALL);
-    const innerB = downtown(b);
+    const prof = profileOf(b);
     for (const ry of FACES) {
       const nx = Math.sin(ry), nz = Math.cos(ry);
       const alongX = Math.abs(nx) < 0.5;
@@ -2305,14 +2436,19 @@ export function createWorld(scene, { roadKit, mapDoc = null }) {
       while (t < len / 2 - 12) {
         const seg = Math.min(rngRange(rb, 20, 40), len / 2 - t);
         if (seg < 12) break;
-        const dep = rngRange(rb, 13, 22);
-        const h = innerB ? rngRange(rb, 13, 36) : rngRange(rb, 10, 22);
+        // The wall is `dep` deep measured INWARD from the building line. On a grid block the
+        // available depth is 120 m and 13-22 never binds; a graph block's building line can be 6 m
+        // across, and an unclamped 22 m box would come straight out of the far side of the block
+        // and stand in the road. That is risk 12 from the building side and it is the failure the
+        // AABB rule exists to prevent. Clamped AFTER the draw, so the stream does not move.
+        const depAvail = alongX ? b.bd : b.bw;
+        const dep = Math.min(rngRange(rb, 13, 22), Math.max(3.0, depAvail - 1.2));
+        const h = prof.wallH(rb);
         const cx = ex + tx * (t + seg / 2) - nx * (dep / 2 - 0.6);
         const cz = ez + tz * (t + seg / 2) - nz * (dep / 2 - 0.6);
         const ww = alongX ? seg - 1.2 : dep;
         const dd = alongX ? dep : seg - 1.2;
-        const style = innerB ? rngPick(rb, ['office', 'concrete', 'brick', 'glass'])
-          : rngPick(rb, ['brick', 'brick', 'office', 'concrete']);
+        const style = rngPick(rb, prof.wallStyles);
         push(podiumMesh, cx, PODIUM_H / 2 + 0.2, cz, 0, 0, ww + 0.8, PODIUM_H, dd + 0.8,
           facadePaint(sink, rb, 0.58));
         push(capMesh, cx, PODIUM_H + 0.5, cz, 0, 0, ww + 2.4, 0.7, dd + 2.4);
@@ -2914,6 +3050,11 @@ export function createWorld(scene, { roadKit, mapDoc = null }) {
   /** walk each block's perimeter dropping street furniture */
   for (const b of visitOrder(blocks)) {
       const rp = atRng(b.cx, b.cz, S_PROP);
+    // Palm share is the one prop number the districts move: Palm Bay 0.16, the harbour 0,
+    // everywhere else the grid world's 0.075 unchanged. Risk 13 says palm density is per
+    // kerb-metre and the graph has 6.5x the centreline, so the fronds are an alpha-test fill item
+    // for `perf`; this deliberately does NOT multiply the base share to compensate for the map.
+    const palmShare = PALM_SHARE[b.district] ?? PALM_SHARE_DEFAULT;
     // sit the furniture on the open pavement: the kerb is at b.w/2 and the
     // building line is walkW further in, so 1.4-5.4 m in from the kerb keeps
     // every prop clear of both the wall and the traffic lane.
@@ -2938,7 +3079,7 @@ export function createWorld(scene, { roadKit, mapDoc = null }) {
         // old share a 2.5-5.5 m pitch puts a palm every ~28 m of kerb, which is
         // a boulevard planting scheme, not a downtown one, and nine alpha-tested
         // fronds is by far the most expensive prop in the set.
-        if (k < 0.075) {
+        if (k < palmShare) {
           palm(sink, rp, x, z, 0.24);
         } else if (k < 0.32) {
           push(binMesh, x, 0.24 + 0.5, z, ry, 0, 1, 1.0, 1);
@@ -3190,6 +3331,12 @@ export function createWorld(scene, { roadKit, mapDoc = null }) {
    * head-on collision.
    */
   function heroDist(x, z) {
+    // `paths.city` is still the grid's roundedRect under `#map=graph` - re-deriving it from the
+    // graph is decision 7 and lands in S3c. Until then the SDF describes a ring road that does not
+    // exist in the graph city, so applying it would carve a ring-shaped hole in the parked
+    // population 277 m from the origin for no reason. Culling nothing is the honest S3b answer;
+    // S3c re-points this at the real `paths.city` and the cull comes back.
+    if (GRAPH) return Infinity;
     const qx = Math.abs(x) - 277, qz = Math.abs(z) - 277;
     return Math.abs(Math.hypot(Math.max(qx, 0), Math.max(qz, 0))
       + Math.min(Math.max(qx, qz), 0) - 48);
@@ -3208,7 +3355,7 @@ export function createWorld(scene, { roadKit, mapDoc = null }) {
    * it against a junction test whose modulo was off by 40 m, which stripped the
    * mid-block runs and left the boulevards bare.
    */
-  function rank(sink, rng, ox, oz, ax, az, a0, a1, side) {
+  function rank(sink, rng, ox, oz, ax, az, a0, a1, side, off = PARK_OFF) {
     const nx = -az * side, nz = ax * side;      // outward normal for this kerb
     // Nose-in or nose-out is a coin flip per rank, not per car, so a kerb reads
     // as one continuous line of parking rather than alternating jumble.
@@ -3223,8 +3370,8 @@ export function createWorld(scene, { roadKit, mapDoc = null }) {
       // 0.60 was the surviving fraction before NPC_DENSITY; keeping it as a factor means the
       // multiplier reads as "fraction of the old population" at every site that uses it.
       if (rng() >= 0.60 * NPC_DENSITY) continue;
-      const x = ox + ax * t + nx * PARK_OFF;
-      const z = oz + az * t + nz * PARK_OFF;
+      const x = ox + ax * t + nx * off;
+      const z = oz + az * t + nz * off;
       tryPark(sink, rng, x, z, Math.atan2(-az, ax) + (flip ? Math.PI : 0), 2.8);
     }
   }
@@ -3321,17 +3468,20 @@ export function createWorld(scene, { roadKit, mapDoc = null }) {
   const PAINT_Y = 0.045;
 
   /** one zebra crossing, laid across the full carriageway on one junction arm */
-  function crossing(gx, gz, ax, az) {
+  // `half` is the arm's own paved half-width and `d` its distance from the node centre. The two
+  // defaults reproduce the grid's hardcoded 10 m carriageway and 14.8 / 17.4 m offsets exactly;
+  // plan section 8 gives the graph form, `d = r_i + 1.8` with the zebra spanning +-(h_i - 0.9)
+  // and the stop bar at `r_i + 4.4`, which is what the per-node caller passes.
+  function crossing(gx, gz, ax, az, half = HALF, d = 14.8, bar = 17.4) {
     const ry = Math.atan2(-az, ax);
-    const d = 14.8;                       // clear of the 13 m kerb line, before the stop bar
     const cx = gx + ax * d, cz = gz + az * d;
-    for (let o = -HALF + 0.9; o <= HALF - 0.9; o += 1.26) {
+    for (let o = -half + 0.9; o <= half - 0.9; o += 1.26) {
       push(paintMesh, cx - az * o, PAINT_Y, cz + ax * o, ry, 0, 2.9, 1, 0.58,
         0xeeeae0);
     }
     // stop bar on the approach side, the hard edge a queue lines up on
-    push(paintMesh, gx + ax * 17.4 + az * 5.0, PAINT_Y, gz + az * 17.4 - ax * 5.0,
-      ry, 0, 0.42, 1, 9.4, 0xeeeae0);
+    push(paintMesh, gx + ax * bar + az * (half * 0.5), PAINT_Y, gz + az * bar - ax * (half * 0.5),
+      ry, 0, 0.42, 1, half * 0.94, 0xeeeae0);
   }
   for (const gx of visitOrder(G)) {
     for (const gz of visitOrder(G)) {
@@ -3344,10 +3494,10 @@ export function createWorld(scene, { roadKit, mapDoc = null }) {
    * differently-aged resurfacing squares; ours was one uniform tile, so the near
    * asphalt had no feature bigger than the texture's own crack network.
    */
-  function roadWear(sink, rng, ox, oz, ax, az, a0, a1) {
+  function roadWear(sink, rng, ox, oz, ax, az, a0, a1, half = HALF) {
     const { holeMesh, patchMesh } = sink;
     for (let t = a0; t < a1; t += rngRange(rng, 7, 16)) {
-      const o = rngRange(rng, -HALF + 1.4, HALF - 1.4);
+      const o = rngRange(rng, -half + 1.4, half - 1.4);
       const x = ox + ax * t - az * o, z = oz + az * t + ax * o;
       const k = rng();
       if (k < 0.34) {
@@ -3401,14 +3551,19 @@ export function createWorld(scene, { roadKit, mapDoc = null }) {
     }
   }
 
-  const deck = new THREE.Mesh(new THREE.BoxGeometry(1400, 1.7, 13), concMat);
-  deck.position.set(0, 12.5, HZ - 62);
-  deck.castShadow = true; deck.receiveShadow = true;
-  group.add(deck);
-  const deckEdge = new THREE.Mesh(new THREE.BoxGeometry(1400, 1.3, 0.5), concMat);
-  deckEdge.position.set(0, 14.0, HZ - 62 + 6.5);
-  deckEdge.castShadow = true; group.add(deckEdge);
-  const deckEdge2 = deckEdge.clone(); deckEdge2.position.z = HZ - 62 - 6.5; group.add(deckEdge2);
+  // The deck was NOT gated before S3b, so `#map=graph` carried a 1400 m concrete beam floating at
+  // (0, 12.5, -700) with nothing under it - the grid highway's overpass, over the graph's open
+  // ground. Gated here and re-emitted alongside a real motorway edge in the graph block below.
+  if (!GRAPH) {
+    const deck = new THREE.Mesh(new THREE.BoxGeometry(1400, 1.7, 13), concMat);
+    deck.position.set(0, 12.5, HZ - 62);
+    deck.castShadow = true; deck.receiveShadow = true;
+    group.add(deck);
+    const deckEdge = new THREE.Mesh(new THREE.BoxGeometry(1400, 1.3, 0.5), concMat);
+    deckEdge.position.set(0, 14.0, HZ - 62 + 6.5);
+    deckEdge.castShadow = true; group.add(deckEdge);
+    const deckEdge2 = deckEdge.clone(); deckEdge2.position.z = HZ - 62 - 6.5; group.add(deckEdge2);
+  }
   // PIER RADIUS. Was r 1.5 -> 1.7 over the 11.6 m height. The row stands 64 m directly
   // BEHIND the car-paint-closeup camera, in the flank's specular direction, and its 44
   // cylinders were the carrier of the vertical comb that forced car-paint to widen
@@ -3425,6 +3580,347 @@ export function createWorld(scene, { roadKit, mapDoc = null }) {
       push(pier, -1300 + i * 60, 5.8, HZ - 62, 0, 0, 1, 11.6, 1);
       shadowAt(-1300 + i * 60, HZ - 62, 0.02, 4.2, 0.9);
     }
+  }
+
+  // ---- THE GRAPH STREET FURNITURE (#map=graph) ---------------------------------------------
+  //
+  // Everything above this point that the graph city needs came free once `blocks` was filled from
+  // `createBlocks`: towers, the street wall, signage, awnings, neon, pavement furniture and the
+  // guard railing all iterate `blocks` or the `frontages` / `towers` arrays it produces. What did
+  // NOT come free is everything the grid world hung off `LAYOUT.grid` directly - lamps, signals,
+  // gantries, crossings, road wear, parked ranks, signal queues and the motorway's own furniture.
+  // Those are the `D` rows of plan section 8, and this block is their per-edge / per-node
+  // replacement. It is placed here, after every emitter and pool it calls, and it is one
+  // contiguous insertion behind one gate: nothing above it was pattern-edited.
+  //
+  // SEEDING. Plan section 5's per-edge and per-node rules, verbatim, now that the graph supplies
+  // ids: `makeRng(cellHash(e.id, 0, S_EDGE))` and `makeRng(cellHash(n.id, 0, S_NODE))`. S2's
+  // `atRng` keyed on coordinates was the stand-in for exactly this. An id is a better key than a
+  // position because it cannot collide when two things sit at the same point.
+  let furnitureStats = null;
+  if (GRAPH) {
+    const edgeRng = (e) => makeRng(cellHash(e.id, 0, S_EDGE));
+    const nodeRng = (n) => makeRng(cellHash(n.id, 0, S_NODE));
+
+    /**
+     * Point, tangent and left-normal at arclength `s` along a full edge polyline.
+     *
+     * Arclength FROM THE EDGE'S OWN START is what makes every pitch below chunk-independent: a
+     * lamp at 62 m along edge 137 is at the same place whichever cell reaches it first, which a
+     * "walk from the cell boundary" rule would not be. Same reason `ribbonInto` takes `v0`.
+     */
+    const atArc = (e, s) => {
+      const vs = e.vs;
+      let i = 1;
+      while (i < vs.length - 1 && vs[i].s < s) i++;
+      const a = vs[i - 1], b = vs[i];
+      const span = b.s - a.s || 1;
+      const t = Math.min(1, Math.max(0, (s - a.s) / span));
+      const x = a.x + (b.x - a.x) * t, z = a.z + (b.z - a.z) * t;
+      let nx = a.nx + (b.nx - a.nx) * t, nz = a.nz + (b.nz - a.nz) * t;
+      const ln = Math.hypot(nx, nz) || 1; nx /= ln; nz /= ln;
+      // left normal is the tangent turned a quarter turn, so the tangent is the reverse turn
+      return { x, z, nx, nz, tx: nz, tz: -nx };
+    };
+    /** Retreat at the `a` (or `b`) end of an edge, i.e. how far the ribbon was pulled back. */
+    const nodeOf = new Map(roadPlan.nodes.map((n) => [n.id, n]));
+    const retreatAt = (e, atA) => {
+      const nd = nodeOf.get(atA ? e.a : e.b);
+      if (!nd) return 0;
+      for (let i = 0; i < nd.recs.length; i++) {
+        if (nd.recs[i].edge.id === e.id && nd.recs[i].atA === atA) return nd.r[i];
+      }
+      return 0;
+    };
+
+    const stat = { lamps: 0, signals: 0, gantries: 0, crossings: 0, ranks: 0, queues: 0,
+      billboards: 0, railPosts: 0, barriers: 0, piers: 0, deck: 0, wear: 0 };
+
+    // ---- per edge: lamps, road wear, parked ranks -----------------------------------------
+    // Lamp pitch 62 m and highway pitch 70 m are the grid world's own literals (the deleted loops
+    // at `x += 62` and `x += 70`); the lateral offset was a hardcoded `HALF + 2.4` = 12.4 m and is
+    // now the edge's own `width / 2 + 2.4`, because a 9 m service road and a 49.4 m arterial
+    // cannot share one number.
+    const LAMP_PITCH = 62, LAMP_PITCH_HW = 70, LAMP_OFF = 2.4;
+    for (const e of visitOrder(roadPlan.edges)) {
+      const re = edgeRng(e);
+      const half = e.width / 2;
+      const rA = retreatAt(e, true), rB = retreatAt(e, false);
+      const s0 = rA + 4, s1 = e.length - rB - 4;
+      const motorway = e.cls === 'motorway';
+
+      // lamps: alternating side, staggered by half a pitch, arm along the road exactly as the
+      // grid's two calls did (rotY is the along-road direction, not the across-road one).
+      const pitch = motorway ? LAMP_PITCH_HW : LAMP_PITCH;
+      for (let s = s0 + (e.id % 2) * pitch * 0.5, k = 0; s < s1; s += pitch, k++) {
+        const p = atArc(e, s);
+        const side = k % 2 ? 1 : -1;
+        streetLight(sink, p.x + p.nx * side * (half + LAMP_OFF),
+          p.z + p.nz * side * (half + LAMP_OFF), Math.atan2(-p.tz, p.tx));
+        stat.lamps++;
+      }
+
+      // road wear, per straight run of the polyline so the patches follow a curve
+      if (s1 > s0 + 8) {
+        // walked in the edge's own frame: the origin and tangent are re-fetched every 40 m so a
+        // curved edge's patches follow the carriageway instead of drifting off a chord
+        for (let s = s0; s < s1; s += 40) {
+          const q = atArc(e, s);
+          roadWear(sink, re, q.x, q.z, q.tx, q.tz, 0, Math.min(40, s1 - s), Math.max(3.0, half));
+          stat.wear++;
+        }
+      }
+
+      // parked ranks, both kerbs, between the two junction retreats plus a car half-length.
+      // `JCLR_i = r_i + 3.5` is plan section 8; `PARK_OFF` becomes the edge's own half-width
+      // plus the same 0.5 m the grid used.
+      if (!motorway && e.length > rA + rB + 20) {
+        const q0 = rA + 3.5, q1 = e.length - rB - 3.5;
+        for (let s = q0; s < q1; s += 40) {
+          const q = atArc(e, s);
+          const span = Math.min(40, q1 - s);
+          const before = parkedBodies.length;
+          rank(sink, re, q.x, q.z, q.tx, q.tz, 0, span, 1, half + 0.5);
+          rank(sink, re, q.x, q.z, q.tx, q.tz, 0, span, -1, half + 0.5);
+          stat.ranks += parkedBodies.length - before;
+        }
+      }
+    }
+
+    // ---- per node of degree 3 or more: signals, crossings, gantries, one queue -------------
+    for (const nd of visitOrder(roadPlan.nodes)) {
+      if (nd.deg < 3) continue;
+      const rj = nodeRng(nd);
+      const [vx, vz] = nd.p;
+      // arm directions, from the node toward the first interior point of each incident polyline
+      const arms = nd.recs.map((rc, i) => {
+        const vs = rc.edge.vs;
+        const p = rc.atA ? vs[0] : vs[vs.length - 1];
+        const q = rc.atA ? vs[1] : vs[vs.length - 2];
+        const dx = q.x - p.x, dz = q.z - p.z;
+        const L = Math.hypot(dx, dz) || 1;
+        return { dx: dx / L, dz: dz / L, h: nd.h[i], r: nd.r[i], e: rc.edge };
+      });
+      const signalled = arms.some((a) => a.e.cls === 'arterial' || a.e.cls === 'street');
+      for (const a of arms) {
+        // zebra + stop bar on every arm, at the arm's own retreat and half-width
+        crossing(vx, vz, a.dx, a.dz, a.h, a.r + 1.8, a.r + 4.4);
+        stat.crossings++;
+        // one signal head per arm, on the near-side kerb, arm swung out over the carriageway
+        if (signalled && a.e.cls !== 'motorway') {
+          const px = vx + a.dx * (a.r + 2.6) - a.dz * (a.h + 2.6);
+          const pz = vz + a.dz * (a.r + 2.6) + a.dx * (a.h + 2.6);
+          trafficLight(sink, px, pz, Math.atan2(a.dz, a.dx));
+          stat.signals++;
+        }
+      }
+      // sign gantry over the widest arterial / motorway arm, half the time. The grid drew one on
+      // each of two arms at p 0.5 apiece; one per node here, because the graph has 330 junctions
+      // of degree 3 or more against the grid's 49.
+      const big = arms.filter((a) => a.e.cls === 'arterial' || a.e.cls === 'motorway')
+        .sort((p, q) => q.h - p.h)[0];
+      if (big && rj() < 0.5) {
+        const d = big.r + 8;
+        gantry(sink, rj, vx + big.dx * d, vz + big.dz * d, -big.dz, big.dx,
+          Math.atan2(big.dx, big.dz), 2 * big.h + 6, 9.6, rngInt(rj, 2, 3));
+        stat.gantries++;
+      }
+      // ONE stopped queue per junction, on one arm, exactly as the grid did
+      const k = rngInt(rj, 0, arms.length - 1);
+      const qa = arms[k];
+      if (qa.e.cls !== 'motorway') {
+        const before = parkedBodies.length;
+        signalQueue(sink, rj, vx + qa.dx * qa.r, vz + qa.dz * qa.r, qa.dx, qa.dz);
+        stat.queues += parkedBodies.length - before;
+      }
+    }
+
+    // ---- the motorway: gantries, billboard row, guard rails, barrier, overpass -------------
+    // Pitches are the grid's own deleted literals - 240 m gantries, 105 m billboards, 10 m rail
+    // posts, 9.8 m jersey barrier, 60 m piers - now walked along each motorway edge's own
+    // arclength rather than along `x`.
+    const motorways = roadPlan.edges.filter((e) => e.cls === 'motorway')
+      .sort((a, b) => a.id - b.id);
+    for (const e of motorways) {
+      const re = makeRng(cellHash(e.id, 1, S_EDGE));
+      const half = e.width / 2;
+      for (let s = 40; s < e.length - 40; s += 240) {
+        const p = atArc(e, s);
+        gantry(sink, re, p.x, p.z, p.nx, p.nz, Math.atan2(p.tx, p.tz), 2 * half + 16, 10.4, 3);
+        stat.gantries++;
+      }
+      for (let s = 0, i = 0; s < e.length; s += 105, i++) {
+        const p = atArc(e, s);
+        const sd = i % 2 ? 1 : -1;
+        const bx = p.x + p.nx * sd * (half + 13), bz = p.z + p.nz * sd * (half + 13);
+        const w = rngRange(re, 13, 19), bh = w * 0.36;
+        const by = rngRange(re, 9, 13);
+        placeSign(sink, re, bx, by, bz, Math.atan2(-p.nx * sd, -p.nz * sd), w, bh, { flood: true });
+        for (const t of [-w * 0.3, w * 0.3]) {
+          push(mastMesh, bx + p.tx * t, 0.2 + (by - bh / 2) / 2, bz + p.tz * t,
+            0, 0, 0.42, by - bh / 2, 0.42);
+        }
+        shadowAt(bx, bz, 0.02, 3.0, 0.7);
+        stat.billboards++;
+      }
+      // guard rail: instanced 10 m segments, NOT the two 2400 m unshared Meshes the grid used.
+      // Those were two of the four unshared geometries in the tree and are exactly what plan
+      // section 2 says a streaming world may not inherit.
+      for (const sd of [-1, 1]) {
+        for (let s = 0; s < e.length; s += 10) {
+          const p = atArc(e, s);
+          const ry = Math.atan2(-p.tz, p.tx);
+          const rx = p.x + p.nx * sd * (half + 2.2), rz = p.z + p.nz * sd * (half + 2.2);
+          push(railPost, rx, 0.45, rz, ry, 0, 0.14, 0.9, 0.14);
+          push(guardRail, rx, 0.72, rz, ry, 0, 10, 0.42, 0.14);
+          push(guardRail, rx, 0.38, rz, ry, 0, 10, 0.42, 0.14);
+          stat.railPosts++;
+        }
+      }
+      for (let s = 0; s < e.length; s += 9.8) {
+        const p = atArc(e, s);
+        push(barrier, p.x - p.nx * (half + 5.0), 0.55, p.z - p.nz * (half + 5.0),
+          Math.atan2(-p.tz, p.tx), 0, 9.8, 1.1, 0.6);
+        stat.barriers++;
+      }
+    }
+
+    // THE OVERPASS DECK AND PIER ROW - RISK 16, AND IT IS THE ITEM THE PLAN SAYS IS MOST LIKELY
+    // TO BE QUIETLY DROPPED. No graph edge is `elevated` or `bridge`; all 929 are `ground`. But
+    // `world.js`'s own comment at the pier pool records the row as a MEASURED contributor to
+    // three of the seven gate scenes - dusk-highway-chase (max delta 146), crash-cam (72),
+    // daytime-downtown (68) - with a 0.75 / 0.85 radius chosen to fix a solved car-paint
+    // anisotropy defect. Deleting it reopens that defect. So it is re-emitted in kind: the same
+    // deck section, the same pier radius, the same 60 m pitch and the same 62 m lateral offset,
+    // now running alongside the LONGEST motorway edge instead of alongside `z = -700`.
+    // THE OVERPASS DECK AND PIER ROW - RISK 16, THE ITEM THE PLAN NAMES AS MOST LIKELY TO BE
+    // QUIETLY DROPPED. No graph edge is `elevated` or `bridge`; all 929 are `ground`. But the pier
+    // pool's own comment 40 lines above records the row as a MEASURED contributor to three of the
+    // seven gate scenes, with a 0.75 / 0.85 radius chosen to fix a solved car-paint anisotropy
+    // defect. Deleting it reopens that defect, so it is re-emitted in kind.
+    //
+    // IT HAS TO RUN ALONG A CHAIN, NOT AN EDGE. The longest single motorway edge is 291.9 m and
+    // the mean is 88 m, so "the longest edge" gives a five-pier stub against the grid's 44, and a
+    // per-edge run test rejects nearly everything. The 52 motorway edges are walked into one
+    // contiguous chain first and the deck is laid along that.
+    const DECK_SEG = 50, DECK_CLR = 12, PIER_PITCH = 60, RUN_MIN = 4;
+    const DECK_OFFS = [62, 78, 96, 120, 150];       // 62 is the grid's own literal, tried first
+    let deckSkipped = 0, chainLen = 0, chainEdges = 0, pier0 = null;
+    {
+      const byNode = new Map();
+      for (const e of motorways) {
+        for (const nid of [e.a, e.b]) {
+          if (!byNode.has(nid)) byNode.set(nid, []);
+          byNode.get(nid).push(e);
+        }
+      }
+      // THE MOTORWAY IS NOT ONE ROAD IN THIS GRAPH, AND THAT IS A DATA FACT, NOT A BUG HERE.
+      // The 52 `motorway` edges fall into TWENTY connected components, the largest 12 edges and
+      // 1285 m; `digitise` traced the gold corridor in patches. So there is no 2.4 km freeway to
+      // lay 44 piers beside, and any claim of one would be false.
+      //
+      // Every (edge, end) pair is walked greedily and every resulting chain is a candidate. The
+      // chain is then chosen by HOW MUCH VIADUCT IT CAN CARRY, not by its own length: a 1285 m
+      // chain that runs between buildings the whole way is worth less than a 700 m one in the
+      // open, and length was the wrong objective.
+      const walkFrom = (e0, n0) => {
+        const used = new Set();
+        const out = [];
+        let at = n0, cur = e0, len = 0;
+        while (cur && !used.has(cur.id)) {
+          used.add(cur.id);
+          const fwd = cur.a === at;
+          out.push({ e: cur, fwd, base: len });
+          len += cur.length;
+          at = fwd ? cur.b : cur.a;
+          cur = (byNode.get(at) || []).find((n) => !used.has(n.id));
+        }
+        return { chain: out, len };
+      };
+      const atOf = (chain) => (s) => {
+        let i = 0;
+        while (i < chain.length - 1 && chain[i].base + chain[i].e.length < s) i++;
+        const c = chain[i];
+        const local = c.fwd ? s - c.base : c.e.length - (s - c.base);
+        const p = atArc(c.e, Math.min(c.e.length, Math.max(0, local)));
+        return c.fwd ? p : { x: p.x, z: p.z, nx: -p.nx, nz: -p.nz, tx: -p.tx, tz: -p.tz };
+      };
+      // A deck station is USABLE only where its footprint is clear of every block AABB AND off the
+      // tarmac. The block test alone left a pier standing in a shopfront and a beam over a street;
+      // the tarmac test is what keeps a pier out of a carriageway.
+      const deckClear = (x, z) => !blockIndex.at(x, z, DECK_CLR).length
+        && graphIdx.surfaceAt(x, z) !== 'tarmac';
+      const runsOf = (ok) => ok.map((v, i) => {
+        if (!v) return false;
+        let lo = i; while (lo > 0 && ok[lo - 1]) lo--;
+        let hi = i; while (hi < ok.length - 1 && ok[hi + 1]) hi++;
+        return (hi - lo + 1) >= RUN_MIN;
+      });
+
+      let best = -1, bestSide = -1, bestOff = DECK_OFFS[0], bestKeep = null, bestAt = null;
+      const seenStart = new Set();
+      for (const e of motorways) {
+        for (const n0 of [e.a, e.b]) {
+          if (seenStart.has(`${e.id}:${n0}`)) continue;
+          seenStart.add(`${e.id}:${n0}`);
+          const w = walkFrom(e, n0);
+          if (w.len < RUN_MIN * DECK_SEG) continue;
+          const nS = Math.max(1, Math.ceil(w.len / DECK_SEG));
+          const cAt = atOf(w.chain);
+          for (const off of DECK_OFFS) {
+            for (const sd of [-1, 1]) {
+              const ok = [];
+              for (let i = 0; i < nS; i++) {
+                const p = cAt(Math.min(w.len, (i + 0.5) * DECK_SEG));
+                ok.push(deckClear(p.x + p.nx * sd * off, p.z + p.nz * sd * off));
+              }
+              // A viaduct that appears for one 50 m segment and stops is worse than no viaduct:
+              // it reads as a concrete beam hanging in mid-air with cut ends, which is exactly
+              // what the first version of this looked like over a Palm Bay street.
+              const keep = runsOf(ok);
+              const n = keep.filter(Boolean).length;
+              if (n > best) {
+                best = n; bestSide = sd; bestOff = off; bestKeep = keep; bestAt = cAt;
+                chainLen = w.len; chainEdges = w.chain.length;
+              }
+            }
+          }
+        }
+      }
+      const nSeg = bestKeep ? bestKeep.length : 0;
+      const keep = bestKeep || [];
+      const chainAt = bestAt || (() => ({ x: 0, z: 0, nx: 0, nz: 1, tx: 1, tz: 0 }));
+      const dOf = (p) => [p.x + p.nx * bestSide * bestOff, p.z + p.nz * bestSide * bestOff];
+      for (let i = 0; i < nSeg; i++) {
+        const s0 = i * DECK_SEG;
+        const seg = Math.min(DECK_SEG, chainLen - s0);
+        if (seg < 6) continue;
+        if (!keep[i]) { deckSkipped++; continue; }
+        const p = chainAt(s0 + seg / 2);
+        const ry = Math.atan2(-p.tz, p.tx);
+        const [dx, dz] = dOf(p);
+        push(barrier, dx, 12.5, dz, ry, 0, seg, 1.7, 13);              // the deck itself
+        push(barrier, dx + p.nx * 6.5, 14.0, dz + p.nz * 6.5, ry, 0, seg, 1.3, 0.5);
+        push(barrier, dx - p.nx * 6.5, 14.0, dz - p.nz * 6.5, ry, 0, seg, 1.3, 0.5);
+        stat.deck++;
+      }
+      // PITCH, RADIUS AND HEIGHT ARE THE GRID'S OWN LITERALS AND DO NOT MOVE. The 60 m pitch was
+      // MEASURED as not the carrier of the car-paint defect and the 0.75 / 0.85 taper was the fix.
+      // A pier is only emitted under a deck segment that exists.
+      for (let s = PIER_PITCH / 2; s < chainLen; s += PIER_PITCH) {
+        if (!keep[Math.min(nSeg - 1, Math.floor(s / DECK_SEG))]) continue;
+        const p = chainAt(s);
+        const [dx, dz] = dOf(p);
+        if (!deckClear(dx, dz)) continue;
+        push(pier, dx, 5.8, dz, 0, 0, 1, 11.6, 1);
+        shadowAt(dx, dz, 0.02, 4.2, 0.9);
+        if (!pier0) pier0 = [+dx.toFixed(1), +dz.toFixed(1)];
+        stat.piers++;
+      }
+      furnitureStats = { chainEdges, chainLen: +chainLen.toFixed(1),
+        deckOff: bestOff, deckSide: bestSide, pier0 };
+    }
+    furnitureStats = { ...stat, motorwayEdges: motorways.length, deckSkipped, ...furnitureStats };
   }
 
   // ---- contact shadows ------------------------------------------------------
@@ -3551,6 +4047,7 @@ export function createWorld(scene, { roadKit, mapDoc = null }) {
   }
 
   // ---- wet smears (built once, shown only when wet) ---------------------
+  let smearStats = null;
   const smears = new THREE.Group();
   smears.visible = false;
   group.add(smears);
@@ -3560,9 +4057,40 @@ export function createWorld(scene, { roadKit, mapDoc = null }) {
   // The 69 neon smears keep their own meshes: each has its own colour and length.
   roadKit.addWetSmearBatch(smears,
     lampPositions.map((p) => ({ x: p.x, z: p.z + 5 })), 0xffc98a, 1.8, 16, 0.16);
-  for (const n of neons) {
-    if (n.y > 14) continue;
-    roadKit.addWetSmear(smears, n.x, n.z, 0, n.color, 2.6, 20 + n.y, 0.12);
+  // THE NEON SMEARS HAD TO BE BATCHED, AND THIS STEP IS WHAT MADE IT NECESSARY.
+  // `addWetSmear` builds a Mesh with its OWN geometry and its OWN material per call, and pushes it
+  // into `road.js`'s `refl.hidden`, which is iterated twice per reflection render. That was fine at
+  // the grid world's 69 neons and is not fine at the graph city's 608: measured, the unbatched
+  // version put 725 distinct materials and 802 geometries in the scene against grid's 187 and 392.
+  // Nothing NEW was introduced - it is the same `MeshBasicMaterial` the smear always used - but 536
+  // extra instances of it is exactly the cost decision 4 exists to prevent, and it is caused by the
+  // population this step adds, so it belongs to this step.
+  //
+  // Bucketed by (colour, length quantised to 2 m), which is what `addWetSmearBatch` can carry: a
+  // batch is one colour and one size. The grid branch is left EXACTLY as it was, because
+  // `wet-night-asphalt` is a gate scene and a 2 m length quantisation is a visible change to it.
+  if (GRAPH) {
+    const smearBuckets = new Map();
+    for (const n of neons) {
+      if (n.y > 14) continue;
+      const l = Math.round((20 + n.y) / 2) * 2;
+      const k = `${n.color}|${l}`;
+      let b = smearBuckets.get(k);
+      if (!b) smearBuckets.set(k, b = { color: n.color, l, pos: [] });
+      b.pos.push({ x: n.x, z: n.z });
+    }
+    // canonical order, so the batch set does not depend on the order the neons were emitted in
+    const keys = [...smearBuckets.keys()].sort();
+    for (const k of keys) {
+      const b = smearBuckets.get(k);
+      roadKit.addWetSmearBatch(smears, b.pos, b.color, 2.6, b.l, 0.12);
+    }
+    smearStats = { neons: neons.length, batches: keys.length };
+  } else {
+    for (const n of neons) {
+      if (n.y > 14) continue;
+      roadKit.addWetSmear(smears, n.x, n.z, 0, n.color, 2.6, 20 + n.y, 0.12);
+    }
   }
 
   // ---- drive paths ------------------------------------------------------
@@ -3652,6 +4180,16 @@ export function createWorld(scene, { roadKit, mapDoc = null }) {
       map: GRAPH ? 'graph' : 'grid',
       roads: roadStats,
       pavement: pavementStats,
+      furniture: furnitureStats,
+      smears: smearStats,
+      // S3b: what the block-driven half of the build actually produced, counted off the published
+      // arrays rather than off a running total, so a harness can check the city exists.
+      content: {
+        blocks: blocks.length, towers: towers.length, frontages: frontages.length,
+        neons: neons.length, parkedCars: parkedBodies.length, poles: poles.length,
+        lamps: lampPositions.length, signals: signalLights.length,
+        districts: blocks.reduce((h, b) => { const k = b.district || 'grid'; h[k] = (h[k] || 0) + 1; return h; }, {}),
+      },
     };
   }
 
@@ -3670,6 +4208,11 @@ export function createWorld(scene, { roadKit, mapDoc = null }) {
 
   const world = {
     group, LAYOUT, paths, blocks, buildings, neons, lampPositions, lamps,
+    // Published for `rewire` (risk 5). `physics.js:922` scans `world.blocks` linearly per collide
+    // call at SUBSTEP = 1/240, and the list goes 36 -> 868 under `#map=graph`. The index is
+    // `createBlocks`' own, mark-and-sweep deduplicated, and is null on the grid path where 36
+    // blocks do not need one. `world.blocks` stays a flat array by decision 5.
+    blockIndex,
     buildingMats, roadKit, atmo, towers,
     // The STATIONARY vehicle population, split by mechanism. traffic.js owns the moving one.
     carKit, parkedCounts: parkCounts, parkedCars: parkedBodies, poles,

@@ -60,13 +60,31 @@ Opening a new wave block is the moment to do this, not later.
 
 ### WAVE T — LIVE. THE MAP. `TASKS.md` wave 4, task T3. Opened session 18, 2026-08-07.
 
-**EXACT NEXT ACTION: S3b - buildings, signage, neon, props and parked cars under `#map=graph`, from
-`createBlocks(doc).blocks`.** `tools/WAVE-T-GENERATE-MESH-PLAN.md:855-859`. **S3a IS NOW COMPLETE**;
-kerbs and pavement landed in `game/map/pavement.js`, `verdicts/wave-t/generate-mesh-s3a-kerbs.md`.
-S3b publishes `world.blocks` and `world.blockIndex`, which S3a-kerbs deliberately left empty because
-868 collidable AABBs in a step with no buildings is 868 invisible walls.
+**EXACT NEXT ACTION: FIND WHY TWO OF THE SEVEN SCENES NO LONGER REACH `window.__ready` UNDER
+`#map=graph`, THEN S3c.** `hud-overlay` and `wet-night-asphalt` do not boot in 240 s / 300 s with no
+console error; the other five boot in 3.9-6.7 s and **`#map=grid`, the default and the gate, boots
+and renders all seven**. S3b caused it - the S3a tree boots `hud-overlay` under `#map=graph` in
+3.9 s. Six kill-controls are already run and recorded in
+`verdicts/wave-t/generate-mesh-s3b.md` section 9: **NOT `world.blocks`** (emptying it does not fix
+it), **NOT `setNight`** (0.1 ms), **NOT `applyWet`** (0.1 ms), **NOT the parked population**
+(suppressing all 1042 does not fix it), and **suppressing the whole graph street-furniture block at
+`game/world.js:3600` boots it in 5.3 s**. It is position-dependent, not time-of-day-dependent: the
+three scenes riding `paths.city` are `hud-overlay` (u 0.34, fails), `wet-night-asphalt` (u 0.565,
+fails) and `daytime-downtown` (u 0.815, works), and `hud-overlay` is `dusk`. `window.__game` is
+never set, so it is stuck before `main.js:883`, and `cfg.setup(ctx)` at `main.js:799` is what makes
+it scene-dependent. **Profile it; do not guess.** Then
+**S3c - `paths`, `heroDist`, `surfaceAt` and `bounds` under `#map=graph`**,
+`tools/WAVE-T-GENERATE-MESH-PLAN.md:861-865`, decisions 7 and 8. **S3b IS OTHERWISE DONE** -
+`verdicts/wave-t/generate-mesh-s3b.md`. Two things S3b left for S3c specifically: `heroDist`
+(`game/world.js:3339`) RETURNS `Infinity` UNDER `#map=graph`, so the parked population is not culled
+away from the hero's driving line - it cannot be, because `paths.city` is still the grid's
+`roundedRect` and culling against a ring road the graph does not have would carve a hole 277 m from
+the origin for no reason. And the seven scenes still spawn on grid coordinates under `#map=graph`.
 
 Superseded next-actions, kept only so the reasoning is not lost:
+
+**~~S3b - buildings, signage, neon, props and parked cars under `#map=graph`, from
+`createBlocks(doc).blocks`.~~ DONE.**
 
 **~~finish S3a - write the KERB AND PAVEMENT extrusion from `blocks.js`'s FACE polygons, under
 `#map=graph`.~~ DONE.**
@@ -426,6 +444,65 @@ stations differently (a station sitting on the corridor boundary where the round
 differs in the last bit). Within one runtime the result is bit-exact. Do not read a node-vs-browser
 dump difference as a bug.
 
+**`generate-mesh` S3b IS DONE, WITH ONE OPEN DEFECT ON THE NON-DEFAULT PATH (see the EXACT NEXT
+ACTION above)** - `verdicts/wave-t/generate-mesh-s3b.md`. Under `#map=graph` the
+graph is now a CITY: 868 blocks from `createBlocks(doc).blocks`, five district profiles replacing
+`downtown = hypot < 260`, buildings, street wall, signage, neon, awnings, props, guard railing,
+street lamps, traffic signals, zebra crossings, gantries, road wear, parked ranks, signal queues,
+the motorway's rails and billboards, and the overpass. **`world.blocks` (868) and `world.blockIndex`
+are published.** 1,191,271 instances over 191 cells, `overflow.n === 0`, boot to `__ready` 4.9 s.
+
+**`#map=grid` IS STILL PIXEL-STABLE, AND THE FIRST VERSION WAS NOT - THIS STEP CAUGHT ITSELF.**
+Putting plan section 5's raised Palm Bay palm share on the `palmbay` PROFILE looked right and was
+wrong: a grid block has no district and falls back to the `palmbay` profile, so the raise landed on
+every outer grid block. Measured on the default path: `palmTrunk` 340 -> 578, `frondMesh`
+2724 -> 4624, and because the palm branch consumes RNG draws the whole prop stream re-rolled
+(`benchSeat` 2150 -> 2342, `binMesh` 1114 -> 822) for **15.1% of pixels in `crash-cam` at maxd 184**.
+Palm share is now a separate table keyed on `b.district` (`game/world.js:2277`) which a grid block
+cannot reach. After the fix the pool census is IDENTICAL pool for pool and all seven scenes are at
+their own same-tree noise floor. **A "verbatim" profile shared with the grid fallback is only
+verbatim in the fields the grid reads; check every field, not the two the plan tabulates.**
+
+Five things from S3b that must not be rediscovered:
+
+- **THE BLOCK LIST IS THE WHOLE CITY.** Filling `blocks` from `createBlocks` gave towers, the
+  street wall, signage, neon, awnings, props and guard railing for free, because every one of them
+  iterates `blocks` or the `frontages` / `towers` arrays it produces. Only the populations the grid
+  hung off `LAYOUT.grid` directly needed new per-edge / per-node code.
+- **A FIXED 2 x 2 MASS GRID DOES NOT SURVIVE THE GRAPH.** The grid's blocks are all 134 m; the
+  graph's building line runs 6 m to 418 m and 31 blocks are frontage strips up to 432 m as a SINGLE
+  AABB. At 2 x 2 those are two 200 m building boxes end to end. `MASS_CELL = 60.0`
+  (`game/world.js:2302`) sizes the grid from the block and evaluates back to exactly 2 x 2 at
+  `bw = 120`, so the default path does not move. `blocks.js` was NOT edited.
+- **RISK 12 IS CLEAN FROM THE BUILDING SIDE, MEASURED: all four footprint corners of all 4786 shaft
+  masses and all 4542 podiums lie inside a block AABB, worst overhang 0.000 m.** S3a-kerbs proved
+  the kerb is outside the AABB; this is the other end of the same rule.
+- **THE 608 NEON WET SMEARS HAD TO BE BATCHED AND IT WAS THIS STEP'S DEBT.** `road.js`'s
+  `addWetSmear` builds a Mesh with its OWN geometry and material per call and pushes it into
+  `refl.hidden`, which is iterated twice per reflection render. At the grid's 69 neons that is
+  fine; at 608 it put **725 distinct materials in the scene against grid's 187**. Bucketed by
+  (colour, length quantised to 2 m) under `#map=graph` only: **725 -> 133, below grid's 187.** The
+  grid branch is untouched because `wet-night-asphalt` is a gate scene.
+- **THE MOTORWAY IS NOT ONE ROAD. The 52 `motorway` edges are TWENTY connected components**, the
+  largest 12 edges / 1285 m, longest single edge 291.9 m. So risk 16's pier row cannot be 44 piers
+  over 2.4 km: the chain is walked from every (edge, end) pair, the chain is chosen by how much
+  viaduct it can carry rather than by its own length, and the result is **10 deck segments (500 m)
+  and 7 piers at the unchanged 0.75/0.85 radius, 11.6 m height and 60 m pitch.** The row is NOT
+  dropped. The grid's ungated 1400 m deck at `z = -700` WAS being drawn under `#map=graph` over
+  open ground with nothing under it; it is now behind `if (!GRAPH)`.
+
+Determinism: **191 cells, 1,191,271 instances, six runs - one rebuild and five with the population
+order shuffled - 0 differing cells, and 1,697,327 values compared value-by-value in the six densest
+cells with 0 differing.** Poison control fires on exactly 1 cell. `tools/_s3b-determinism.mjs`.
+
+Open at S3b's close, honestly: `renderer.info.programs` under `#map=graph` is **180 against 101 at
+S3a and 131 for grid**, and that is NOT new materials - `git diff` adds zero `new THREE.*Material`
+calls and the scene's distinct material count is 133, below grid's 187. Normalising the light-count
+field out of the three.js program cache key collapses 180 to 141: **39 of the 79 are a second
+point-light-count variant** of already-compiled materials, because the graph city fills the
+`POOL = 10` dynamic light pool where S3a's empty graph world did not. The remaining gap is draw
+states grid also compiles. Flag for `perf`, not a decision-4 breach.
+
 Read the chunk contract in the brief BEFORE writing the generator, not after. The rule that decides
 whether this task ships at 3.5 s or 14 s is that **nothing outside the hero's resident chunk set
 may be BUILT during boot** — and it must be asserted on what EXISTS at `__ready`, never inferred
@@ -442,7 +519,7 @@ from it.
 | `queries` | graph spatial index, `surfaceAt` off `LAYOUT` | **DONE.** `verdicts/wave-t/queries.md` |
 | `generate` | graph -> roads, kerbs, junctions, buildings | **SPLIT INTO THREE.** See below. Owns the `surfaceAt` swap |
 | ├ `generate-blocks` | `game/map/blocks.js`, graph faces -> building blocks | **DONE.** 3 rounds. `verdicts/wave-t/generate-blocks{,-critic,-critic-r2}.md` |
-| ├ `generate-mesh` | per-chunk emitters in `world.js` | **DESIGNED** (`tools/WAVE-T-GENERATE-MESH-PLAN.md`). **S0-S2 DONE** (S0+S1 critic-passed). **S3a DONE**: roads, junctions, kerbs and pavement. **S3b next** |
+| ├ `generate-mesh` | per-chunk emitters in `world.js` | **DESIGNED** (`tools/WAVE-T-GENERATE-MESH-PLAN.md`). **S0-S2 DONE** (S0+S1 critic-passed). **S3a DONE**: roads, junctions, kerbs and pavement. **S3b DONE**: the city - blocks, districts, buildings, signage, neon, props, cars, street furniture, `world.blocks` + `world.blockIndex`; **2 of 7 scenes do not boot under `#map=graph`**, grid unaffected. **S3c next** |
 | └ `generate-wire` | `surfaceAt` swap, `paths`, `bounds`, harness coords | not started; lands with `generate-mesh` |
 | `stream` | chunk build/dispose around the hero | not started; needs `generate` |
 | `rewire` | `traffic.js`, parked ranks, signals, `physics.js` blocks, minimap, spawns | not started; needs `queries` |
