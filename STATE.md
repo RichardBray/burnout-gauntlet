@@ -60,19 +60,18 @@ Opening a new wave block is the moment to do this, not later.
 
 ### WAVE T — LIVE. THE MAP. `TASKS.md` wave 4, task T3. Opened session 18, 2026-08-07.
 
-**EXACT NEXT ACTION: FIND WHY TWO OF THE SEVEN SCENES NO LONGER REACH `window.__ready` UNDER
-`#map=graph`, THEN S3c.** `hud-overlay` and `wet-night-asphalt` do not boot in 240 s / 300 s with no
-console error; the other five boot in 3.9-6.7 s and **`#map=grid`, the default and the gate, boots
-and renders all seven**. S3b caused it - the S3a tree boots `hud-overlay` under `#map=graph` in
-3.9 s. Six kill-controls are already run and recorded in
-`verdicts/wave-t/generate-mesh-s3b.md` section 9: **NOT `world.blocks`** (emptying it does not fix
-it), **NOT `setNight`** (0.1 ms), **NOT `applyWet`** (0.1 ms), **NOT the parked population**
-(suppressing all 1042 does not fix it), and **suppressing the whole graph street-furniture block at
-`game/world.js:3600` boots it in 5.3 s**. It is position-dependent, not time-of-day-dependent: the
-three scenes riding `paths.city` are `hud-overlay` (u 0.34, fails), `wet-night-asphalt` (u 0.565,
-fails) and `daytime-downtown` (u 0.815, works), and `hud-overlay` is `dusk`. `window.__game` is
-never set, so it is stuck before `main.js:883`, and `cfg.setup(ctx)` at `main.js:799` is what makes
-it scene-dependent. **Profile it; do not guess.** Then
+**EXACT NEXT ACTION: S3c.** The two-scene boot failure is **FIXED** —
+`verdicts/wave-t/generate-mesh-s3b-hotfix.md`. **It was never a hang.** Shot mode's tick loop at
+`main.js:896` runs BEFORE `window.__ready` and is not wrapped, so one throw inside it leaves a live,
+console-clean page that never signals. The throw was
+`resolve: no finalized instance for pool tlPole index undefined`: `streetLight`, `trafficLight` AND
+`parkedCar` recorded `[handle, handle.count]` for `hide()` instead of the `[descriptor, index]` that
+`push()` returns, and a pool handle is a `THREE.Group` with no `.count`. **That is why all six
+kill-controls "worked" — every one of them moved the hero and so changed whether it drove into a
+pole in the first four simulated seconds.** All seven scenes now boot under `#map=graph`
+(`hud-overlay` and `wet-night-asphalt` in 9.5 s each), grid is inside its own same-tree noise floor
+on all seven, and `tools/_polefall-probe.mjs` asserts the hide on the SUBMITTED INSTANCE MATRICES
+with a poison control that fires on the pre-fix tree. Now
 **S3c - `paths`, `heroDist`, `surfaceAt` and `bounds` under `#map=graph`**,
 `tools/WAVE-T-GENERATE-MESH-PLAN.md:861-865`, decisions 7 and 8. **S3b IS OTHERWISE DONE** -
 `verdicts/wave-t/generate-mesh-s3b.md`. Two things S3b left for S3c specifically: `heroDist`
@@ -444,8 +443,25 @@ stations differently (a station sitting on the corridor boundary where the round
 differs in the last bit). Within one runtime the result is bit-exact. Do not read a node-vs-browser
 dump difference as a bug.
 
-**`generate-mesh` S3b IS DONE, WITH ONE OPEN DEFECT ON THE NON-DEFAULT PATH (see the EXACT NEXT
-ACTION above)** - `verdicts/wave-t/generate-mesh-s3b.md`. Under `#map=graph` the
+**`generate-mesh` S3b IS DONE**, and its one open defect is now closed by the hotfix above -
+`verdicts/wave-t/generate-mesh-s3b.md` plus `verdicts/wave-t/generate-mesh-s3b-hotfix.md`.
+
+**FOUR THINGS FROM THE HOTFIX THAT MUST NOT BE REDISCOVERED:**
+
+- **A "HANG" AT BOOT IS PROBABLY A THROW.** Shot mode ticks the sim at `main.js:896` before
+  `window.__ready` is set, and that loop is not wrapped. One exception inside it produces a page
+  that is alive, has nothing in the console and never signals ready. `tools/_hangprobe.mjs` reads
+  the page's own error slot; run it FIRST, before any kill-control. Six kill-controls were spent
+  here proving a position dependence that was only "did the hero hit a pole in four seconds".
+- **THE REFERENCE YOU RECORD FOR A POST-BOOT EDIT MUST BE THE ONE `push()` HANDED BACK.** Not the
+  pool handle, which is reachable by name and looks right. `sink.remap` is keyed on the per-cell
+  DESCRIPTOR. Fourth occurrence of this bug class in this project.
+- **`parkedCar` HAD THE SAME DEFECT AND NO CHECK HAD EVER REACHED IT**, because the grid scenes
+  never promote a parked car inside their four simulated seconds. Fixed in the same commit.
+- **`wet-night-asphalt`'s SAME-TREE NOISE FLOOR IS maxd 29 AT 0.0056%, NOT maxd 4.** Measured twice
+  off one tree. Anything quoting the old figure will read its own noise as a regression.
+
+Under `#map=graph` the
 graph is now a CITY: 868 blocks from `createBlocks(doc).blocks`, five district profiles replacing
 `downtown = hypot < 260`, buildings, street wall, signage, neon, awnings, props, guard railing,
 street lamps, traffic signals, zebra crossings, gantries, road wear, parked ranks, signal queues,
@@ -519,12 +535,12 @@ from it.
 | `queries` | graph spatial index, `surfaceAt` off `LAYOUT` | **DONE.** `verdicts/wave-t/queries.md` |
 | `generate` | graph -> roads, kerbs, junctions, buildings | **SPLIT INTO THREE.** See below. Owns the `surfaceAt` swap |
 | ├ `generate-blocks` | `game/map/blocks.js`, graph faces -> building blocks | **DONE.** 3 rounds. `verdicts/wave-t/generate-blocks{,-critic,-critic-r2}.md` |
-| ├ `generate-mesh` | per-chunk emitters in `world.js` | **DESIGNED** (`tools/WAVE-T-GENERATE-MESH-PLAN.md`). **S0-S2 DONE** (S0+S1 critic-passed). **S3a DONE**: roads, junctions, kerbs and pavement. **S3b DONE**: the city - blocks, districts, buildings, signage, neon, props, cars, street furniture, `world.blocks` + `world.blockIndex`; **2 of 7 scenes do not boot under `#map=graph`**, grid unaffected. **S3c next** |
+| ├ `generate-mesh` | per-chunk emitters in `world.js` | **DESIGNED** (`tools/WAVE-T-GENERATE-MESH-PLAN.md`). **S0-S2 DONE** (S0+S1 critic-passed). **S3a DONE**: roads, junctions, kerbs and pavement. **S3b DONE**: the city - blocks, districts, buildings, signage, neon, props, cars, street furniture, `world.blocks` + `world.blockIndex`. **The 2-scene `#map=graph` boot failure is FIXED** (`generate-mesh-s3b-hotfix.md`); all 7 boot, grid unaffected. **S3c next** |
 | └ `generate-wire` | `surfaceAt` swap, `paths`, `bounds`, harness coords | not started; lands with `generate-mesh` |
 | `stream` | chunk build/dispose around the hero | not started; needs `generate` |
 | `rewire` | `traffic.js`, parked ranks, signals, `physics.js` blocks, minimap, spawns | not started; needs `queries` |
 | `skyline` | far LOD / impostors | not started |
-| `perf` | load time and frame time | not started; runs ALONE on the machine |
+| `perf` | load time and frame time | not started; runs ALONE on the machine. **COLD LOAD IS OVER THE BAR TODAY: 12.6 s median on the GRID default against 5.0 s**, and it predates the S3b hotfix (12.4 s on the pre-fix tree). Run-to-run spread 7.7-13.9 s is wider than the whole bar, so it is unsettleable except alone. `verdicts/wave-t/generate-mesh-s3b-hotfix.md` §6 |
 
 **`digitise` IS DONE**, including two follow-up passes the user asked for. `game/map/paradise.json`:
 **688 nodes, 929 edges, 78.81 km** of centreline over 4000 x 2861 m, ONE connected component,
@@ -669,6 +685,14 @@ play brief forbids reporting a frame number under. Re-take alone before quoting 
 Trimmed when wave T opened. What still binds from it lives in `tools/WAVE-S-PLAY-BRIEF.md` (the
 720p contract, the baseline, the instrument, the runtime knobs) and in `verdicts/wave-s/`. The
 archive is for auditing a claim by `grep`, not for reading.
+
+The archive now runs to the END of wave S: rounds 4 and 5 were written up after the trim and folded
+in, so `perf` closes at **4 of 5 cells passing** (`1e060fb`, only `night-wet` misses at 17.90 ms)
+and `feel-audit` closes as BUILT-but-unverified (`2c54b2a`).
+Two things in there outlive wave S and are worth reading once: **a kill-control can itself be dead**
+(round 5's `#hudcache=0` guarded a function nothing called, and a paired A/B through it would have
+reported a confident "0.00 ms, no effect"), and **the 13.50 ms `hud-cheapdraw` floor is dead** — it
+re-measures at 8.80 ms at HEAD and must never be quoted again.
 
 ### A MEASUREMENT RULE THIS WAVE ADDED, AND IT IS NOT OPTIONAL
 

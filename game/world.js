@@ -2884,14 +2884,15 @@ export function createWorld(scene, { roadKit, mapDoc = null }) {
     // Record this lamp's instances so hide() can take the baked pole out of the draw when
     // the hero knocks it down (lampfall.js swaps in a dynamic falling copy).
     const used = [];
-    const rec = (m) => used.push([m, m.count]);
-    rec(slPole);
-    push(slPole, x, 0.2 + 4.3, z, rotY, 0, 1, 8.6, 1);
+    // RECORD push()'s RETURN VALUE, NOT THE POOL HANDLE. `resolve()` keys `sink.remap` on the
+    // per-cell DESCRIPTOR, which is what push() returns as `[descriptor, index]`. The handle is
+    // a THREE.Group with no `.count`, so `[m, m.count]` recorded an undefined index and threw
+    // `resolve: no finalized instance` the first time the hero knocked a pole down.
+    const rec = (ref) => used.push(ref);
+    rec(push(slPole, x, 0.2 + 4.3, z, rotY, 0, 1, 8.6, 1));
     const ax = Math.cos(rotY), az = -Math.sin(rotY);
-    rec(slArm);
-    push(slArm, x + ax * 1.2, 8.7, z + az * 1.2, rotY, 0, 2.4, 0.16, 0.16);
-    rec(slHead);
-    push(slHead, x + ax * 2.3, 8.56, z + az * 2.3, rotY, 0, 1.15, 0.24, 0.55);
+    rec(push(slArm, x + ax * 1.2, 8.7, z + az * 1.2, rotY, 0, 2.4, 0.16, 0.16));
+    rec(push(slHead, x + ax * 2.3, 8.56, z + az * 2.3, rotY, 0, 1.15, 0.24, 0.55));
     // THE ORDER IS SET HERE, NOT BY THE CALLER, AND THAT IS A BUG FIX.
     // This block needs 'XYZ' because the rotation has an X component that push()'s (0, ry, rz)
     // cannot express. It used to rely on the caller setting 'XYZ' once before the lamp loops -
@@ -2908,8 +2909,7 @@ export function createWorld(scene, { roadKit, mapDoc = null }) {
     dummy.scale.set(0.98, 0.46, 1);
     dummy.updateMatrix();
     dummy.rotation.order = 'YZX';
-    used.push([slBulb, slBulb.count]);
-    pushMat(slBulb, dummy.matrix);
+    rec(pushMat(slBulb, dummy.matrix));
     lampPositions.push(new THREE.Vector3(x + ax * 2.3, 8.2, z + az * 2.3));
     shadowAt(x, z, 0.24, 1.5, 0.9);
     // ponytail: the night light wash (lampPositions) keeps shining from a felled lamp's old
@@ -2942,20 +2942,17 @@ export function createWorld(scene, { roadKit, mapDoc = null }) {
   function trafficLight(sink, x, z, ry) {
     const { tlArm, tlHead, tlLens, tlPole } = sink;
     const used = [];
-    const rec = (m) => used.push([m, m.count]);
-    rec(tlPole);
-    push(tlPole, x, 0.2 + 3.4, z, ry, 0, 1, 6.8, 1);
+    // See streetLight(): record push()'s [descriptor, index], never the pool handle.
+    const rec = (ref) => used.push(ref);
+    rec(push(tlPole, x, 0.2 + 3.4, z, ry, 0, 1, 6.8, 1));
     const ax = Math.cos(ry), az = -Math.sin(ry);
-    rec(tlArm);
-    push(tlArm, x + ax * 2.6, 6.75, z + az * 2.6, ry, 0, 5.4, 0.18, 0.18);
+    rec(push(tlArm, x + ax * 2.6, 6.75, z + az * 2.6, ry, 0, 5.4, 0.18, 0.18));
     const hx = x + ax * 4.9, hz = z + az * 4.9;
-    rec(tlHead);
-    push(tlHead, hx, 6.05, hz, ry, 0, 0.52, 1.5, 0.44);
+    rec(push(tlHead, hx, 6.05, hz, ry, 0, 0.52, 1.5, 0.44));
     const cols = [0xd82a1e, 0xe8a41c, 0x1fd05a];
     for (let i = 0; i < 3; i++) {
       const ly = 6.55 - i * 0.5;
-      rec(tlLens);
-      push(tlLens, hx - Math.sin(ry) * 0.26, ly, hz - Math.cos(ry) * 0.26, 0, 0, 0.30, 0.30, 0.30, cols[i]);
+      rec(push(tlLens, hx - Math.sin(ry) * 0.26, ly, hz - Math.cos(ry) * 0.26, 0, 0, 0.30, 0.30, 0.30, cols[i]));
     }
     signalLights.push(new THREE.Vector3(hx, 6.05, hz));
     shadowAt(x, z, 0.24, 1.8, 0.9);
@@ -3235,10 +3232,10 @@ export function createWorld(scene, { roadKit, mapDoc = null }) {
     // Every instance this car owns, so hide() below can take the baked body out of the
     // draw when traffic.js promotes it to a live (shoved/wrecked) pool car after a hit.
     const used = [];
-    const rec = (m) => used.push([m, m.count]);
+    // See streetLight(): record push()'s [descriptor, index], never the pool handle.
+    const rec = (ref) => used.push(ref);
     const at = (m, d, y, sx, sy, sz, c) => {
-      rec(m);
-      push(m, x + fx * d, CAR_Y + y, z + fz * d, ry, 0, sx, sy, sz, c);
+      rec(push(m, x + fx * d, CAR_Y + y, z + fz * d, ry, 0, sx, sy, sz, c));
     };
     const van = rng() < 0.16;
     if (van) {
@@ -3270,8 +3267,7 @@ export function createWorld(scene, { roadKit, mapDoc = null }) {
         dummy.rotation.set(0, ry + Math.PI / 2, Math.PI / 2);
         dummy.scale.set(1, 1, 1);
         dummy.updateMatrix();
-        used.push([carWheel, carWheel.count]);
-        pushMat(carWheel, dummy.matrix);
+        rec(pushMat(carWheel, dummy.matrix));
       }
     }
     // A 4.40 x 1.82 m sedan (4.90 x 1.92 van) laid down a 6.8 m ROUND pad here:
