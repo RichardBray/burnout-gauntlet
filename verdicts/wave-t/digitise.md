@@ -8,24 +8,63 @@ nothing that runs in a frame.
 
 | | |
 |---|---|
-| nodes | 702 |
-| edges | 937 |
-| centreline | **76.89 km** |
+| nodes | 704 |
+| edges | 945 |
+| centreline | **79.95 km** |
 | extent | -2000..2000 x -1430.7..1430.7 m (4000 x 2861 m) |
 | scale | 2.965 m/px, from `MAP_WIDTH_M = 4000` |
 | undirected components | **1** |
 | strongly connected | **yes** (every edge is two-way, see below) |
-| degree-1 nodes | **2, both flagged `deadEnd` after review** |
-| `paradise.json` | 297 KB |
+| degree-1 nodes | **3, all flagged `deadEnd` after review** |
+| `paradise.json` | 300 KB |
 
 Classes, and the district split of the centreline:
 
 | class | edges | median width |
 |---|---|---|
-| street | 532 | 14.0 m |
-| service | 259 | 9.0 m |
-| arterial | 95 | 23.7 m |
-| motorway | 51 | 24.0 m |
+| street | 525 | 14.0 m |
+| service | 269 | 9.0 m |
+| arterial | 99 | 23.7 m |
+| motorway | 52 | 24.0 m |
+
+## SECOND PASS - map density, after the user spotted gaps in the overlay
+
+The user looked at the overlay and asked whether the visible gaps - roads that appear to lead
+nowhere - would be addressed. They were right that something was there, and the answer split in
+two, which is worth keeping because the two halves have opposite verdicts.
+
+**In the data there were no roads to nowhere**, then or now: 2 degree-1 nodes, both flagged, and
+the validator fails if a third appears. What the overlay showed was MISSING COVERAGE - roads in the
+photograph never traced, so absent from the graph rather than dangling in it.
+
+The first attempt to quantify it was junk and is recorded so it is not repeated: measuring how much
+of the ROAD MASK had no graph edge near it returned 43.6%, and the picture showed that was rock
+faces, surf, beach and building roofs. **A coverage metric over a noisy mask measures the noise.**
+The honest quantity is coverage of the traced CENTRELINE - how much of what the tracer found the
+cleanup then threw away - which was **13.5%**.
+
+The fix was a second mask clause, `_maptrace.mjs` stage 1b: a pixel is also road if it is brighter
+than its own LOCAL mean, from a summed-area table at a 25 px (~74 m) radius - wider than a road, so
+a road cannot hide itself by raising its own mean, and narrower than a block, so the mean still
+tracks local lighting. A single global brightness cut is wrong wherever the whole neighbourhood is
+dark, and this map has two such places: downtown streets shadowed by their own towers, and decks
+lying against near-black water.
+
+Result: largest mask component 137899 -> 174701 px, centreline **76.89 -> 79.95 km**, uncovered
+13.5% -> 12.9%. One new degree-1 node appeared and the validator caught it, which is the design
+working rather than a regression.
+
+**AND IT TURNED UP A RAILWAY, which changes what "missing" means here.** A dark reddish-brown line
+loops the entire city - through White Mountain, along the north, across the water at Harbor Town on
+its own bridge. Isolated by colour and measured, 75% of it coincides with roads the graph already
+has, because it shares the motorway corridor through the centre; the other 25% runs over open water
+and open mountainside **with no road under it at all**. So a quarter of that line is uncovered and
+THAT IS CORRECT. Widening the mask until it traces would lay drivable road across water. This is
+written into `_maptrace.mjs` so a future pass chasing a coverage number does not "fix" it.
+
+It also corrected a factual error in the reviewed dead-end list: what was recorded as a "Harbor Town
+causeway deck, dark against water" is the road ending where the RAILWAY embankment crosses. The
+note now says so.
 
 `silverlake 18.5 km, mountain 18.5 km, palmbay 13.9 km, harbor 13.5 km, downtown 12.5 km.`
 
@@ -98,10 +137,10 @@ worked through rather than waved past:
   DELETED, at a cost of 2.11 km (2.7%). Flagging them would be a lie about deliberateness; joining
   them across 100 m of city block would invent roads through buildings, which is worse, because it
   changes what is drivable.
-- **2** survive, listed in `REVIEWED_DEAD_ENDS` in `tools/_mapgraph.mjs` with what each actually
-  is: a White Mountain switchback whose continuation is lost against rock, and a Harbor Town
-  causeway deck lost against dark water. Both carry over 600 m of real road, so deleting them costs
-  more than it cleans. **A listed entry that stops matching a degree-1 node is a HARD ERROR**, so
+- **3** survive (the third appeared in the second pass), listed in `REVIEWED_DEAD_ENDS` in `tools/_mapgraph.mjs` with what each actually
+  is: two White Mountain roads whose continuation is lost against rock, and a Harbor Town shoreline
+  road that ends at the railway embankment. All three carry over 600 m of real road, so deleting
+  them costs more than it cleans. **A listed entry that stops matching a degree-1 node is a HARD ERROR**, so
   the list cannot rot into an allowlist that pardons whatever drifts near it.
 
 ## The validator, and proof it can fail
@@ -117,7 +156,7 @@ Mutation-tested, because a checker nobody has seen fail is not a checker:
 |---|---|
 | baseline `paradise.json` | **exit 0** |
 | drop every edge at the highest-degree node | exit 1 - `2 undirected components, need exactly 1` + orphan coordinates |
-| clear `deadEnd` on both reviewed nodes | exit 1 - `2 degree-1 nodes are not flagged deadEnd`, listed |
+| clear `deadEnd` on the reviewed nodes | exit 1 - degree-1 nodes not flagged, each listed with coordinates |
 | set one edge at a dead end `oneWay` | exit 1 - `1 nodes are not strongly connected`, with the coordinate |
 | point an edge at node id 999999 | exit 1 - missing node reference |
 

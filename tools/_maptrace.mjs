@@ -79,7 +79,63 @@ for (let i = 0; i < N; i++) {
   road[i] = grey || gold ? 1 : 0;
 }
 say('mask', road, `lum>=${LUM_MIN} sat<=${SAT_MAX}, plus ${goldPx} gold px the grey rule misses`);
-preview('01-mask', road);
+preview('01a-global', road);
+
+// ---- STAGE 1b: LOCAL CONTRAST, for the roads a global threshold cannot see --------------------
+// A single global brightness cut is wrong wherever the whole neighbourhood is dark, and this map
+// has two such places: downtown streets in the shadow of their own tower blocks, and bridge or
+// causeway decks lying against near-black water. Both are plainly roads to the eye - they are
+// brighter than what surrounds them - and both sit under LUM_MIN, so the first pass simply did not
+// have them. Measured after that pass: 13.5% of the traced centreline never reached the graph, and
+// the two causes above were most of the road half of it.
+//
+// So the rule becomes relative as well as absolute: a pixel is road if it is meaningfully brighter
+// than its own LOCAL mean and not strongly coloured. The local mean comes from a summed-area
+// table, which makes the radius free.
+//
+// The radius matters and is not arbitrary. It must be wider than a road (so a road never raises
+// its own local mean enough to hide itself) and narrower than a city block (so the mean still
+// tracks local lighting). At 2.965 m/px a 25 px radius is ~74 m: several road widths, well under a
+// block.
+// THERE IS A RAILWAY ON THIS MAP AND IT MUST NOT BE TRACED. A dark reddish-brown line loops the
+// whole city - through White Mountain, along the north, and across the water at Harbor Town on its
+// own bridge. It is continuous, it crosses water where no road does, and in the west and south it
+// runs over open terrain with no road under it. Isolating it by colour and measuring coverage says
+// 75% of it already coincides with roads the graph has (it shares the motorway corridor through
+// the centre) and 25% does not - and that 25% is exactly the part with no road beneath it.
+//
+// So the uncovered quarter is CORRECT and is not a gap to go and close. Widening the mask until
+// that line is traced would lay drivable road across water and across mountainside. If a future
+// pass tries to raise coverage, check what it is covering first.
+const LOCAL_R = 25, LOCAL_DELTA = 14, LOCAL_SAT = 60, LOCAL_MIN = 42;
+{
+  const sat_ = new Float64Array((w + 1) * (h + 1));
+  for (let y = 0; y < h; y++) {
+    let rowSum = 0;
+    for (let x = 0; x < w; x++) {
+      rowSum += lum[idx(x, y)];
+      sat_[(y + 1) * (w + 1) + x + 1] = sat_[y * (w + 1) + x + 1] + rowSum;
+    }
+  }
+  const boxMean = (x, y) => {
+    const x0 = Math.max(0, x - LOCAL_R), y0 = Math.max(0, y - LOCAL_R);
+    const x1 = Math.min(w - 1, x + LOCAL_R), y1 = Math.min(h - 1, y + LOCAL_R);
+    const s = sat_[(y1 + 1) * (w + 1) + x1 + 1] - sat_[y0 * (w + 1) + x1 + 1]
+            - sat_[(y1 + 1) * (w + 1) + x0] + sat_[y0 * (w + 1) + x0];
+    return s / ((x1 - x0 + 1) * (y1 - y0 + 1));
+  };
+  let added = 0;
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    const i = idx(x, y);
+    if (road[i]) continue;
+    // LOCAL_MIN is a floor against open water and deep shade, where the local mean is so low that
+    // ANY texture clears the delta and the sea fills with speckle.
+    if (lum[i] < LOCAL_MIN || sat[i] > LOCAL_SAT) continue;
+    if (lum[i] > boxMean(x, y) + LOCAL_DELTA) { road[i] = 1; added++; }
+  }
+  say('mask+local', road, `+${added} px brighter than their own ${LOCAL_R}px mean by ${LOCAL_DELTA}`);
+  preview('01-mask', road);
+}
 
 // ---- STAGE 2: delete the event pins -----------------------------------------------------------
 // The overlay drops filled discs on top of the roads. Their white ring and white letter land

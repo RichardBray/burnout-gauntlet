@@ -464,7 +464,8 @@ const MIN_W = { motorway: 24, arterial: 18, street: 14, service: 9 };
 // degree-1 node happens to drift near it.
 const REVIEWED_DEAD_ENDS = [
   { p: [-1487, -1155], why: 'White Mountain switchback; the road continues west but the mask loses it against rock' },
-  { p: [-302, 1087], why: 'Harbor Town causeway deck; dark against water, the far end is not traced' },
+  { p: [-1663, -624], why: 'White Mountain, west of the railway; the grey road continues north and is lost against terrain' },
+  { p: [-313, 1091], why: 'Harbor Town shoreline; the road ends where the RAILWAY embankment crosses. The dark diagonal here is rail, not a causeway - do not trace it' },
 ];
 
 const used = new Set();

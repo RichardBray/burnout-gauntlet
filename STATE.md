@@ -82,8 +82,9 @@ from it.
 | `skyline` | far LOD / impostors | not started |
 | `perf` | load time and frame time | not started; runs ALONE on the machine |
 
-**`digitise` IS DONE.** `game/map/paradise.json`: **702 nodes, 937 edges, 76.89 km** of centreline
-over 4000 x 2861 m, ONE connected component, strongly connected, and exactly 2 degree-1 nodes, both
+**`digitise` IS DONE**, including a second density pass the user asked for after spotting gaps in
+the overlay. `game/map/paradise.json`: **704 nodes, 945 edges, 79.95 km** of centreline over
+4000 x 2861 m, ONE connected component, strongly connected, and exactly 3 degree-1 nodes, all
 reviewed and flagged. `game/map/validate.mjs` runs from `tools/lint.sh` and is mutation-tested — a
 severed network, a cleared `deadEnd`, a stranding `oneWay` and a ghost node reference all exit 1
 while the real file exits 0. Rebuild the whole chain with `bash tools/map-build.sh`.
@@ -100,6 +101,13 @@ from it that will cost the next session a day if they are rediscovered instead o
 - **Print the kilometre figure at every stage.** Merging nodes by PROXIMITY chained transitively
   and silently ate 40 of 83 km; contracting short EDGES is bounded and cannot. The stage-by-stage
   km print is the only reason that was caught.
+- **THERE IS A RAILWAY ON THE MAP AND IT MUST NOT BE TRACED.** A dark reddish line loops the city;
+  75% of it coincides with the motorway corridor the graph already has, and the other 25% runs over
+  open water and mountainside with NO ROAD UNDER IT. That quarter is correctly uncovered. Do not
+  chase it to raise a coverage number - it would lay drivable road across water.
+- **A coverage metric over a noisy mask measures the noise.** Asking what share of the ROAD MASK
+  had no graph edge near it returned 43.6%, which was rock, surf, beach and roofs. The honest
+  quantity is coverage of the traced CENTRELINE: 13.5%, now 12.9%.
 - **`deadEnd` is never stamped automatically**, and that is deliberate. Auto-flagging every
   degree-1 node turns the check into one that cannot fail, which is this project's oldest bug. The
   41 that failed the first clean run were worked through by hand: 28 snapped into junctions, 11
