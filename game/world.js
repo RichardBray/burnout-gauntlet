@@ -1,5 +1,5 @@
 // world.js — city layout, ground, buildings, sidewalks, street furniture, neon, drive paths.
-// API: createWorld(scene, {rng, roadKit}) -> world.
+// API: createWorld(scene, {roadKit}) -> world. (`rng` is still passed and is now ignored.)
 //   world.paths.city / world.paths.highway  (see makePath: .at(u), .tangentAt(u), .nearest(v3))
 //   world.setNight(bool) world.setWet(0..1) world.update(dt, focusVec3) (moves the point-light pool)
 //   world.group holds everything; world.LAYOUT exposes the raw grid numbers.
@@ -10,7 +10,7 @@
 // patchFacade) so buildings can be instanced and floor lines stay continuous across the block.
 
 import * as THREE from 'three';
-import { makeCanvas, canvasTexture, makeRng, rngRange, rngInt, rngPick, clamp, lerp } from './util.js';
+import { makeCanvas, canvasTexture, makeRng, cellHash, rngRange, rngInt, rngPick, clamp, lerp } from './util.js';
 
 export const LAYOUT = {
   grid: [-480, -320, -160, 0, 160, 320, 480],
@@ -1057,11 +1057,59 @@ function patchAtmo(mat, atmo, reflect = 0.0) {
 }
 
 // ---------------------------------------------------------------------------
-export function createWorld(scene, { rng: injectedRng, roadKit }) {
+// `rng` is still passed by main.js and is deliberately NOT destructured: nothing in createWorld
+// reads it any more. Deleting the argument at the call site is S5 cleanup.
+export function createWorld(scene, { roadKit }) {
   installPcss();
   const group = new THREE.Group();
   scene.add(group);
-  const R = makeRng(0xC0FFEE);
+  // The GLOBAL stream, and from wave T it is for MATERIALS AND TEXTURE CANVASES ONLY. It is
+  // `let` rather than `const` so it can be nulled the moment the last texture is baked: every
+  // draw after that point belongs to a thing in the world and must come from that thing's own
+  // seed, and a surviving `R()` should throw at boot rather than silently reintroduce a
+  // build-order dependency that nothing would notice until a chunk rebuilt differently.
+  let R = makeRng(0xC0FFEE);
+
+  // ---- PER-THING SEEDING (decision 1) ---------------------------------------------------
+  //
+  // Every random draw in the city is seeded from WHERE THE THING IS, never from when it was
+  // visited. That is the whole determinism contract of streaming: a block built at boot and the
+  // same block built after a ten-minute drive have to be identical, and the only way to
+  // guarantee that is for the seed to be a pure function of the thing's own identity.
+  //
+  // x8 before rounding gives 12.5 cm resolution, which is finer than anything here is placed to
+  // and coarse enough that a float that differs in its last bit still hashes the same.
+  const atRng = (x, z, salt) => makeRng(cellHash(Math.round(x * 8), Math.round(z * 8), salt));
+
+  // Salts, so two different populations standing at the same coordinate do not share a stream.
+  const S_BLOCK = 0xB10C;   // a block's towers                    (plan section 5, verbatim)
+  const S_NODE  = 0x10DE;   // junction dressing                   (plan section 5, verbatim)
+  const S_EDGE  = 0xED6E;   // road-segment dressing               (plan section 5, verbatim)
+  const S_WALL  = 0x5EA1;   // a block's perimeter street wall
+  const S_FRONT = 0xF00D;   // one street frontage's signage
+  const S_ROOF  = 0x50FA;   // a tower's rooftop billboard
+  const S_NEON  = 0x0E04;   // a tower's neon
+  const S_PROP  = 0x9309;   // a block's pavement furniture
+  const S_TEX   = 0x7E88;   // texture canvases baked after the first emitter has run
+
+  /**
+   * Iteration-order test hook. With per-thing seeding the world must not depend on the order
+   * items are visited in, and the only honest way to assert that is to visit them in a different
+   * order and check the result is identical - a seed that secretly depends on visit order passes
+   * a build/rebuild test and fails this one. Set `globalThis.__t3Perm` to a non-zero integer to
+   * shuffle every top-level population. Inert otherwise, and never set by the game.
+   */
+  const visitOrder = (arr) => {
+    const seed = globalThis.__t3Perm;
+    if (!seed) return arr;
+    const a = arr.slice();
+    const r = makeRng(seed >>> 0);
+    for (let i = a.length - 1; i > 0; i--) {
+      const j = Math.floor(r() * (i + 1));
+      [a[i], a[j]] = [a[j], a[i]];
+    }
+    return a;
+  };
 
   // Set by applyKeyFill(sky) and read ONLY (sky.js belongs to another builder).
   let _sky = null;
@@ -1157,79 +1205,119 @@ export function createWorld(scene, { rng: injectedRng, roadKit }) {
     dropStats.pools[name] = (dropStats.pools[name] || 0) + 1;
   }
 
-  const sink = { pools: [], remap: new Map() };
+  // CHUNK is a real trade and was measured, not guessed: smaller cells cull more triangles and
+  // cost more draw calls (one per occupied cell per draw state). See verdicts/wave-s for the
+  // sweep. It is the allocation granularity, and from S2 it is also the OWNERSHIP granularity.
+  const CHUNK = 200;
+  const cellKey = (x, z) => `${Math.floor(x / CHUNK)},${Math.floor(z / CHUNK)}`;
 
-  /**
-   * Declare a pool. Returns the descriptor, which is also registered on the sink under `name` so
-   * an emitter can reach it through its `sink` argument instead of closing over this scope.
-   */
-  function pool(name, geo, mat, { cast = true, recv = true, parent = group } = {}) {
-    const p = new THREE.Group();
-    p.name = name;
-    p.castShadow = cast;
-    p.receiveShadow = recv;
-    p.count = 0;
-    p._geo = geo;
-    p._mat = mat;
-    p._cap = 256;                          // instances the scratch buffers currently hold
-    p._m = new Float32Array(p._cap * 16);
-    p._c = null;                           // allocated lazily, and only if a colour is ever set
-    parent.add(p);
-    sink.pools.push(p);
-    sink[name] = p;
-    return p;
+  // name -> pool HANDLE. A handle is declared once, carries the draw state, and owns nothing.
+  // The instances live in per-cell descriptors hanging off it.
+  const sink = { handles: [], remap: new Map() };
+  /** cellKey -> ChunkRec. The resident set. */
+  const resident = new Map();
+
+  function chunkAt(x, z) {
+    const key = cellKey(x, z);
+    let rec = resident.get(key);
+    if (!rec) {
+      const [cx, cz] = key.split(',').map(Number);
+      resident.set(key, rec = {
+        key, cellX: cx, cellZ: cz,
+        minX: cx * CHUNK, maxX: (cx + 1) * CHUNK,
+        minZ: cz * CHUNK, maxZ: (cz + 1) * CHUNK,
+        descs: new Map(),          // handle -> descriptor
+        meshes: [],                // everything finalize() allocated for this cell
+        stats: { instances: 0 },
+      });
+    }
+    return rec;
   }
 
-  function grow(p) {
-    if (p.count < p._cap) return;
-    p._cap *= 2;
-    const m = new Float32Array(p._cap * 16);
-    m.set(p._m); p._m = m;
-    if (p._c) {
+  /** The descriptor this cell uses for this handle, created on first touch. */
+  function descFor(rec, h) {
+    let d = rec.descs.get(h);
+    if (!d) {
+      d = { handle: h, rec, count: 0, cap: 64, m: new Float32Array(64 * 16), c: null };
+      rec.descs.set(h, d);
+    }
+    return d;
+  }
+
+  /**
+   * Declare a pool. Returns the HANDLE, registered on the sink under `name` so an emitter reaches
+   * it through its `sink` argument instead of closing over this scope.
+   *
+   * The handle is a THREE.Group and the finalized meshes hang under it, deliberately: later code
+   * holds direct handles to individual pools and toggles them — `spillMesh.visible = night` in
+   * setNight, and `world.aoExclude`, which post.js hides by writing `o.visible = false`. Parenting
+   * by pool keeps every one of those working. Per-CELL teardown does not need tree containment;
+   * each ChunkRec keeps an explicit list of the meshes it owns.
+   */
+  function pool(name, geo, mat, { cast = true, recv = true, parent = group } = {}) {
+    const h = new THREE.Group();
+    h.name = name;
+    h.castShadow = cast;
+    h.receiveShadow = recv;
+    h._geo = geo;
+    h._mat = mat;
+    parent.add(h);
+    sink.handles.push(h);
+    sink[name] = h;
+    return h;
+  }
+
+  function grow(d) {
+    if (d.count < d.cap) return;
+    d.cap *= 2;
+    const m = new Float32Array(d.cap * 16);
+    m.set(d.m); d.m = m;
+    if (d.c) {
       // three's setColorAt fills a fresh instanceColor with 1, so an instance that never gets a
       // colour comes out WHITE, not black. The growable copy has to keep that property.
-      const c = new Float32Array(p._cap * 3).fill(1);
-      c.set(p._c); p._c = c;
+      const c = new Float32Array(d.cap * 3).fill(1);
+      c.set(d.c); d.c = c;
     }
   }
 
-  /** Append `dummy`'s current matrix. Same argument list as the old push(), minus the cap. */
-  function push(p, x, y, z, ry = 0, rz = 0, sx = 1, sy = 1, sz = 1, color) {
+  /**
+   * Append `dummy`'s current matrix to the pool, IN THE CELL THE INSTANCE STANDS IN.
+   *
+   * The routing lives here rather than at the 145 call sites because push() already knows the
+   * position. That is what let the whole city move from one chunk to a lattice without any
+   * emitter changing shape.
+   *
+   * Returns `[descriptor, index]`, which is what an emitter records when it needs to reach the
+   * instance again later (polefall hiding a knocked-down lamp, traffic.js hiding a parked car).
+   */
+  function push(h, x, y, z, ry = 0, rz = 0, sx = 1, sy = 1, sz = 1, color) {
     dummy.position.set(x, y, z);
     dummy.rotation.set(0, ry, rz);
     dummy.scale.set(sx, sy, sz);
     dummy.updateMatrix();
-    pushMat(p, dummy.matrix, color);
+    return pushMat(h, dummy.matrix, color);
   }
 
   /**
    * Append an already-composed matrix. `streetLight` and `parkedCar` need this: they set up
-   * `dummy` with a rotation order or an axis convention that push()'s (0, ry, rz) cannot express,
-   * and used to reach past push() and call `setMatrixAt` on the pool directly.
+   * `dummy` with a rotation order or an axis convention that push()'s (0, ry, rz) cannot express.
+   * The cell comes from the matrix's own translation, elements [12] and [14].
    */
-  function pushMat(p, mat4, color) {
-    grow(p);
-    mat4.toArray(p._m, p.count * 16);
+  function pushMat(h, mat4, color) {
+    const e = mat4.elements;
+    const d = descFor(chunkAt(e[12], e[14]), h);
+    grow(d);
+    mat4.toArray(d.m, d.count * 16);
     if (color !== undefined) {
-      if (!p._c) p._c = new Float32Array(p._cap * 3).fill(1);
-      tmpC.setHex(color, THREE.SRGBColorSpace).toArray(p._c, p.count * 3);
+      if (!d.c) d.c = new Float32Array(d.cap * 3).fill(1);
+      tmpC.setHex(color, THREE.SRGBColorSpace).toArray(d.c, d.count * 3);
     }
-    p.count++;
+    d.rec.stats.instances++;
+    return [d, d.count++];
   }
 
-  /**
-   * Discard the last instance pushed to a pool. Nothing needs this today — `bench()` used to push
-   * a placeholder leg and then decrement the count, which this replaces and which was deleted as
-   * dead code — but a pool that emits speculatively and then retracts is a shape the emitters can
-   * legitimately take, and without it the scratch buffer keeps a stale 16 floats.
-   */
-  function pop(p) { if (p.count > 0) p.count--; }
+  function pop(ref) { const d = Array.isArray(ref) ? ref[0] : ref; if (d && d.count > 0) d.count--; }
 
-  // CHUNK is a real trade and was measured, not guessed: smaller cells cull more triangles and
-  // cost more draw calls (one per occupied cell per draw state). See verdicts/wave-s for the
-  // sweep. It used to live at the bottom of this file, in a pass that re-cut the finished pools;
-  // now it is the allocation granularity itself and no re-cut is needed.
-  const CHUNK = 200;
   // Below this many instances a draw state is left as one mesh per pool. A 60-instance pool
   // cannot pay back the extra draw calls cutting it would add, and the point is to spend calls
   // only where there are triangles behind them.
@@ -1257,114 +1345,119 @@ export function createWorld(scene, { rng: injectedRng, roadKit }) {
    * and is supposed to be there.
    */
   function finalize() {
-    let meshes = 0, cells = 0, instances = 0;
-    const buckets = new Map();
-    for (const p of sink.pools) {
-      if (p.count < 1) continue;
+    let meshes = 0, cellMeshes = 0, globalMeshes = 0, instances = 0, freedBytes = 0;
+
+    const stateKey = (h) => `${h._geo.uuid}|${h._mat.uuid}`
+      + `|${h.castShadow ? 1 : 0}${h.receiveShadow ? 1 : 0}|${h.renderOrder}`;
+
+    // Map-wide totals per draw state, so the CHUNK_MIN decision is taken on the whole
+    // population rather than cell by cell. Cutting a 60-instance draw state into 8 cells buys
+    // no cull worth 7 extra calls.
+    const total = new Map();
+    const handlesOf = new Map();
+    for (const h of sink.handles) {
       // A multi-material pool would need its geometry groups carried across too. None exists
       // here, and silently merging two of them by a shared undefined uuid is exactly the kind of
       // bug that only ever shows up as one wrong-coloured object somewhere in the city.
-      if (Array.isArray(p._mat)) throw new Error(`pool ${p.name}: multi-material pools are not supported`);
-      const key = `${p._geo.uuid}|${p._mat.uuid}`
-        + `|${p.castShadow ? 1 : 0}${p.receiveShadow ? 1 : 0}|${p.renderOrder}`;
-      let b = buckets.get(key);
-      if (!b) buckets.set(key, b = []);
-      b.push(p);
+      if (Array.isArray(h._mat)) throw new Error(`pool ${h.name}: multi-material pools are not supported`);
+      const k = stateKey(h);
+      if (!handlesOf.has(k)) handlesOf.set(k, []);
+      handlesOf.get(k).push(h);
+      total.set(k, total.get(k) || 0);
+    }
+    for (const rec of resident.values()) {
+      for (const [h, d] of rec.descs) {
+        if (d.count < 1) continue;
+        const k = stateKey(h);
+        total.set(k, total.get(k) + d.count);
+      }
     }
 
-    /** One mesh per pool, unchunked and never culled: the draw state is too small to cut. */
-    const whole = (ps) => {
-      for (const p of ps) {
-        const im = new THREE.InstancedMesh(p._geo, p._mat, p.count);
-        im.castShadow = p.castShadow;
-        im.receiveShadow = p.receiveShadow;
-        im.renderOrder = p.renderOrder;
-        im.frustumCulled = false;
-        im.name = p.name;
-        im.instanceMatrix.array.set(p._m.subarray(0, p.count * 16));
-        im.instanceMatrix.needsUpdate = true;
-        if (p._c) {
-          im.instanceColor = new THREE.InstancedBufferAttribute(
-            p._c.slice(0, p.count * 3), 3);
-          im.instanceColor.needsUpdate = true;
-        }
-        p.add(im);
-        const r = new Map();
-        for (let i = 0; i < p.count; i++) r.set(i, [im, i]);
-        sink.remap.set(p, r);
-        meshes++; instances += p.count;
+    /**
+     * Build one InstancedMesh from a list of [descriptor, index-range] contributions.
+     * `owner` is the ChunkRec that will dispose it, or null for a map-wide mesh.
+     */
+    const emit = (k, ds, owner, culled) => {
+      const n = ds.reduce((a, d) => a + d.count, 0);
+      if (n < 1) return null;
+      const host = handlesOf.get(k)[0];
+      const anyColor = ds.some((d) => d.c);
+      const im = new THREE.InstancedMesh(host._geo, host._mat, n);
+      im.castShadow = host.castShadow;
+      im.receiveShadow = host.receiveShadow;
+      im.renderOrder = host.renderOrder;
+      im.frustumCulled = culled;
+      im.name = owner ? `${host.name || 'pool'}:${owner.key}` : `${host.name || 'pool'}:all`;
+      const md = im.instanceMatrix.array;
+      let cd = null;
+      if (anyColor) {
+        im.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(n * 3).fill(1), 3);
+        cd = im.instanceColor.array;
       }
+      let k0 = 0;
+      for (const d of ds) {
+        md.set(d.m.subarray(0, d.count * 16), k0 * 16);
+        // A descriptor with no colours sharing a bucket with one that has them must contribute
+        // white, or its instances would come out black.
+        if (cd && d.c) cd.set(d.c.subarray(0, d.count * 3), k0 * 3);
+        let r = sink.remap.get(d);
+        if (!r) sink.remap.set(d, r = new Map());
+        for (let j = 0; j < d.count; j++) r.set(j, [im, k0 + j]);
+        k0 += d.count;
+      }
+      im.instanceMatrix.needsUpdate = true;
+      if (im.instanceColor) im.instanceColor.needsUpdate = true;
+      // three would compute this lazily on the first frustum test anyway; doing it here keeps
+      // the whole cost inside the build.
+      im.computeBoundingSphere();
+      host.add(im);
+      if (owner) owner.meshes.push(im);
+      meshes++; instances += n;
+      return im;
     };
 
-    for (const ps of buckets.values()) {
-      const total = ps.reduce((a, p) => a + p.count, 0);
-      if (total < CHUNK_MIN) { whole(ps); continue; }
-
-      // cell key -> the instances of this draw state that land in that 200 m cell
-      const grid = new Map();
-      let anyColor = false;
-      for (const p of ps) if (p._c) anyColor = true;
-      for (const p of ps) {
-        for (let i = 0; i < p.count; i++) {
-          // [12] and [14] are the translation x/z of a column-major mat4.
-          const key = `${Math.floor(p._m[i * 16 + 12] / CHUNK)},${Math.floor(p._m[i * 16 + 14] / CHUNK)}`;
-          let b = grid.get(key);
-          if (!b) grid.set(key, b = []);
-          b.push([p, i]);
-        }
+    // ---- draw states big enough to be worth culling: one mesh per (cell, draw state) --------
+    for (const rec of resident.values()) {
+      const byState = new Map();
+      for (const [h, d] of rec.descs) {
+        if (d.count < 1) continue;
+        const k = stateKey(h);
+        if (total.get(k) < CHUNK_MIN) continue;          // handled map-wide below
+        if (!byState.has(k)) byState.set(k, []);
+        byState.get(k).push(d);
       }
-      if (grid.size < 2 && ps.length < 2) { whole(ps); continue; }
-
-      const host = ps[0];
-      for (const refs of grid.values()) {
-        const im = new THREE.InstancedMesh(host._geo, host._mat, refs.length);
-        im.castShadow = host.castShadow;
-        im.receiveShadow = host.receiveShadow;
-        im.renderOrder = host.renderOrder;
-        im.name = `${host.name || 'pool'}:chunk`;
-        const md = im.instanceMatrix.array;
-        let cd = null;
-        if (anyColor) {
-          im.instanceColor = new THREE.InstancedBufferAttribute(
-            new Float32Array(refs.length * 3).fill(1), 3);
-          cd = im.instanceColor.array;
-        }
-        for (let k = 0; k < refs.length; k++) {
-          const [p, i] = refs[k];
-          md.set(p._m.subarray(i * 16, i * 16 + 16), k * 16);
-          // A pool with no colours in a bucket where another pool has them must contribute
-          // white, or its instances would come out black.
-          if (cd && p._c) cd.set(p._c.subarray(i * 3, i * 3 + 3), k * 3);
-          let r = sink.remap.get(p);
-          if (!r) sink.remap.set(p, r = new Map());
-          r.set(i, [im, k]);
-        }
-        im.instanceMatrix.needsUpdate = true;
-        if (im.instanceColor) im.instanceColor.needsUpdate = true;
-        // three would compute this lazily on the first frustum test anyway; doing it here keeps
-        // the whole cost inside the build.
-        im.computeBoundingSphere();
-        host.add(im);
-        meshes++; cells++; instances += refs.length;
-      }
+      for (const [k, ds] of byState) { emit(k, ds, rec, true); cellMeshes++; }
     }
 
-    // RELEASE THE SCRATCH. `_m` and `_c` are the growable staging buffers; once their contents
+    // ---- draw states too small to cut: one map-wide mesh, never culled ----------------------
+    for (const [k] of handlesOf) {
+      if (total.get(k) >= CHUNK_MIN) continue;
+      const ds = [];
+      for (const rec of resident.values()) {
+        for (const [h, d] of rec.descs) if (d.count > 0 && stateKey(h) === k) ds.push(d);
+      }
+      // NOTE FOR S4: a map-wide mesh has no owning cell, so it is never disposed. That is
+      // correct while the whole world is resident and it is wrong once cells stream. The fix is
+      // to give these an owner too and accept the extra calls, and it belongs to the residency
+      // step, not here - flagged rather than silently inherited.
+      if (emit(k, ds, null, false)) globalMeshes++;
+    }
+
+    // RELEASE THE SCRATCH. `d.m` and `d.c` are the growable staging buffers; once their contents
     // have been copied into an InstancedMesh's own attribute arrays they are pure garbage, and
-    // holding them pins 18.45 MB of matrices plus 2.05 MB of colours across the 67 descriptors
-    // for the lifetime of the world. That is not a leak today because the world is built once,
-    // but a descriptor whose dispose path does not actually free is chunk-contract rule 3's
-    // failure exactly, and under streaming it would present as memory creep and be blamed on the
-    // streamer rather than on the sink. Free it at the only moment we know it is dead.
-    let freedBytes = 0;
-    for (const p of sink.pools) {
-      freedBytes += p._m.byteLength + (p._c ? p._c.byteLength : 0);
-      p._m = null;
-      p._c = null;
-      p._cap = 0;
+    // holding them pins tens of MB for the lifetime of the world. A descriptor whose teardown
+    // does not actually free is chunk-contract rule 3's failure, and under streaming it would
+    // present as memory creep and be blamed on the streamer rather than on the sink.
+    for (const rec of resident.values()) {
+      for (const d of rec.descs.values()) {
+        freedBytes += d.m.byteLength + (d.c ? d.c.byteLength : 0);
+        d.m = null; d.c = null; d.cap = 0;
+      }
     }
-    return { meshes, cells, instances, states: buckets.size, freedBytes };
+    return { meshes, cells: cellMeshes, globalMeshes, instances,
+      states: handlesOf.size, residentCells: resident.size, freedBytes };
   }
+
 
   /**
    * Where a pooled instance actually ended up. An emitter records `[descriptor, index]` at build
@@ -1417,7 +1510,7 @@ export function createWorld(scene, { rng: injectedRng, roadKit }) {
   const G = LAYOUT.grid, EX = LAYOUT.extent, HALF = LAYOUT.roadW / 2;
 
   for (const z of G) roads.add(roadKit.buildRibbon([[-EX, z], [EX, z]], { cls: 'city' }));
-  for (const x of G) {
+  for (const x of visitOrder(G)) {
     const stops = [-EX, ...G, EX];
     for (let i = 0; i < stops.length - 1; i++) {
       const z0 = stops[i] + (G.includes(stops[i]) ? HALF + 1 : 0);
@@ -1735,6 +1828,18 @@ export function createWorld(scene, { rng: injectedRng, roadKit }) {
   const shopIntMat = new THREE.MeshBasicMaterial({
     map: makeShopIntTex(R), toneMapped: true, side: THREE.FrontSide,
   });
+
+  // ---- R IS DEAD FROM HERE (decision 1) ------------------------------------------------
+  // Every texture canvas and every material is baked. From this line on, every random draw
+  // belongs to a specific thing in the world and must come from that thing's own seed via
+  // atRng(), so that a chunk rebuilt after a ten-minute drive is identical to the one built at
+  // boot. Nulling R rather than trusting a convention means a surviving `R(...)` throws at boot
+  // - "R is not a function" - instead of silently reintroducing a build-order dependency that
+  // nothing would notice until a cell rebuilt differently. The three texture makers that run
+  // after this point (makeSign, makeAwningTex, makeFrondTex) were given their own seeds above
+  // for the same reason: on the shared stream their output depended on how many buildings the
+  // city happened to have.
+  R = null;
   const shopQuad = new THREE.PlaneGeometry(1, 1);
   const shopMesh = pool('shopMesh', shopQuad, shopIntMat, { cast: false, recv: false });
   // Brightness is measured, not guessed. Over the left third of the facade band —
@@ -1934,57 +2039,58 @@ export function createWorld(scene, { rng: injectedRng, roadKit }) {
     return f;
   }
 
-  for (const b of blocks) {
+  for (const b of visitOrder(blocks)) {
+      const rb = atRng(b.cx, b.cz, S_BLOCK);
     const innerB = downtown(b);
-    const n = rngInt(R, 3, innerB ? 4 : 3);
+    const n = rngInt(rb, 3, innerB ? 4 : 3);
     const cols = 2, rows = 2;
     const cells = [];
     for (let i = 0; i < cols; i++) for (let j = 0; j < rows; j++) cells.push([i, j]);
     for (let k = cells.length - 1; k > 0; k--) {
-      const m = Math.floor(R() * (k + 1)); [cells[k], cells[m]] = [cells[m], cells[k]];
+      const m = Math.floor(rb() * (k + 1)); [cells[k], cells[m]] = [cells[m], cells[k]];
     }
     for (let k = 0; k < Math.min(n, cells.length); k++) {
       const [ci, cj] = cells[k];
       const cw = b.bw / cols, cd = b.bd / rows;
-      const px = b.cx - b.bw / 2 + cw * (ci + 0.5) + rngRange(R, -3, 3);
-      const pz = b.cz - b.bd / 2 + cd * (cj + 0.5) + rngRange(R, -3, 3);
-      const w = cw * rngRange(R, 0.66, 0.94);
-      const d = cd * rngRange(R, 0.66, 0.94);
-      const base = innerB ? rngRange(R, 40, 138) : rngRange(R, 13, 46);
-      const h = base * (R() < 0.14 ? 1.65 : 1.0);
-      const style = innerB ? rngPick(R, ['glass', 'office', 'glass', 'concrete'])
-        : rngPick(R, ['brick', 'office', 'concrete']);
+      const px = b.cx - b.bw / 2 + cw * (ci + 0.5) + rngRange(rb, -3, 3);
+      const pz = b.cz - b.bd / 2 + cd * (cj + 0.5) + rngRange(rb, -3, 3);
+      const w = cw * rngRange(rb, 0.66, 0.94);
+      const d = cd * rngRange(rb, 0.66, 0.94);
+      const base = innerB ? rngRange(rb, 40, 138) : rngRange(rb, 13, 46);
+      const h = base * (rb() < 0.14 ? 1.65 : 1.0);
+      const style = innerB ? rngPick(rb, ['glass', 'office', 'glass', 'concrete'])
+        : rngPick(rb, ['brick', 'office', 'concrete']);
 
       // storefront podium with its own heavy cornice
       const tm = towerMesh[style];
       // Painted masses. A glass curtain wall stays near-neutral (the texture's own
       // blue-grey IS its colour); masonry and rendered concrete take real paint.
-      const shaftPaint = facadePaint(sink, R, PAINT_CHANCE[style] ?? 0.35);
+      const shaftPaint = facadePaint(sink, rb, PAINT_CHANCE[style] ?? 0.35);
       push(podiumMesh, px, PODIUM_H / 2 + 0.2, pz, 0, 0, w + 1.5, PODIUM_H, d + 1.5,
-        facadePaint(sink, R, 0.55));
+        facadePaint(sink, rb, 0.55));
       push(capMesh, px, PODIUM_H + 0.55, pz, 0, 0, w + 3.0, 0.75, d + 3.0);
       push(capMesh, px, PODIUM_H + 1.05, pz, 0, 0, w + 2.0, 0.35, d + 2.0);
-      storefrontBand(sink, R, px, pz, w + 1.5, d + 1.5, style, FACES);
+      storefrontBand(sink, rb, px, pz, w + 1.5, d + 1.5, style, FACES);
 
       // ---- stepped massing: 1-3 shafts, each setting back from the one below ----
-      const steps = h > 70 ? rngInt(R, 2, 3) : (h > 34 ? rngInt(R, 1, 2) : 1);
+      const steps = h > 70 ? rngInt(rb, 2, 3) : (h > 34 ? rngInt(rb, 1, 2) : 1);
       let sy = PODIUM_H, sw = w, sd = d;
       for (let st = 0; st < steps; st++) {
         const last = st === steps - 1;
-        const frac = last ? 1 : rngRange(R, 0.42, 0.66);
+        const frac = last ? 1 : rngRange(rb, 0.42, 0.66);
         const top = sy + (h - sy) * frac;
         push(tm, px, sy + (top - sy) / 2 + 0.2, pz, 0, 0, sw, top - sy, sd, shaftPaint);
-        facadeDetail(sink, R, px, pz, sw, sd, sy, top, style, innerB && st === 0);
-        facadeGrid(sink, R, px, pz, sw, sd, sy, top, style, FACES);
-        parapet(px, top + 0.2, pz, sw, sd, last ? rngRange(R, 1.2, 2.4) : rngRange(R, 0.9, 1.5),
+        facadeDetail(sink, rb, px, pz, sw, sd, sy, top, style, innerB && st === 0);
+        facadeGrid(sink, rb, px, pz, sw, sd, sy, top, style, FACES);
+        parapet(px, top + 0.2, pz, sw, sd, last ? rngRange(rb, 1.2, 2.4) : rngRange(rb, 0.9, 1.5),
           last ? 1.2 : 0.9);
         if (last) {
-          rooftop(sink, R, px, top + 0.2, pz, sw, sd, h > 60);
-        } else if (R() < 0.7) {
+          rooftop(sink, rb, px, top + 0.2, pz, sw, sd, h > 60);
+        } else if (rb() < 0.7) {
           // the setback terrace carries its own plant so the shoulder is never bare
-          push(plantMesh, px + rngRange(R, -sw * 0.3, sw * 0.3), top + 1.4,
-            pz + rngRange(R, -sd * 0.3, sd * 0.3), 0, 0,
-            rngRange(R, 1.6, 4), rngRange(R, 1.4, 2.6), rngRange(R, 1.6, 4));
+          push(plantMesh, px + rngRange(rb, -sw * 0.3, sw * 0.3), top + 1.4,
+            pz + rngRange(rb, -sd * 0.3, sd * 0.3), 0, 0,
+            rngRange(rb, 1.6, 4), rngRange(rb, 1.4, 2.6), rngRange(rb, 1.6, 4));
         }
         // record the outer walls as sign frontages before we shrink
         if (st === 0) {
@@ -1998,8 +2104,8 @@ export function createWorld(scene, { rng: injectedRng, roadKit }) {
           }
         }
         sy = top;
-        sw *= rngRange(R, 0.62, 0.84);
-        sd *= rngRange(R, 0.62, 0.84);
+        sw *= rngRange(rb, 0.62, 0.84);
+        sd *= rngRange(rb, 0.62, 0.84);
       }
       towers.push({ x: px, z: pz, w, d, h, style });
       // AO skirt where the building meets the pavement. The tower box is axis
@@ -2016,7 +2122,8 @@ export function createWorld(scene, { rng: injectedRng, roadKit }) {
   // ---- perimeter street wall ------------------------------------------------
   // Low-rise infill hugging every block edge so the canyon is a continuous,
   // stepped, greebled wall instead of isolated prisms behind an empty apron.
-  for (const b of blocks) {
+  for (const b of visitOrder(blocks)) {
+      const rb = atRng(b.cx, b.cz, S_WALL);
     const innerB = downtown(b);
     for (const ry of FACES) {
       const nx = Math.sin(ry), nz = Math.cos(ry);
@@ -2024,33 +2131,33 @@ export function createWorld(scene, { rng: injectedRng, roadKit }) {
       const len = alongX ? b.bw : b.bd;
       const ex = b.cx + nx * b.bw / 2, ez = b.cz + nz * b.bd / 2;
       const tx = -nz, tz = nx;
-      let t = -len / 2 + rngRange(R, 1, 6);
+      let t = -len / 2 + rngRange(rb, 1, 6);
       while (t < len / 2 - 12) {
-        const seg = Math.min(rngRange(R, 20, 40), len / 2 - t);
+        const seg = Math.min(rngRange(rb, 20, 40), len / 2 - t);
         if (seg < 12) break;
-        const dep = rngRange(R, 13, 22);
-        const h = innerB ? rngRange(R, 13, 36) : rngRange(R, 10, 22);
+        const dep = rngRange(rb, 13, 22);
+        const h = innerB ? rngRange(rb, 13, 36) : rngRange(rb, 10, 22);
         const cx = ex + tx * (t + seg / 2) - nx * (dep / 2 - 0.6);
         const cz = ez + tz * (t + seg / 2) - nz * (dep / 2 - 0.6);
         const ww = alongX ? seg - 1.2 : dep;
         const dd = alongX ? dep : seg - 1.2;
-        const style = innerB ? rngPick(R, ['office', 'concrete', 'brick', 'glass'])
-          : rngPick(R, ['brick', 'brick', 'office', 'concrete']);
+        const style = innerB ? rngPick(rb, ['office', 'concrete', 'brick', 'glass'])
+          : rngPick(rb, ['brick', 'brick', 'office', 'concrete']);
         push(podiumMesh, cx, PODIUM_H / 2 + 0.2, cz, 0, 0, ww + 0.8, PODIUM_H, dd + 0.8,
-          facadePaint(sink, R, 0.58));
+          facadePaint(sink, rb, 0.58));
         push(capMesh, cx, PODIUM_H + 0.5, cz, 0, 0, ww + 2.4, 0.7, dd + 2.4);
         // The street wall is the closest architecture to the lens in every downtown
         // frame, so it carries the higher paint chance of the two mass generators.
         push(towerMesh[style], cx, PODIUM_H + (h - PODIUM_H) / 2 + 0.2, cz,
-          0, 0, ww, h - PODIUM_H, dd, facadePaint(sink, R, (PAINT_CHANCE[style] ?? 0.35) * 1.25));
-        facadeDetail(sink, R, cx, cz, ww, dd, PODIUM_H, h, style, true);
+          0, 0, ww, h - PODIUM_H, dd, facadePaint(sink, rb, (PAINT_CHANCE[style] ?? 0.35) * 1.25));
+        facadeDetail(sink, rb, cx, cz, ww, dd, PODIUM_H, h, style, true);
         // street wall: only the outward face and the two returns are ever seen,
         // so the fine kit is skipped on the buried inner face.
         const outFaces = [ry, ry + Math.PI / 2, ry - Math.PI / 2];
-        facadeGrid(sink, R, cx, cz, ww, dd, PODIUM_H, h, style, outFaces);
-        storefrontBand(sink, R, cx, cz, ww + 0.8, dd + 0.8, style, outFaces);
-        parapet(cx, h + 0.2, cz, ww, dd, rngRange(R, 1.0, 2.2), 1.1);
-        rooftop(sink, R, cx, h + 0.2, cz, ww, dd, false);
+        facadeGrid(sink, rb, cx, cz, ww, dd, PODIUM_H, h, style, outFaces);
+        storefrontBand(sink, rb, cx, cz, ww + 0.8, dd + 0.8, style, outFaces);
+        parapet(cx, h + 0.2, cz, ww, dd, rngRange(rb, 1.0, 2.2), 1.1);
+        rooftop(sink, rb, cx, h + 0.2, cz, ww, dd, false);
         frontages.push(canonFrontage({
           x: ex + tx * (t + seg / 2) + nx * 0.6, z: ez + tz * (t + seg / 2) + nz * 0.6,
           ry, along: seg, h, big: false,
@@ -2059,7 +2166,7 @@ export function createWorld(scene, { rng: injectedRng, roadKit }) {
         // segment is `seg` long by `dep` deep, so a circle of radius
         // max(seg,dep)*0.62 threw the skirt most of the way across the road.
         shadowAt(cx, cz, 0.24, ww * 0.62, 0.75, 0, dd * 0.62);
-        t += seg + rngRange(R, 1.5, 9);
+        t += seg + rngRange(rb, 1.5, 9);
       }
     }
   }
@@ -2074,7 +2181,10 @@ export function createWorld(scene, { rng: injectedRng, roadKit }) {
   const signMeshes = [], signMats = [];
   const planeGeo = new THREE.PlaneGeometry(1, 1);
   for (let v = 0; v < SIGN_VARIANTS; v++) {
-    const t = makeSign(R, SIGN_KINDS[v]);
+    // Own stream, keyed on the variant index. These canvases are baked after the first emitter
+    // has run, so on the global R their content depended on how many buildings the city
+    // happened to have. Now adding a 13th sign cannot change the first twelve.
+    const t = makeSign(makeRng(cellHash(v, 0, S_TEX)), SIGN_KINDS[v]);
     const m = new THREE.MeshStandardMaterial({
       map: t.map, emissiveMap: t.emissiveMap,
       // 0.12 -> 0.30. INDEX.md's read of `daytime-downtown-02` is the spec here:
@@ -2181,7 +2291,7 @@ export function createWorld(scene, { rng: injectedRng, roadKit }) {
   }
 
   // ---- awnings over the pavement ----
-  const awnTex = makeAwningTex(R);
+  const awnTex = makeAwningTex(makeRng(cellHash(1, 0, S_TEX)));   // own stream: see makeSign above
   const awnMat = patchAtmo(new THREE.MeshStandardMaterial({
     map: awnTex, roughness: 0.88, metalness: 0.0, side: THREE.DoubleSide,
   }), atmo, 0.0);
@@ -2220,26 +2330,27 @@ export function createWorld(scene, { rng: injectedRng, roadKit }) {
   }
 
   // ---- what hangs off each street frontage ----
-  for (const f of frontages) {
+  for (const f of visitOrder(frontages)) {
+      const rf = atRng(f.x, f.z, S_FRONT);
     const nx = Math.sin(f.ry), nz = Math.cos(f.ry);
     // cantilevered fascia billboard on bracket arms
-    if (R() < (f.big ? 0.5 : 0.7)) {
-      const w = Math.min(f.along * 0.72, rngRange(R, 5, 14));
-      placeSign(sink, R, f.x, rngRange(R, 9.2, Math.max(10, Math.min(f.h - 2, 17))), f.z, f.ry,
-        w, w * rngRange(R, 0.34, 0.58),
-        { reach: rngRange(R, 2.0, 4.6), flood: R() < 0.5 });
+    if (rf() < (f.big ? 0.5 : 0.7)) {
+      const w = Math.min(f.along * 0.72, rngRange(rf, 5, 14));
+      placeSign(sink, rf, f.x, rngRange(rf, 9.2, Math.max(10, Math.min(f.h - 2, 17))), f.z, f.ry,
+        w, w * rngRange(rf, 0.34, 0.58),
+        { reach: rngRange(rf, 2.0, 4.6), flood: rf() < 0.5 });
     }
     // blade sign: panel turned 90 deg to the wall so it reads down the street
-    if (R() < 0.86) {
-      const bh = rngRange(R, 5, Math.min(15, Math.max(6, f.h * 0.55)));
-      const bw = bh * rngRange(R, 0.28, 0.42);
+    if (rf() < 0.86) {
+      const bh = rngRange(rf, 5, Math.min(15, Math.max(6, f.h * 0.55)));
+      const bw = bh * rngRange(rf, 0.28, 0.42);
       const out = 1.4 + bw / 2;
       const ox = f.x + nx * out, oz = f.z + nz * out;
-      const by = rngRange(R, 8.5, Math.max(9.5, Math.min(f.h - bh * 0.5, 20)));
+      const by = rngRange(rf, 8.5, Math.max(9.5, Math.min(f.h - bh * 0.5, 20)));
       // a blade sign hangs perpendicular to the wall, so the camera sees it from
       // whichever side it drives up on — it MUST be printed both ways round
       // sep 0.17 clears the 0.3-deep frame box below (half depth 0.15)
-      panelPair(sink, R, rngInt(R, 0, GREEN0 - 1), ox, by, oz, f.ry + Math.PI / 2, bw, bh, -1, 0.17);
+      panelPair(sink, rf, rngInt(rf, 0, GREEN0 - 1), ox, by, oz, f.ry + Math.PI / 2, bw, bh, -1, 0.17);
       push(signFrame, ox, by, oz, f.ry + Math.PI / 2, 0, bw + 0.4, bh + 0.4, 0.3);
       push(strutMesh, f.x + nx * out * 0.5, by + bh * 0.42, f.z + nz * out * 0.5,
         f.ry, 0, 0.16, 0.16, out);
@@ -2252,16 +2363,16 @@ export function createWorld(scene, { rng: injectedRng, roadKit }) {
     // smaller tier of perpendicular signs right over the pavement at first-floor
     // height, and that tier is the one the camera actually passes through.
     {
-      const lows = rngInt(R, 1, 3);
+      const lows = rngInt(rf, 1, 3);
       for (let i = 0; i < lows; i++) {
-        const lh = rngRange(R, 1.5, 3.0);
-        const lw = lh * rngRange(R, 0.52, 1.05);
+        const lh = rngRange(rf, 1.5, 3.0);
+        const lw = lh * rngRange(rf, 0.52, 1.05);
         const out = 1.5 + lw / 2;
-        const o = rngRange(R, -f.along * 0.40, f.along * 0.40);
+        const o = rngRange(rf, -f.along * 0.40, f.along * 0.40);
         const bx = f.x - nz * o, bz = f.z + nx * o;
-        const ly = rngRange(R, 3.9, 7.4);
+        const ly = rngRange(rf, 3.9, 7.4);
         // sep 0.12 clears the 0.20-deep frame box below (half depth 0.10)
-        panelPair(sink, R, rngInt(R, 0, GREEN0 - 1), bx + nx * out, ly, bz + nz * out,
+        panelPair(sink, rf, rngInt(rf, 0, GREEN0 - 1), bx + nx * out, ly, bz + nz * out,
           f.ry + Math.PI / 2, lw, lh, -1, 0.12);
         push(signFrame, bx + nx * out, ly, bz + nz * out, f.ry + Math.PI / 2, 0,
           lw + 0.22, lh + 0.22, 0.20);
@@ -2279,27 +2390,28 @@ export function createWorld(scene, { rng: injectedRng, roadKit }) {
     // under the projecting fascia beam so they shade the glazing behind them
     const bays = Math.max(1, Math.round(f.along / 6.4));
     for (let i = 0; i < bays; i++) {
-      if (R() > 0.90) continue;
+      if (rf() > 0.90) continue;
       const bwid = f.along / bays;
       const o = -f.along / 2 + bwid * (i + 0.5);
-      awning(sink, R, f.x - Math.cos(f.ry) * o, rngRange(R, 5.0, 5.7),
-        f.z + Math.sin(f.ry) * o, f.ry, bwid * 0.82, rngRange(R, 2.1, 3.1));
+      awning(sink, rf, f.x - Math.cos(f.ry) * o, rngRange(rf, 5.0, 5.7),
+        f.z + Math.sin(f.ry) * o, f.ry, bwid * 0.82, rngRange(rf, 2.1, 3.1));
     }
     // vertical banner strip up the pier between windows
-    if (f.big && R() < 0.3) {
-      const bh2 = rngRange(R, 10, 22);
-      placeSign(sink, R, f.x, rngRange(R, 16, Math.max(18, f.h * 0.55)), f.z, f.ry,
-        bh2 * 0.30, bh2, { reach: rngRange(R, 0.8, 1.8), frame: false });
+    if (f.big && rf() < 0.3) {
+      const bh2 = rngRange(rf, 10, 22);
+      placeSign(sink, rf, f.x, rngRange(rf, 16, Math.max(18, f.h * 0.55)), f.z, f.ry,
+        bh2 * 0.30, bh2, { reach: rngRange(rf, 0.8, 1.8), frame: false });
     }
   }
 
   // rooftop billboards on the tall masses
-  for (const t of towers) {
-    if (t.h > 22 && R() < 0.62) {
-      const ry = rngPick(R, FACES);
-      const w = Math.min(Math.max(t.w, t.d) * 0.95, rngRange(R, 10, 22));
+  for (const t of visitOrder(towers)) {
+      const rt = atRng(t.x, t.z, S_ROOF);
+    if (t.h > 22 && rt() < 0.62) {
+      const ry = rngPick(rt, FACES);
+      const w = Math.min(Math.max(t.w, t.d) * 0.95, rngRange(rt, 10, 22));
       // freestanding on the roof: legible from the streets on both sides of it
-      placeSign(sink, R, t.x, t.h + 3.2 + w * 0.16, t.z, ry, w, w * 0.32,
+      placeSign(sink, rt, t.x, t.h + 3.2 + w * 0.16, t.z, ry, w, w * 0.32,
         { struts: 3, flood: true, both: true });
     }
   }
@@ -2332,23 +2444,26 @@ export function createWorld(scene, { rng: injectedRng, roadKit }) {
       }
     }
   }
-  for (const z of G) {
-    for (const x of G) {
+  for (const z of visitOrder(G)) {
+    for (const x of visitOrder(G)) {
+        const rj = atRng(x, z, S_NODE);
       // masts land on the pavement (|offset| = 13 m) either side of a 20 m road
-      if (R() < 0.5) gantry(sink, R, x - 32, z, 0, 1, -Math.PI / 2, 26, 9.6, rngInt(R, 2, 3));
-      if (R() < 0.5) gantry(sink, R, x, z - 32, 1, 0, Math.PI, 26, 9.6, rngInt(R, 2, 3));
+      if (rj() < 0.5) gantry(sink, rj, x - 32, z, 0, 1, -Math.PI / 2, 26, 9.6, rngInt(rj, 2, 3));
+      if (rj() < 0.5) gantry(sink, rj, x, z - 32, 1, 0, Math.PI, 26, 9.6, rngInt(rj, 2, 3));
     }
   }
   // highway: sign gantries plus a roadside billboard row on tall posts
   for (let x = -900; x <= 900; x += 240) {
-    gantry(sink, R, x, HZ, 0, 1, -Math.PI / 2, LAYOUT.highwayW + 16, 10.4, 3);
+      const rj = atRng(x, HZ, S_NODE);
+    gantry(sink, rj, x, HZ, 0, 1, -Math.PI / 2, LAYOUT.highwayW + 16, 10.4, 3);
   }
   for (let x = -1000; x <= 1000; x += 105) {
+      const rdg = atRng(x, HZ, S_EDGE);
     const s = ((x / 105) | 0) % 2 ? 1 : -1;
     const bz = HZ + s * (LAYOUT.highwayW / 2 + 13);
-    const w = rngRange(R, 13, 19), bh = w * 0.36;
-    const by = rngRange(R, 9, 13);
-    placeSign(sink, R, x, by, bz, s > 0 ? Math.PI : 0, w, bh, { flood: true });
+    const w = rngRange(rdg, 13, 19), bh = w * 0.36;
+    const by = rngRange(rdg, 9, 13);
+    placeSign(sink, rdg, x, by, bz, s > 0 ? Math.PI : 0, w, bh, { flood: true });
     for (const t of [-w * 0.3, w * 0.3]) {
       push(mastMesh, x + t, 0.2 + (by - bh / 2) / 2, bz, 0, 0, 0.42, by - bh / 2, 0.42);
     }
@@ -2388,13 +2503,13 @@ export function createWorld(scene, { rng: injectedRng, roadKit }) {
     for (let i = 0; i < bars; i++) {
       const by = y - h / 2 + h * ((i + 1) / (bars + 1));
       const bw = w * rngRange(rng, 0.34, 0.82);
-      // SECOND, UNDECLARED RNG STREAM. This one draw comes from the stream main.js injects
-      // (makeRng(0xC17E)), not from the world's own R, and it always has. It is preserved
-      // verbatim here so that converting the emitters to take their stream as an argument is a
-      // provable no-op; switching it to the emitter's `rng` moves one draw between two streams
-      // and reshuffles every neon bar's offset, so it is a deliberate change with its own
-      // measurement, not a refactor. See verdicts/wave-t/generate-mesh-s1.md.
-      const bo = (injectedRng() - 0.5) * (w - bw) * 0.8;
+      // This used to read a SECOND, UNDECLARED RNG STREAM: the one main.js injects
+      // (makeRng(0xC17E)), which nothing else in createWorld ever touched. One draw out of a
+      // whole city came from a different generator than every draw around it, so a neon bar's
+      // offset was not reproducible from the thing's own seed - which is precisely what a
+      // streamed chunk has to be. It now takes the emitter's stream like every other draw.
+      // Measured on its own at S1 before it landed: verdicts/wave-t/generate-mesh-s1.md.
+      const bo = (rng() - 0.5) * (w - bw) * 0.8;
       push(tubeMesh, ox - nz * bo, by, oz + nx * bo, ry, 0, bw, T * 0.8, T * 0.8, col);
     }
     // coloured spill onto the wall behind
@@ -2402,18 +2517,19 @@ export function createWorld(scene, { rng: injectedRng, roadKit }) {
     neons.push({ x, y, z, color: col, w, h });
   }
 
-  for (const t of towers) {
-    if (R() > 0.62) continue;
-    const ry = rngPick(R, [0, Math.PI / 2, Math.PI, -Math.PI / 2]);
+  for (const t of visitOrder(towers)) {
+      const rn = atRng(t.x, t.z, S_NEON);
+    if (rn() > 0.62) continue;
+    const ry = rngPick(rn, [0, Math.PI / 2, Math.PI, -Math.PI / 2]);
     const nx = Math.sin(ry), nz = Math.cos(ry);
     const half = Math.abs(nx) > 0.5 ? t.w / 2 : t.d / 2;
     const along = Math.abs(nx) > 0.5 ? t.d : t.w;
-    const w = Math.min(along * 0.6, rngRange(R, 4, 10));
-    const h = w * rngRange(R, 0.3, 0.7);
-    neonSign(sink, R, t.x + nx * (half + 0.6), rngRange(R, 4.2, 6.6), t.z + nz * (half + 0.6), ry, w, h,
-      rngPick(R, neonColors));
+    const w = Math.min(along * 0.6, rngRange(rn, 4, 10));
+    const h = w * rngRange(rn, 0.3, 0.7);
+    neonSign(sink, rn, t.x + nx * (half + 0.6), rngRange(rn, 4.2, 6.6), t.z + nz * (half + 0.6), ry, w, h,
+      rngPick(rn, neonColors));
     // bulb string along the podium cornice
-    if (R() < 0.7) {
+    if (rn() < 0.7) {
       const cnt = Math.max(6, Math.floor(along * 0.42));
       for (let i = 0; i < cnt; i++) {
         const o = (i / (cnt - 1) - 0.5) * along * 0.92;
@@ -2466,22 +2582,33 @@ export function createWorld(scene, { rng: injectedRng, roadKit }) {
     push(slArm, x + ax * 1.2, 8.7, z + az * 1.2, rotY, 0, 2.4, 0.16, 0.16);
     rec(slHead);
     push(slHead, x + ax * 2.3, 8.56, z + az * 2.3, rotY, 0, 1.15, 0.24, 0.55);
+    // THE ORDER IS SET HERE, NOT BY THE CALLER, AND THAT IS A BUG FIX.
+    // This block needs 'XYZ' because the rotation has an X component that push()'s (0, ry, rz)
+    // cannot express. It used to rely on the caller setting 'XYZ' once before the lamp loops -
+    // but the last line of this function set it back to 'YZX', so only the FIRST lamp of the 288
+    // was ever built with the order it needs and the other 287 got 'YZX'. The two are not
+    // cosmetically equivalent: under 'XYZ' the panel's normal is (0,-1,0), i.e. it faces DOWN at
+    // the street, which is what a lamp's luminous underside is for; under 'YZX' it is (0,+1,0),
+    // facing the sky, and lampMat is FrontSide, so 287 of the 288 lamp panels were invisible
+    // from the road. Found by the S2 order-independence check: which lamp came first depended on
+    // visit order, so shuffling the build moved the one correct lamp somewhere else.
+    dummy.rotation.order = 'XYZ';
     dummy.position.set(x + ax * 2.3, 8.42, z + az * 2.3);
     dummy.rotation.set(-Math.PI / 2, rotY, 0);
     dummy.scale.set(0.98, 0.46, 1);
     dummy.updateMatrix();
+    dummy.rotation.order = 'YZX';
     used.push([slBulb, slBulb.count]);
     pushMat(slBulb, dummy.matrix);
-    dummy.rotation.order = 'YZX';
     lampPositions.push(new THREE.Vector3(x + ax * 2.3, 8.2, z + az * 2.3));
     shadowAt(x, z, 0.24, 1.5, 0.9);
     // ponytail: the night light wash (lampPositions) keeps shining from a felled lamp's old
     // spot — a fallen pole that still lights the street. Fix if it ever reads wrong at night.
     poles.push({ x, z, rotY, kind: 'lamp', hit: false, hide: hidePoles(used) });
   }
-  // dummy.rotation.set with an X component needs the default order; restore after
-  dummy.rotation.order = 'XYZ';
-  for (const z of G) {
+  // streetLight() now sets and restores the rotation order itself, so there is nothing for the
+  // caller to arrange and nothing for a future caller to forget.
+  for (const z of visitOrder(G)) {
     for (let x = -EX + 30; x <= EX; x += 62) {
       streetLight(sink, x, z + HALF + 2.4, Math.PI);
       streetLight(sink, x + 31, z - HALF - 2.4, 0);
@@ -2491,7 +2618,6 @@ export function createWorld(scene, { rng: injectedRng, roadKit }) {
     streetLight(sink, x, HZ + LAYOUT.highwayW / 2 + 4, Math.PI);
     streetLight(sink, x + 35, HZ - LAYOUT.highwayW / 2 - 4, 0);
   }
-  dummy.rotation.order = 'YZX';
 
   // ---- traffic lights ------------------------------------------------------
   const tlPole = pool('tlPole', new THREE.CylinderGeometry(0.13, 0.18, 1, 8), poleMat, { recv: false });
@@ -2523,8 +2649,8 @@ export function createWorld(scene, { rng: injectedRng, roadKit }) {
     shadowAt(x, z, 0.24, 1.8, 0.9);
     poles.push({ x, z, rotY: ry, kind: 'signal', hit: false, hide: hidePoles(used) });
   }
-  for (const x of G) {
-    for (const z of G) {
+  for (const x of visitOrder(G)) {
+    for (const z of visitOrder(G)) {
       trafficLight(sink, x - HALF - 2.6, z + HALF + 2.6, -Math.PI / 2);
       trafficLight(sink, x + HALF + 2.6, z - HALF - 2.6, Math.PI / 2);
     }
@@ -2570,7 +2696,7 @@ export function createWorld(scene, { rng: injectedRng, roadKit }) {
     color: 0x7d6a4e, roughness: 0.95, metalness: 0,
   }));
   patchAtmo(palmTrunk._mat, atmo, 0.0);
-  const frondTex = makeFrondTex(R);
+  const frondTex = makeFrondTex(makeRng(cellHash(2, 0, S_TEX)));  // own stream: see makeSign above
   const frondMat = new THREE.MeshStandardMaterial({
     map: frondTex, alphaMap: frondTex, transparent: true, alphaTest: 0.35,
     side: THREE.DoubleSide, roughness: 0.8, metalness: 0, color: 0xa8d47a,
@@ -2610,11 +2736,12 @@ export function createWorld(scene, { rng: injectedRng, roadKit }) {
   }
 
   /** walk each block's perimeter dropping street furniture */
-  for (const b of blocks) {
+  for (const b of visitOrder(blocks)) {
+      const rp = atRng(b.cx, b.cz, S_PROP);
     // sit the furniture on the open pavement: the kerb is at b.w/2 and the
     // building line is walkW further in, so 1.4-5.4 m in from the kerb keeps
     // every prop clear of both the wall and the traffic lane.
-    const inset = rngRange(R, 1.4, 3.0);
+    const inset = rngRange(rp, 1.4, 3.0);
     const edges = [
       { x0: b.cx - b.w / 2 + inset, z0: b.cz + b.d / 2 - inset, x1: b.cx + b.w / 2 - inset, z1: b.cz + b.d / 2 - inset, ry: 0 },
       { x0: b.cx - b.w / 2 + inset, z0: b.cz - b.d / 2 + inset, x1: b.cx + b.w / 2 - inset, z1: b.cz - b.d / 2 + inset, ry: Math.PI },
@@ -2624,25 +2751,25 @@ export function createWorld(scene, { rng: injectedRng, roadKit }) {
     for (const e of edges) {
       const len = Math.hypot(e.x1 - e.x0, e.z1 - e.z0);
       const ux = (e.x1 - e.x0) / len, uz = (e.z1 - e.z0) / len;
-      let t = rngRange(R, 2, 8);
+      let t = rngRange(rp, 2, 8);
       while (t < len - 2) {
-        const j = rngRange(R, 0, 3.1);   // scatter across the pavement depth
+        const j = rngRange(rp, 0, 3.1);   // scatter across the pavement depth
         const x = e.x0 + ux * t - Math.sin(e.ry) * j;
         const z = e.z0 + uz * t - Math.cos(e.ry) * j;
-        const k = R();
-        const ry = e.ry + rngRange(R, -0.12, 0.12);
+        const k = rp();
+        const ry = e.ry + rngRange(rp, -0.12, 0.12);
         // Palm share drops 0.14 -> 0.075 because the pitch below halved: at the
         // old share a 2.5-5.5 m pitch puts a palm every ~28 m of kerb, which is
         // a boulevard planting scheme, not a downtown one, and nine alpha-tested
         // fronds is by far the most expensive prop in the set.
         if (k < 0.075) {
-          palm(sink, R, x, z, 0.24);
+          palm(sink, rp, x, z, 0.24);
         } else if (k < 0.32) {
           push(binMesh, x, 0.24 + 0.5, z, ry, 0, 1, 1.0, 1);
           shadowAt(x, z, 0.25, 0.95, 0.95);
         } else if (k < 0.42) {
           push(boxMesh, x, 0.24 + 0.68, z, ry, 0, 0.72, 1.36, 0.52,
-            rngPick(R, [0x2c6ea8, 0xa83c2c, 0x3b7a45, 0x5a5f68]));
+            rngPick(rp, [0x2c6ea8, 0xa83c2c, 0x3b7a45, 0x5a5f68]));
           shadowAt(x, z, 0.25, 0.85, 0.95);
         } else if (k < 0.50) {
           push(hydBody, x, 0.24 + 0.42, z, ry, 0, 1, 0.84, 1);
@@ -2665,7 +2792,7 @@ export function createWorld(scene, { rng: injectedRng, roadKit }) {
         // 2.5-5.5 m, not 4.6-10.5: at the old pitch the pavement read as bare
         // grey between isolated props in the 0.40-0.62 screen band. A real
         // downtown kerb is continuously occupied.
-        t += rngRange(R, 2.5, 5.5);
+        t += rngRange(rp, 2.5, 5.5);
       }
     }
   }
@@ -2678,7 +2805,7 @@ export function createWorld(scene, { rng: injectedRng, roadKit }) {
   // block edge, so the kerb keeps its gaps for parking and crossings.
   const guardPost = pool('guardPost', boxGeo, railMat, { recv: false });
   const guardRail = pool('guardRail', boxGeo, railMat, { recv: false });
-  for (const b of blocks) {
+  for (const b of visitOrder(blocks)) {
     const off = 0.55;   // stand-off from the kerb face, clear of the 22 cm step
     const edges = [
       { x0: b.cx - b.w / 2, z0: b.cz + b.d / 2 - off, ux: 1, uz: 0, len: b.w, ry: 0 },
@@ -2687,8 +2814,11 @@ export function createWorld(scene, { rng: injectedRng, roadKit }) {
       { x0: b.cx - b.w / 2 + off, z0: b.cz - b.d / 2, ux: 0, uz: 1, len: b.d, ry: Math.PI / 2 },
     ];
     for (const e of edges) {
-      const t0 = rngRange(R, 3, e.len * 0.40);
-      const t1 = Math.min(e.len - 3, t0 + rngRange(R, e.len * 0.34, e.len * 0.62));
+      // Seeded on the KERB RUN's own midpoint, not on the block: the four runs of one block
+      // must not share a stream, or all four would break in the same place.
+      const rk = atRng(e.x0 + e.ux * e.len * 0.5, e.z0 + e.uz * e.len * 0.5, S_EDGE);
+      const t0 = rngRange(rk, 3, e.len * 0.40);
+      const t1 = Math.min(e.len - 3, t0 + rngRange(rk, e.len * 0.34, e.len * 0.62));
       for (let t = t0; t <= t1; t += 1.65) {
         push(guardPost, e.x0 + e.ux * t, 0.24 + 0.53, e.z0 + e.uz * t, e.ry, 0,
           0.09, 1.06, 0.09);
@@ -2927,11 +3057,12 @@ export function createWorld(scene, { rng: injectedRng, roadKit }) {
   for (let j = 0; j < G.length; j++) {
     for (let i = 0; i < G.length - 1; i++) {
       const a0 = G[i] + JCLR, a1 = G[i + 1] - JCLR;
+      const rdg = atRng(G[j], (a0 + a1) / 2, S_EDGE);
       // a kerb only exists where a block backs it
-      if (j < G.length - 1) rank(sink, R, 0, G[j], 1, 0, a0, a1, 1);
-      if (j > 0) rank(sink, R, 0, G[j], 1, 0, a0, a1, -1);
-      if (j < G.length - 1) rank(sink, R, G[j], 0, 0, 1, a0, a1, -1);
-      if (j > 0) rank(sink, R, G[j], 0, 0, 1, a0, a1, 1);
+      if (j < G.length - 1) rank(sink, rdg, 0, G[j], 1, 0, a0, a1, 1);
+      if (j > 0) rank(sink, rdg, 0, G[j], 1, 0, a0, a1, -1);
+      if (j < G.length - 1) rank(sink, rdg, G[j], 0, 0, 1, a0, a1, -1);
+      if (j > 0) rank(sink, rdg, G[j], 0, 0, 1, a0, a1, 1);
     }
   }
 
@@ -2968,13 +3099,14 @@ export function createWorld(scene, { rng: injectedRng, roadKit }) {
   }
   const ARMS = [[1, 0], [-1, 0], [0, 1], [0, -1]];
   parkPop = 'queue';
-  for (const gx of G) {
-    for (const gz of G) {
+  for (const gx of visitOrder(G)) {
+    for (const gz of visitOrder(G)) {
+        const rj = atRng(gx, gz, S_NODE);
       // ONE arm per junction, was one-or-two. Four would put a queue in every frame of every
       // cross street; two now also crowds the kerbside lane against the live inner lane at
       // the junction the player is most likely to be looking through.
-      const k = rngInt(R, 0, 3);
-      signalQueue(sink, R, gx, gz, ARMS[k][0], ARMS[k][1]);
+      const k = rngInt(rj, 0, 3);
+      signalQueue(sink, rj, gx, gz, ARMS[k][0], ARMS[k][1]);
     }
   }
   // laneTraffic() USED TO BE HERE and it was the defect. It filled BOTH carriageways of every
@@ -3025,8 +3157,8 @@ export function createWorld(scene, { rng: injectedRng, roadKit }) {
     push(paintMesh, gx + ax * 17.4 + az * 5.0, PAINT_Y, gz + az * 17.4 - ax * 5.0,
       ry, 0, 0.42, 1, 9.4, 0xeeeae0);
   }
-  for (const gx of G) {
-    for (const gz of G) {
+  for (const gx of visitOrder(G)) {
+    for (const gz of visitOrder(G)) {
       for (const [ax, az] of ARMS) crossing(gx, gz, ax, az);
     }
   }
@@ -3060,8 +3192,9 @@ export function createWorld(scene, { rng: injectedRng, roadKit }) {
   for (let j = 0; j < G.length; j++) {
     for (let i = 0; i < G.length - 1; i++) {
       const a0 = G[i] + JCLR, a1 = G[i + 1] - JCLR;
-      roadWear(sink, R, 0, G[j], 1, 0, a0, a1);
-      roadWear(sink, R, G[j], 0, 0, 1, a0, a1);
+      const rdg = atRng(G[j], (a0 + a1) / 2, S_EDGE);
+      roadWear(sink, rdg, 0, G[j], 1, 0, a0, a1);
+      roadWear(sink, rdg, G[j], 0, 0, 1, a0, a1);
     }
   }
 
@@ -3254,13 +3387,13 @@ export function createWorld(scene, { rng: injectedRng, roadKit }) {
     highway: makePath([[-1000, HZ + 6.5], [-300, HZ + 6.5], [400, HZ + 6.5], [1000, HZ + 6.5]], false),
   };
 
-  // ---- FINALIZE: allocate every pool, cut by draw state and 200 m cell -----------------
+  // ---- FINALIZE: allocate every cell's pools ------------------------------------------
   //
-  // This used to be a RE-CUT: every pool was allocated at a guessed cap, filled, and then a pass
-  // here walked the finished meshes, bucketed them by draw state, split each bucket by cell,
-  // built a second set of InstancedMeshes and zeroed the originals. That pass is gone. The sink
-  // never allocated the first set, so finalize() is the only allocation that happens and the
-  // cells it produces are the same cells the re-cut produced.
+  // Two refactors ago this was a RE-CUT: every pool was allocated at a guessed cap, filled, and
+  // then a pass here walked the finished meshes, bucketed them by draw state, split each bucket
+  // by cell, built a second set of InstancedMeshes and zeroed the originals. That pass is gone.
+  // The instances were routed to their own cell by push() as they were emitted, so finalize()
+  // just allocates what each cell actually received.
   //
   // Why it matters: a single InstancedMesh holding 150,000 window mullions spread over the whole
   // map has a map-wide bounding sphere, so its frustum test could only ever cost a matrix
@@ -3269,20 +3402,6 @@ export function createWorld(scene, { rng: injectedRng, roadKit }) {
   // submitted, EVERY frame — and not once per frame but three times, because the colour pass,
   // the shadow pass and SSAO's depth/normal prepass each re-submit the whole scene.
   const buildStats = finalize();
-
-  // ---- ONE CHUNK, FOR NOW ---------------------------------------------------------------
-  // The emitters above now all write into a sink rather than into pools they close over, and
-  // they take their RNG as an argument rather than reading the module's `R`. That is the whole
-  // precondition for building the city cell by cell. This build still runs them ONCE, against a
-  // single chunk whose bounds are the whole world and whose stream is the same global `R` in the
-  // same order, which is what makes this step provably behaviour-preserving: the refactor is
-  // verified before any seeding change lands.
-  const resident = new Map();
-  resident.set('0,0', {
-    key: '0,0', cellX: 0, cellZ: 0,
-    minX: -Infinity, maxX: Infinity, minZ: -Infinity, maxZ: Infinity,
-    group, sink, stats: buildStats,
-  });
 
   // ---- STATIC TRANSFORMS, AND A SAVING THAT IS NOT BEING DELIVERED ------------------------
   //
@@ -3338,7 +3457,12 @@ export function createWorld(scene, { rng: injectedRng, roadKit }) {
       residentCells: rc.length,
       residentKeys: rc.map((c) => c.key).sort(),
       drawStates: buildStats.states,
-      cells: buildStats.cells,
+      cellMeshes: buildStats.cells,
+      globalMeshes: buildStats.globalMeshes,
+      freedBytes: buildStats.freedBytes,
+      // Per-cell instance counts, so "resident" can be checked against where the geometry
+      // actually is rather than against a cell count that could be 36 empty records.
+      instancesPerCell: rc.map((c) => [c.key, c.stats.instances]).sort((a, b) => b[1] - a[1]),
       meshes, instances, geometries: geoms.size, tris,
       overflow: { n: dropStats.n, pools: { ...dropStats.pools } },
     };
