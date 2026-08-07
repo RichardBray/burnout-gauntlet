@@ -60,16 +60,66 @@ Opening a new wave block is the moment to do this, not later.
 
 ### WAVE T — LIVE. THE MAP. `TASKS.md` wave 4, task T3. Opened session 18, 2026-08-07.
 
-**EXACT NEXT ACTION: S3d.** **S3c IS DONE AND CRITIC-PASSED at round 4** (`a267ad3`),
+**EXACT NEXT ACTION: S3d PART 2, THE CUT.** **S3d PART 1, THE FLIP, IS DONE** (`b52a253`),
+`verdicts/wave-t/generate-mesh-s3d-flip.md`. **THE GRAPH IS NOW THE DEFAULT MAP.** `game/main.js:191`
+fetches `paradise.json` unless the URL says `#map=grid`; `game/world.js` has ZERO diff in that commit
+and `GRAPH = !!mapDoc` (`game/world.js:1197`) is unchanged.
+
+**S3d WAS SPLIT IN TWO AND THE SPLIT BUYS A CHECK RATHER THAN COSTING ONE. THIS IS THE REUSABLE
+PART.** The plan (`tools/WAVE-T-GENERATE-MESH-PLAN.md:866-870`) pairs the flip with the deletion.
+Done in one commit the deletion is UNREADABLE: the seven gate frames legitimately change when the
+default flips, so a deletion bug that removes something the graph path also needs lands inside a diff
+that is already 100% different and no instrument can see it. Flipped alone, **the seven frames in
+`shots/t-s3d/` become the baseline and the cut gets a real acceptance test - PIXEL IDENTITY against
+them, at each scene's own same-tree noise floor.** The combined step had no assertion at all.
+
+**S3d PART 2 - delete the grid branch, the LAYOUT-derived generators and `roundedRect`.** The gates
+to remove are the `if (!GRAPH)` blocks at `game/world.js` :1770, :2890, :2896, :3055, :3663, :3673,
+:3683, :3692, :3713, plus `roundedRect` at `game/world.js:316` and its call at `:4235`.
+
+- **THE ACCEPTANCE TEST IS PIXEL IDENTITY AGAINST `shots/t-s3d/`, NOT AGAINST THE GRID FRAMES.** Use
+  each scene's own same-tree noise floor. `wet-night-asphalt`'s floor is **maxd 29 at 0.0056%**, not
+  maxd 4.
+- **NEVER BULK-EDIT `world.js` BY PATTERN MATCH.** S3a lost a full revert of the file to exactly
+  that; `lint ok` and the page hung at boot with no console error. Anchor on unique comments, print
+  the line each edit guards, boot the page.
+- `#map=grid` stops working at the cut. S5 then removes the flag itself, which is where the plan
+  already puts it.
+
+**THE `daytime-downtown` REGRESSION ROW CARRIED SINCE S2 IS SETTLED, AND IN THE DIRECTION S2
+PREDICTED.** The graph city puts a full signed corner - awning, glazed shopfront, neon fascia, a
+`WESTGATE` board - on the near-left wall where the grid frame had bare facade. The near field is now
+the strongest part of that frame. **No salt was re-rolled to get there; `S_FRONT`
+(`game/world.js:1089`) is untouched.** S2 refused to re-roll it because picking a salt by looking at
+one screenshot tunes the seed to the test, and that call is now vindicated rather than merely
+defensible. Stop carrying this row.
+
+**TWO THINGS THE FLIP DECLARED RATHER THAN FIXED. NEITHER IS A CUT-STEP REGRESSION:**
+
+1. **The minimap is a 1.1 km LAYOUT grid drawn over a 4 km city**, visible bottom-right in
+   `hud-overlay` with the plate reading `Paradise City / HARBOUR TOWN`. **`rewire` owns it.**
+2. **The far field is now visibly bare.** In `boost-blur` and `dusk-highway-chase` the buildings stop
+   and the ground beyond the road network reads as a flat plain to a hard horizon, because the
+   graph's 78.81 km of centreline has real gaps where the grid tiled uniformly. **`skyline` is now a
+   MEASURED piece, not a speculative one.**
+
+Minor and pre-existing, not caused by the flip: the three gantry boards in `dusk-highway-chase` are
+blank dark panels. They are blank on the grid path too; the graph just puts a gantry in shot.
+
+**COLD LOAD ON THE GRAPH DEFAULT IS 4590 ms MEDIAN (5126, 4590, 4588), UNDER THE 5.0 s BAR, MEASURED
+ALONE.** `node tools/_loadtime.mjs` loads `#bootlog=1` with **no map parameter**
+(`tools/_loadtime.mjs:39`), so from `b52a253` it measures the GRAPH city. Stages: sky 41, road 548,
+**world 1562**, car 178, sim 84, post 31, warm 1611 ms; warm median 4429 ms; 225 requests, 17.81 MB.
+**DO NOT READ THIS AS THE LOAD PROBLEM BEING SOLVED.** The 12.6 s in the `perf` row was measured
+against a busy machine with a 7.7-13.9 s spread; this run had the machine to itself. It is one
+measurement taken correctly, not evidence anything got faster. And **`boot world` 1562 ms is the
+whole map built eagerly** - `createBlocks` 351 ms + `planPavement` 499 ms over all 4000 x 2861 m -
+which is exactly what chunk contract rule 1 forbids. **S4 residency is fully owed and the bar holding
+today is not permission to skip it.**
+
+**S3c IS DONE AND CRITIC-PASSED at round 4** (`a267ad3`),
 `verdicts/wave-t/generate-mesh-s3c{,-critic}.md`. `paths`, `heroDist`, `surfaceAt` and `bounds` are
 off the grid and on the graph, and the wave finally has a drive probe.
-
-**S3d - flip the default to `graph`; delete the grid branch, the LAYOUT-derived generators and
-`roundedRect`** (`tools/WAVE-T-GENERATE-MESH-PLAN.md:866-870`). **This is the step where the seven
-gate frames legitimately show a DIFFERENT CITY - state that plainly rather than claiming parity.**
-`hud-overlay` will show a 1.1 km minimap grid over a 4 km city until `rewire`; declare it. This is
-also where the `daytime-downtown` regression carried since S2 is settled, because the graph city
-replaces that content wholesale - **do not re-roll a salt to improve a grid frame S3d deletes.**
 
 **WHAT S3c LANDED, IN LITERALS:** `bounds` 1400 -> 2000 (`game/physics.js:701`, grid still gets 1400,
 graph derives 2000 from the document extent, `game/main.js:201` passes `world.bounds`);
@@ -581,7 +631,7 @@ from it.
 | `queries` | graph spatial index, `surfaceAt` off `LAYOUT` | **DONE.** `verdicts/wave-t/queries.md` |
 | `generate` | graph -> roads, kerbs, junctions, buildings | **SPLIT INTO THREE.** See below. Owns the `surfaceAt` swap |
 | ├ `generate-blocks` | `game/map/blocks.js`, graph faces -> building blocks | **DONE.** 3 rounds. `verdicts/wave-t/generate-blocks{,-critic,-critic-r2}.md` |
-| ├ `generate-mesh` | per-chunk emitters in `world.js` | **DESIGNED** (`tools/WAVE-T-GENERATE-MESH-PLAN.md`). **S0-S2 DONE** (S0+S1 critic-passed). **S3a DONE**: roads, junctions, kerbs and pavement. **S3b DONE**: the city - blocks, districts, buildings, signage, neon, props, cars, street furniture, `world.blocks` + `world.blockIndex`. **The 2-scene `#map=graph` boot failure is FIXED** (`generate-mesh-s3b-hotfix.md`); all 7 boot, grid unaffected. **S3c DONE and critic-passed at r4** (`a267ad3`): `paths`, `heroDist`, `surfaceAt`, `bounds` all off the grid, plus `tools/_s3c-drive.mjs`, the wave's drive probe. **S3d next - flip the default to graph and delete the grid branch** |
+| ├ `generate-mesh` | per-chunk emitters in `world.js` | **DESIGNED** (`tools/WAVE-T-GENERATE-MESH-PLAN.md`). **S0-S2 DONE** (S0+S1 critic-passed). **S3a DONE**: roads, junctions, kerbs and pavement. **S3b DONE**: the city - blocks, districts, buildings, signage, neon, props, cars, street furniture, `world.blocks` + `world.blockIndex`. **The 2-scene `#map=graph` boot failure is FIXED** (`generate-mesh-s3b-hotfix.md`); all 7 boot, grid unaffected. **S3c DONE and critic-passed at r4** (`a267ad3`): `paths`, `heroDist`, `surfaceAt`, `bounds` all off the grid, plus `tools/_s3c-drive.mjs`, the wave's drive probe. **S3d PART 1 (THE FLIP) DONE** (`b52a253`, `generate-mesh-s3d-flip.md`): **the graph is the DEFAULT map**, `game/main.js:191`, zero `world.js` diff; seven gate frames in `shots/t-s3d/` are the new baseline; cold load 4590 ms alone; drive probe exit 0, 0 WORLD. **S3d PART 2 (THE CUT) NEXT - delete the grid branch, the LAYOUT generators and `roundedRect`, and it must be PIXEL-IDENTICAL to `shots/t-s3d/`** |
 | └ `generate-wire` | `surfaceAt` swap, `paths`, `bounds`, harness coords | **DONE, CRITIC-PASSED at r4** (`a267ad3`). Four rounds. Owns `tools/_s3c-drive.mjs`, the wave's drive probe - run it as a gate. r1-r3 were critic-failed; see the lessons block above. r3's provenance split, unweakened WORLD assertions and five clean chains all PASSED; it failed only because the baseline exits green while the driver skips 3 enumerated boundaries. r4 makes that miss fatal and makes the drive happen. r1 and r2 were CRITIC-FAILED; r3 split WORLD from DRIVER provenance and the driver poison now yields 0 WORLD / 9 DRIVER, baseline exit 0. Open: routes shortened to ~130 m, and the driver misses some authored boundaries. `paths.city` PASSES; both blocking findings are on the PROBE - false-red baseline (it confounds driver error with world error) and single-edge routes that cross no junction. **ROUND 3 = fix the probe, not the world.** r1 `d696581` was CRITIC-FAILED; r2 fixed both blocking findings and built `tools/_s3c-drive.mjs`, which **EXISTS, RUNS AND IS RED - 5 failures over 3 districts, poison controls green.** Likely `blocks.js` + `digitise` debt rather than S3c, but **the critic rules that, not the builder and not the orchestrator.** `verdicts/wave-t/generate-mesh-s3c.md` + `-critic.md`. **Do not start a third builder.** Two delegated grok-4.5 attempts died at the CLI with zero edits; it was built in the main agent. **CRITIC-FAILED at r1** (gpt, `verdicts/wave-t/generate-mesh-s3c-critic.md`): the drive probe was omitted and the physics cannot observe it, and `paths.city` runs 164.707 m on `service` edges 323/369 against decision 7. Constant table 16/16 matched. **ROUND 2 NEEDED** |
 | `stream` | chunk build/dispose around the hero | not started; needs `generate` |
 | `rewire` | `traffic.js`, parked ranks, signals, `physics.js` blocks, minimap, spawns | not started; needs `queries` |
