@@ -180,12 +180,15 @@ export async function boot() {
   // Measured in verdicts/wave-s/perf-r2.md section 3.
   roadKit.setMainCamera(camera);
   await stage('world', 'building the city');
-  // `#map=graph` builds the city from game/map/paradise.json instead of LAYOUT's 1.1 km grid.
-  // Default is still `grid`, so the visual gate does not move until the flip. The document is
-  // fetched here rather than inside createWorld because createWorld is synchronous and every
-  // consumer of `world` depends on it having finished.
+  // WAVE T, S3d: THE DEFAULT IS NOW THE GRAPH. The city is built from game/map/paradise.json,
+  // 4000 x 2861 m of digitised Paradise City, and LAYOUT's 1.1 km grid is reachable only by an
+  // explicit `#map=grid`. The seven gate scenes therefore render a DIFFERENT CITY from this commit
+  // on; that is the point of the wave, not a regression. `#map=grid` survives S3d purely so the
+  // deletion step that follows can be proved pixel-identical against it, and S5 deletes it.
+  // The document is fetched here rather than inside createWorld because createWorld is synchronous
+  // and every consumer of `world` depends on it having finished.
   let mapDoc = null;
-  if (/(?:^|[#&])map=graph(?:&|$)/.test(location.hash || '')) {
+  if (!/(?:^|[#&])map=grid(?:&|$)/.test(location.hash || '')) {
     mapDoc = await (await fetch('./map/paradise.json')).json();
   }
   const world = createWorld(scene, { rng: makeRng(0xC17E), roadKit, mapDoc });
