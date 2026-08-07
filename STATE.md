@@ -60,7 +60,60 @@ Opening a new wave block is the moment to do this, not later.
 
 ### WAVE T — LIVE. THE MAP. `TASKS.md` wave 4, task T3. Opened session 18, 2026-08-07.
 
-**EXACT NEXT ACTION: A CRITIC ON S3c, THEN S3d.** S3c is BUILT and self-verified (`d696581`,
+**EXACT NEXT ACTION: S3c ROUND 2 IS RUNNING** (gpt, `tools/BRIEF-S3C-R2.md`). If this line says
+RUNNING and `verdicts/wave-t/generate-mesh-s3c.md` has no `## ROUND 2` section, that round was
+killed - re-run it from the same brief.
+
+**THE ROUND-2 DRIVE-PROBE DESIGN IS DECIDED IN THE MAIN AGENT AND IS NOT THE BUILDER'S TO RE-OPEN.**
+Because the physics has no road-mesh contact signal, a ribbon-contact probe is NOT buildable in S3c
+and must not be faked. `tools/_s3c-drive.mjs` instead asserts on `world.blocks` - a genuinely BUILT
+artifact from `createBlocks`, and the thing that can strand a car TODAY, given 31 frontage strips are
+single AABBs up to 432 m - along ONE AUTHORED GRAPH ROUTE PER DISTRICT, crossing every 200 m
+boundary, non-zero exit on failure, no teleporting the car back onto the road, and a mandatory
+wall-injection poison control. **The ribbon-mesh contact gap is NOT closed by this and must be
+carried openly as a named debt, not quietly retired.**
+
+**THE MAIN AGENT VERIFIED WHAT THE DELEGATED CRITIC COULD NOT: BOTH MODES BOOT CLEAN.** `#map=grid`
+READY in 7.1 s, and under `#map=graph` `hud-overlay` 8.4 s and `wet-night-asphalt` 8.1 s, all three
+with `{"err":"","ready":true,"game":true}`. **A delegated agent CANNOT bind a socket here
+(`listen EPERM`) and so cannot run any Chromium tool; the main agent CAN.** Run every browser check
+in the main agent and never accept a delegate reporting one as passed.
+
+Superseded: ~~S3c ROUND 2.~~ **THE CRITIC FAILED S3c r1** -
+`verdicts/wave-t/generate-mesh-s3c-critic.md`. Two BLOCKING findings, and the first one is bigger
+than S3c:
+
+**1. THE DRIVE PROBE WAS OMITTED, AND THE PHYSICS CANNOT CURRENTLY OBSERVE THE THING IT IS MEANT TO
+ASSERT ON.** `game/physics.js:1973` forces `state.pos.y = 0`, `airborne` is documented dead state at
+`:718`, and the surface at `:1791-1793` comes from `surfaceAt`, i.e. GRAPH DATA. Physics collides
+with `world.blocks`, cars and the scalar bounds - **never with ribbon or junction triangles**. So a
+"never loses ground contact" assertion **stays green with the road geometry deleted or severed**.
+That is the map brief's third wave-ending failure in its purest form, and it means the probe as the
+brief words it is not buildable without a ground-contact signal against built geometry.
+`tools/_s3c-check.mjs` is NOT that probe: it picks starts from `world.blocks` rather than authored
+graph routes, drives arbitrary +X headings, teleports `pos.z` by up to 6 m to get back on tarmac,
+and **has no failing assertion or non-zero exit at all**.
+
+**2. `paths.city` USES FORBIDDEN ROAD CLASSES.** Decision 7 says arterial/street; the delivered
+circuit carries **164.707 m on `service` edges 323 and 369**, and `crash-cam` spawns on edge 323.
+The path is closed and continuous (largest sample gap 4.069 m, 900/900 on tarmac, endpoint closure
+0.000 m) - it is simply the wrong circuit. Boundary length covers only Palm Bay 857.278 m and
+Downtown 1132.171 m, not five districts.
+
+Non-blocking: `paths.highway` uses 11 of the largest motorway component's 12 edges, 1191.265 m,
+largest gap 1.811 m, declared and teleport-free. That is fine.
+
+**THE CRITIC'S CONSTANT TABLE CAME BACK 16/16 MATCHED** against the tree, each poison-controlled.
+The build is honest; the CHECKS were the gap.
+
+**WHAT THE CRITIC COULD NOT DO, AND IT MATTERS: IT COULD NOT RUN A BROWSER AT ALL.** `tools/shot.mjs`
+and `tools/_s3c-check.mjs` both fail before Chromium launch with `listen EPERM` on `0.0.0.0` and
+`127.0.0.1` in a delegated sandbox. So **the seven-scene grid pixel gate, both-mode boot, the
+render-side `heroDist` cull and the program count are ALL still unverified by anyone but the
+builder.** Verify those in the MAIN AGENT, which can bind a socket; do not hand them to a delegate
+and do not accept a delegate reporting them as passed.
+
+Superseded: ~~A CRITIC ON S3c, THEN S3d.~~ S3c is BUILT and self-verified (`d696581`,
 `verdicts/wave-t/generate-mesh-s3c.md`): `paths.city` is the largest-area downtown planar face
 (face 90, 1978 m), `paths.highway` the longest motorway chain (11 edges, 1190.5 m), `heroDist` is a
 900-sample scan, `world.surfaceAt` is published and injected by `main.js`, and `physics.js` `bounds`
@@ -570,7 +623,7 @@ from it.
 | `generate` | graph -> roads, kerbs, junctions, buildings | **SPLIT INTO THREE.** See below. Owns the `surfaceAt` swap |
 | ├ `generate-blocks` | `game/map/blocks.js`, graph faces -> building blocks | **DONE.** 3 rounds. `verdicts/wave-t/generate-blocks{,-critic,-critic-r2}.md` |
 | ├ `generate-mesh` | per-chunk emitters in `world.js` | **DESIGNED** (`tools/WAVE-T-GENERATE-MESH-PLAN.md`). **S0-S2 DONE** (S0+S1 critic-passed). **S3a DONE**: roads, junctions, kerbs and pavement. **S3b DONE**: the city - blocks, districts, buildings, signage, neon, props, cars, street furniture, `world.blocks` + `world.blockIndex`. **The 2-scene `#map=graph` boot failure is FIXED** (`generate-mesh-s3b-hotfix.md`); all 7 boot, grid unaffected. **S3c next** |
-| └ `generate-wire` | `surfaceAt` swap, `paths`, `bounds`, harness coords | **DONE as `generate-mesh` S3c**, commit `d696581`, `verdicts/wave-t/generate-mesh-s3c.md`. NOT yet critic-passed. **Do not start a third builder.** Two delegated grok-4.5 attempts died at the CLI with zero edits; it was built in the main agent. **CRITIC RUNNING** (gpt via `codex exec`, session 20, against `tools/BRIEF-S3C-CRITIC.md`) - gpt not grok, because of those two CLI deaths. If this row says CRITIC RUNNING and no `verdicts/wave-t/generate-mesh-s3c-critic.md` exists, that round was killed - re-run it |
+| └ `generate-wire` | `surfaceAt` swap, `paths`, `bounds`, harness coords | **DONE as `generate-mesh` S3c**, commit `d696581`, `verdicts/wave-t/generate-mesh-s3c.md`. NOT yet critic-passed. **Do not start a third builder.** Two delegated grok-4.5 attempts died at the CLI with zero edits; it was built in the main agent. **CRITIC-FAILED at r1** (gpt, `verdicts/wave-t/generate-mesh-s3c-critic.md`): the drive probe was omitted and the physics cannot observe it, and `paths.city` runs 164.707 m on `service` edges 323/369 against decision 7. Constant table 16/16 matched. **ROUND 2 NEEDED** |
 | `stream` | chunk build/dispose around the hero | not started; needs `generate` |
 | `rewire` | `traffic.js`, parked ranks, signals, `physics.js` blocks, minimap, spawns | not started; needs `queries` |
 | `skyline` | far LOD / impostors | not started |
