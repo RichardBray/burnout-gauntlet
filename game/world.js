@@ -1706,8 +1706,6 @@ export function createWorld(scene, { roadKit, mapDoc = null }) {
     };
   }
 
-  const HZ = LAYOUT.highwayZ;
-
   // ---- shared materials -------------------------------------------------
   const conc = makeConcrete(R);
   const concMat = patchAtmo(new THREE.MeshStandardMaterial({
