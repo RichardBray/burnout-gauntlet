@@ -21,8 +21,10 @@ DRIVER_LOG="$DIR/driver.log"
 FALLBACK_SLEEP=$((5 * 60 * 60))
 MIN_ROUND_SECONDS=60
 
-# Preference order. First is the `fcc` work account, second the personal one.
-ACCOUNTS=("$HOME/.claude-work" "$HOME/.claude")
+# Personal account only. A single entry gives the sleep-and-wait behaviour described
+# above: on a limit the driver sleeps until that account's own reset, with nothing to
+# rotate to. Add "$HOME/.claude-work" back as a second entry to re-enable rotation.
+ACCOUNTS=("$HOME/.claude")
 # blocked_until[i] = epoch seconds before which ACCOUNTS[i] must not be used.
 blocked_until=()
 for _ in "${ACCOUNTS[@]}"; do blocked_until+=(0); done

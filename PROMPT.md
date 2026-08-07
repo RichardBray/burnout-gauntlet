@@ -63,7 +63,9 @@ Standing constraints that survive the wave unchanged:
 Same loop as before. Break the work into the pieces the brief lists, because each one can be judged
 alone. For each piece, fan out a builder and a SEPARATE critic with fresh context, and keep looping
 that piece until its critic passes it. Every builder writes `verdicts/wave-t/<piece>.md` with the
-BEFORE and AFTER literal value of every constant it touched. Keep `progress.html` current.
+BEFORE and AFTER literal value of every constant it touched. Keep the board current by running
+`node tools/progress.mjs` as each piece lands - it regenerates `progress.json`, which is what
+`progress.html` reads. Editing `progress.html` does not update the board.
 
 **Update `STATE.md` INCREMENTALLY, as each piece lands - never at the end of the session.** A round
 can be killed at any moment. "The piece table and the exact next action are current" is a standing
@@ -72,4 +74,13 @@ is no longer running.
 
 Keep your own context lean: delegate heavy work to sub-agents and keep only their verdicts.
 
-Fan out sub-agents and ultracode.
+Fan out. Use the `delegate` skill for routing and invocation mechanics - it holds the model table
+and the courier-agent patterns. Stay in its LOW and MEDIUM effort band: glm-5.2 for bulk and
+mechanical work, grok-4.5 for agentic implementation against a decent spec, gpt on `-luna` or
+`-terra` when the spec is fuzzy. Do NOT reach for fable-5 or `gpt-5.x-sol`; if a cheap worker
+misses the bar, tighten the prompt and rerun rather than escalating the model. Keep the hard
+single-threaded problems in the main agent, where delegation overhead never pays.
+
+Every delegated prompt is self-contained (absolute paths, constraints, exact output format), bounds
+its output size, and gives exploration a command budget with an explicit STOP-and-synthesize rule.
+An unbounded or chatty result is a failed acceptance criterion - rerun it.
