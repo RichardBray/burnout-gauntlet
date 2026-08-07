@@ -8,11 +8,17 @@
 //   3. the transition: sampled every 50 ms while crossing the kerb at speed, the largest single
 //      frame-to-frame step in ground speed and in the blended grip. A snap would show up here.
 //
-// Usage: node tools/_t4-surface.mjs
+// S3c: default is `#map=graph` so the probe points live on Paradise City. Pass `--grid` for the
+// LAYOUT path that the visual gate still uses.
+//
+// Usage: node tools/_t4-surface.mjs [--grid]
 import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { extname, join, dirname, resolve } from 'node:path';
 import { chromium } from 'playwright';
+
+const useGrid = process.argv.includes('--grid');
+const mapHash = useGrid ? '' : 'map=graph&';
 
 const root = resolve(dirname(new URL(import.meta.url).pathname), '../game');
 const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/javascript',
@@ -38,18 +44,23 @@ const browser = await chromium.launch({ args: ['--use-gl=angle', '--use-angle=me
   '--enable-unsafe-webgpu', '--ignore-gpu-blocklist'] });
 const page = await browser.newPage({ viewport: { width: 1280, height: 720 } });
 page.on('console', (m) => { if (m.type() === 'error') console.log('[page]', m.text()); });
-await page.goto(`http://localhost:${port}/index.html`, { waitUntil: 'load' });
-await page.waitForFunction('window.__ready === true', null, { timeout: 60000 });
+// nomenu so ready is not gated on a click; map mode selected by hash.
+await page.goto(`http://localhost:${port}/index.html#${mapHash}nomenu=1`, { waitUntil: 'load' });
+await page.waitForFunction('window.__ready === true', null, { timeout: 120000 });
 
-const out = await page.evaluate(async () => {
+const out = await page.evaluate(async (gridMode) => {
   const g = window.__game;
   const p = g.physics;
   const s = p.state;
-  const { surfaceAt } = await import('/world.js');
+  // Prefer the world that was actually built (S3c); fall back to the module export for tools.
+  const surfaceAt = g.world.surfaceAt || (await import('/world.js')).surfaceAt;
 
   // ---- 1. classification -----------------------------------------------------------------
-  // Grid lines sit at multiples of 160 from -480; roadW is 20, the kerb face is at 13.
-  const classes = {
+  // GRID: lines at multiples of 160; roadW 20; kerb face at 13.
+  // GRAPH: motorway edge 452 centreline near (149.7, 99.3), width 24, paved half = 12+3 = 15.
+  //   Lateral unit along the first segment of that edge (approx); offsets measured from centre.
+  //   Junction: node 403 degree 9 at (-1246.7, 116.9). Open ground: (1900, 1300).
+  const classes = gridMode ? {
     'road centreline': surfaceAt(0, 0),
     'ribbon edge (9.5 m)': surfaceAt(9.5, 40),
     'paved shoulder (11.6 m)': surfaceAt(11.6, 40),
@@ -59,55 +70,83 @@ const out = await page.evaluate(async () => {
     'mid-block': surfaceAt(80, 80),
     'open ground beyond the grid': surfaceAt(900, 900),
     'interstate ribbon': surfaceAt(0, -700),
+  } : {
+    // Motorway 452 mid: ribbon centreline.
+    'road centreline': surfaceAt(149.7, 99.3),
+    // ~11.5 m lateral (just inside painted edge of width/2=12).
+    'ribbon edge (9.5 m)': surfaceAt(145.6, 88.6),
+    // ~14.5 m: paved shoulder (width/2 + shoulder short of kerb).
+    'paved shoulder (11.6 m)': surfaceAt(144.5, 85.7),
+    // ~14.9 m: kerb face (paved half = 15 m inclusive).
+    'kerb face (12.9 m)': surfaceAt(144.4, 85.4),
+    // ~16 m: past the kerb.
+    'past the kerb (14 m)': surfaceAt(144.0, 84.3),
+    // Degree-9 node 403.
+    'junction centre': surfaceAt(-1246.7, 116.9),
+    // Face-90 centroid is dirt (big downtown face interior) - honest mid-block.
+    'mid-block': surfaceAt(1347.3, -81.7),
+    'open ground beyond the grid': surfaceAt(1900, 1300),
+    // Same motorway ribbon as the speed run anchor.
+    'interstate ribbon': surfaceAt(149.7, 99.3),
   };
 
-  // Drive the car in a straight line at full throttle from a given position, dt-locked.
-  //
-  // WHY THE CAR IS WRAPPED. A top-speed run needs several kilometres of clear straight, and the
-  // world does not have one: the grid roads run into blocks and everything runs into `bounds`
-  // at 1400 m, where the position clamp kills the very number being measured. So the run happens
-  // on the interstate line (z = -700, clear of every block) and the car is TELEPORTED 2000 m back
-  // along X whenever it gets near the edge. Translating the position along a surface that does not
-  // change class leaves velocity, load and tyre state untouched, so the asymptote is honest; the
-  // first version of this probe skipped that and measured 48.5 m/s on BOTH surfaces, which was the
-  // boundary clamp, not the car.
-  const run = (z, seconds, boost) => {
-    p.reset({ x: -1000, y: 0, z }, Math.PI / 2, 0);      // +X
+  // Drive at full throttle. On the grid the interstate is an infinite line at z=-700 and the car
+  // wraps in X. On the graph there is no multi-km constant-class ribbon (and the +/-2000 bound
+  // would kill a long run near the edge), so the surface QUERY is pinned to the class under
+  // test and the car wraps in X inside the bound - same honesty as the grid wrap: the asymptote
+  // is the surface penalty, not a wall. Classification above still uses the real query.
+  const realSurf = surfaceAt;
+  const run = (anchor, seconds, boost, wantSurf) => {
+    p.reset({ x: anchor.x, y: 0, z: anchor.z }, anchor.yaw, 0);
     p.setInput({ throttle: 1, brake: 0, steer: 0, boost: !!boost, handbrake: false });
+    if (!gridMode) p.setSurfaceQuery(() => wantSurf);
     const dt = 1 / 60;
-    // Boost drains the bar, and this is a TOP SPEED measurement, not an endurance one: the bar is
-    // re-armed every tick so the run measures the boosting ceiling rather than how long it lasts.
     for (let i = 0; i < Math.round(seconds * 60); i++) {
       if (boost) s.boost = 1;
       p.step(dt);
       if (s.pos.x > 1000) s.pos.x -= 2000;
+      if (s.pos.x < -1000) s.pos.x += 2000;
     }
+    if (!gridMode) p.setSurfaceQuery(realSurf);
     return { v: Math.abs(s.speed), surface: s.surface, offRoad: s.offRoad };
   };
 
-  // ---- 2. top speed ----------------------------------------------------------------------
-  // 60 s is well past the asymptote in both cases (tarmac settles by ~25 s).
-  const tarmac = run(-700, 60, false);          // the interstate ribbon
-  const tarmacBoost = run(-700, 60, true);
-  const dirt = run(-800, 60, false);            // 100 m north of it, open ground, no geometry
-  const dirtBoost = run(-800, 60, true);
+  // Speed-run anchors: on the grid the interstate at z=-700 is clear of every block. On the
+  // graph, buildings sit next to every road, so a multi-km run on a motorway centreline is a
+  // collision test, not a surface test. Both classes therefore run at open ground (0,0) with
+  // the surface QUERY pinned - same honesty as the grid's X-wrap: the asymptote is the surface
+  // penalty alone. Classification above still uses the real graph query at real coordinates.
+  const tarmacA = gridMode
+    ? { x: -1000, z: -700, yaw: Math.PI / 2 }
+    : { x: 0, z: 0, yaw: Math.PI / 2 };
+  const dirtA = gridMode
+    ? { x: -1000, z: -800, yaw: Math.PI / 2 }
+    : { x: 0, z: 0, yaw: Math.PI / 2 };
+
+  const tarmac = run(tarmacA, 60, false, 'tarmac');
+  const tarmacBoost = run(tarmacA, 60, true, 'tarmac');
+  const dirt = run(dirtA, 60, false, 'dirt');
+  const dirtBoost = run(dirtA, 60, true, 'dirt');
 
   // ---- 3. transition ---------------------------------------------------------------------
-  // A STEP INPUT, deliberately: the car is brought up to speed on the interstate and then displaced
-  // straight off it, so the surface class flips between one frame and the next. Nothing the player
-  // can do is harsher than that, so whatever the blend does here bounds what it does at a kerb.
-  p.reset({ x: -1000, y: 0, z: -700 }, Math.PI / 2, 0);
+  // Build speed on forced tarmac, then flip the query to dirt in one frame (step input).
+  p.setSurfaceQuery(() => 'tarmac');
+  p.reset({ x: tarmacA.x, y: 0, z: tarmacA.z }, tarmacA.yaw, 0);
   p.setInput({ throttle: 1, brake: 0, steer: 0, boost: false, handbrake: false });
   const dt = 1 / 60;
-  for (let i = 0; i < 60 * 30; i++) { p.step(dt); if (s.pos.x > 1000) s.pos.x -= 2000; }
+  for (let i = 0; i < 60 * 30; i++) {
+    p.step(dt);
+    if (s.pos.x > 1000) s.pos.x -= 2000;
+  }
   const vEntry = Math.abs(s.speed);
-  s.pos.z = -800;                                  // off the ribbon, same instant
+  p.setSurfaceQuery(() => 'dirt');
   const trace = [];
   for (let i = 0; i < 60 * 4; i++) {
     p.step(dt);
     if (s.pos.x > 1000) s.pos.x -= 2000;
     trace.push({ t: i / 60, v: Math.abs(s.speed), off: s.offRoad, surf: s.surface });
   }
+  p.setSurfaceQuery(realSurf);
   let maxDv = 0, maxDoff = 0;
   for (let i = 1; i < trace.length; i++) {
     maxDv = Math.max(maxDv, Math.abs(trace[i].v - trace[i - 1].v));
@@ -121,13 +160,17 @@ const out = await page.evaluate(async () => {
   for (let i = 0; i < N; i++) acc += surfaceAt(i % 2000 - 1000, (i * 7) % 2000 - 1000).length;
   const perCall = (performance.now() - t0) / N;
 
-  return { classes, tarmac, tarmacBoost, dirt, dirtBoost,
+  return {
+    map: gridMode ? 'grid' : 'graph',
+    classes, tarmac, tarmacBoost, dirt, dirtBoost,
     maxDv, maxDoff, perCall, acc, vEntry,
     crossing: trace.filter((_, i) => i % 12 === 0).map((t) =>
-      `t ${t.t.toFixed(2)}s v ${t.v.toFixed(1)} off ${t.off.toFixed(2)} ${t.surf}`) };
-});
+      `t ${t.t.toFixed(2)}s v ${t.v.toFixed(1)} off ${t.off.toFixed(2)} ${t.surf}`),
+  };
+}, useGrid);
 
 const pct = (a, b) => `${((1 - b / a) * 100).toFixed(1)}% below`;
+console.log(`--- mode ${out.map}`);
 console.log('--- classification');
 for (const [k, v] of Object.entries(out.classes)) console.log(`  ${k.padEnd(30)} ${v}`);
 console.log('--- top speed (m/s), 60 s at full throttle');
