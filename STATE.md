@@ -60,13 +60,35 @@ Opening a new wave block is the moment to do this, not later.
 
 ### WAVE T — LIVE. THE MAP. `TASKS.md` wave 4, task T3. Opened session 18, 2026-08-07.
 
-**EXACT NEXT ACTION: S3c ROUND 3 IS RUNNING** (gpt, `tools/BRIEF-S3C-R3.md`). If this says RUNNING
-and `verdicts/wave-t/generate-mesh-s3c.md` has no `## ROUND 3` section, that round was killed -
-re-run it from the same brief. **Round 3 fixes the PROBE, not the world**: split WORLD failures
-(authored corridor) from DRIVER excursions (driven trajectory) so they can never be confused, get
-the baseline to exit 0 by fixing the confound rather than by loosening a world assertion, author
-multi-edge routes crossing at least two junctions each, and add a **DRIVER poison that must produce
-zero WORLD failures** - that last one is what proves the confound is actually gone.
+**EXACT NEXT ACTION: A CRITIC ON S3c ROUND 3** (`b0c8f40`). **THE CONFOUND IS FIXED AND THE PROOF IS
+CLEAN.** All four modes run by the MAIN AGENT (a delegate cannot bind a socket; the builder honestly
+declined to claim a run):
+
+| mode | exit | WORLD failures | DRIVER findings |
+|---|---|---|---|
+| baseline | **0** | **0** | 3, all non-fatal |
+| `--poison=wall` | 1 | **1** (`downtown \| world.blocks clears authored corridor`) | **0** |
+| `--poison=sever` | 1 | **3** (chain, centreline tarmac, corridor) | **0** |
+| `--poison=driver` | 1 | **0** | **9** (`reaches route end` 155.34 m away, 1876 off-tarmac samples, blocks 854/860) |
+
+**`--poison=driver` giving 0 WORLD and 9 DRIVER is the exact proof round 3 was asked for**: shoving
+the car off the route can no longer manufacture a statement about the map. World assertions were not
+loosened to get the green baseline - the wall and sever poisons still fire on them.
+
+Routes are now three-edge chains crossing **2 graph junctions** each: downtown `[602,904,903]`,
+harbor `[925,924,792]`, palmbay `[447,431,404]`, silverlake `[126,135,151]`, mountain
+`[806,813,832]`. Pure-data: all five connected, 173/173 samples on tarmac, zero expanded-block
+intersections.
+
+**TWO WEAKNESSES THE CRITIC MUST JUDGE, BOTH VISIBLE IN THE NUMBERS ABOVE:**
+
+1. **The routes got SHORTER, not longer: 125.7-137.7 m each, about 660 m total, against r2's
+   287.7-398.4 m and 1619.7 m.** Junction coverage was bought with length. Is ~130 m per district
+   enough route to be the wave's seam check?
+2. **The baseline's 3 driver findings are all `driver crosses every authored 200 m boundary` failing
+   - harbor 1/2, palmbay 2/3, mountain 1/2.** The car is NOT actually traversing all the boundaries
+   the routes enumerate. They are non-fatal by the builder's choice, but a boundary the driver never
+   crossed is a boundary this probe did not test, which is the whole point of the check.
 
 Superseded: ~~S3c ROUND 3 - FIX THE PROBE.~~ **The r2 critic FAILED r2**
 (`verdicts/wave-t/generate-mesh-s3c-critic.md`, `## ROUND 2`). **`paths.city` IS FIXED AND PASSES** -
@@ -709,7 +731,7 @@ from it.
 | `generate` | graph -> roads, kerbs, junctions, buildings | **SPLIT INTO THREE.** See below. Owns the `surfaceAt` swap |
 | ├ `generate-blocks` | `game/map/blocks.js`, graph faces -> building blocks | **DONE.** 3 rounds. `verdicts/wave-t/generate-blocks{,-critic,-critic-r2}.md` |
 | ├ `generate-mesh` | per-chunk emitters in `world.js` | **DESIGNED** (`tools/WAVE-T-GENERATE-MESH-PLAN.md`). **S0-S2 DONE** (S0+S1 critic-passed). **S3a DONE**: roads, junctions, kerbs and pavement. **S3b DONE**: the city - blocks, districts, buildings, signage, neon, props, cars, street furniture, `world.blocks` + `world.blockIndex`. **The 2-scene `#map=graph` boot failure is FIXED** (`generate-mesh-s3b-hotfix.md`); all 7 boot, grid unaffected. **S3c next** |
-| └ `generate-wire` | `surfaceAt` swap, `paths`, `bounds`, harness coords | **r2 CRITIC-FAILED** (`dfa3e98`). `paths.city` PASSES; both blocking findings are on the PROBE - false-red baseline (it confounds driver error with world error) and single-edge routes that cross no junction. **ROUND 3 = fix the probe, not the world.** r1 `d696581` was CRITIC-FAILED; r2 fixed both blocking findings and built `tools/_s3c-drive.mjs`, which **EXISTS, RUNS AND IS RED - 5 failures over 3 districts, poison controls green.** Likely `blocks.js` + `digitise` debt rather than S3c, but **the critic rules that, not the builder and not the orchestrator.** `verdicts/wave-t/generate-mesh-s3c.md` + `-critic.md`. **Do not start a third builder.** Two delegated grok-4.5 attempts died at the CLI with zero edits; it was built in the main agent. **CRITIC-FAILED at r1** (gpt, `verdicts/wave-t/generate-mesh-s3c-critic.md`): the drive probe was omitted and the physics cannot observe it, and `paths.city` runs 164.707 m on `service` edges 323/369 against decision 7. Constant table 16/16 matched. **ROUND 2 NEEDED** |
+| └ `generate-wire` | `surfaceAt` swap, `paths`, `bounds`, harness coords | **r3 LANDED (`b0c8f40`), AWAITING CRITIC.** r1 and r2 were CRITIC-FAILED; r3 split WORLD from DRIVER provenance and the driver poison now yields 0 WORLD / 9 DRIVER, baseline exit 0. Open: routes shortened to ~130 m, and the driver misses some authored boundaries. `paths.city` PASSES; both blocking findings are on the PROBE - false-red baseline (it confounds driver error with world error) and single-edge routes that cross no junction. **ROUND 3 = fix the probe, not the world.** r1 `d696581` was CRITIC-FAILED; r2 fixed both blocking findings and built `tools/_s3c-drive.mjs`, which **EXISTS, RUNS AND IS RED - 5 failures over 3 districts, poison controls green.** Likely `blocks.js` + `digitise` debt rather than S3c, but **the critic rules that, not the builder and not the orchestrator.** `verdicts/wave-t/generate-mesh-s3c.md` + `-critic.md`. **Do not start a third builder.** Two delegated grok-4.5 attempts died at the CLI with zero edits; it was built in the main agent. **CRITIC-FAILED at r1** (gpt, `verdicts/wave-t/generate-mesh-s3c-critic.md`): the drive probe was omitted and the physics cannot observe it, and `paths.city` runs 164.707 m on `service` edges 323/369 against decision 7. Constant table 16/16 matched. **ROUND 2 NEEDED** |
 | `stream` | chunk build/dispose around the hero | not started; needs `generate` |
 | `rewire` | `traffic.js`, parked ranks, signals, `physics.js` blocks, minimap, spawns | not started; needs `queries` |
 | `skyline` | far LOD / impostors | not started |
