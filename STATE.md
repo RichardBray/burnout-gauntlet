@@ -60,8 +60,34 @@ Opening a new wave block is the moment to do this, not later.
 
 ### WAVE T — LIVE. THE MAP. `TASKS.md` wave 4, task T3. Opened session 18, 2026-08-07.
 
-**EXACT NEXT ACTION: S3c ROUND 4 IS RUNNING** (gpt, `tools/BRIEF-S3C-R4.md`). If this says RUNNING
-and `verdicts/wave-t/generate-mesh-s3c.md` has no `## ROUND 4`, that round was killed - re-run it.
+**EXACT NEXT ACTION: A CRITIC ON S3c ROUND 4** (`a267ad3`). **THE BLOCKING FINDING IS FIXED AND THE
+FIX TIGHTENED THE RULER RATHER THAN LOOSENING IT.** A missed boundary is now a FATAL DRIVER finding,
+and `END_RADIUS` went **10 -> 2** (`tools/_s3c-drive.mjs:32`) so the follower must actually traverse
+the final boundary instead of stopping short. **`BOUNDARY_TOLERANCE` IS UNCHANGED AT 18**
+(`tools/_s3c-drive.mjs:33`) - the trap this file warned about was not taken.
+
+**ALL FIVE ROUTES NOW CROSS EVERY ENUMERATED BOUNDARY: downtown 2/2, harbor 2/2, palmbay 3/3,
+silverlake 2/2, mountain 2/2.** All four modes, run by the MAIN AGENT:
+
+| mode | exit | WORLD | DRIVER |
+|---|---|---|---|
+| baseline | **0** | **0** | 7, all non-fatal |
+| `--poison=wall` | 1 | 1 | 0 |
+| `--poison=sever` | 1 | 3 | 0 |
+| `--poison=driver` | 1 | **0** | 13, **2 of them FATAL** |
+
+The driver poison producing 2 FATAL driver findings and still ZERO world failures proves both
+properties at once: the fatal path works, and an excursion still cannot become a map accusation.
+
+**WHAT THE CRITIC MUST RULE ON: the baseline is green with 7 non-fatal DRIVER findings, and they are
+not nothing.** Palm Bay wanders **116.610 m** laterally with 607 off-tarmac samples; Silver Lake ends
+**29.10 m** short of its route end with 1129 off-tarmac samples, 28.482 m lateral, and 1977 steps
+against downtown's 320. Downtown by contrast is clean - 1.916 m end distance, 4.001 m lateral,
+0 off-tarmac. **The orchestrator's read is that this is the SAME `followPath` wander already named as
+its own debt, correctly attributed to DRIVER and correctly not S3c's to fix - but that is exactly the
+shape of judgement that has been wrong twice in this step, so the critic decides, not the
+orchestrator.** The specific question: can the baseline be called green while `reaches route end`
+fails on a route, given `END_RADIUS` is now 2?
 
 **THE r3 CRITIC PASSED EVERYTHING EXCEPT ONE THING, AND THAT ONE THING IS WORTH THE ROUND.** Verified
 good and NOT to be disturbed: the WORLD/DRIVER split is genuine IN THE CODE, not just in the output;
@@ -756,7 +782,7 @@ from it.
 | `generate` | graph -> roads, kerbs, junctions, buildings | **SPLIT INTO THREE.** See below. Owns the `surfaceAt` swap |
 | ├ `generate-blocks` | `game/map/blocks.js`, graph faces -> building blocks | **DONE.** 3 rounds. `verdicts/wave-t/generate-blocks{,-critic,-critic-r2}.md` |
 | ├ `generate-mesh` | per-chunk emitters in `world.js` | **DESIGNED** (`tools/WAVE-T-GENERATE-MESH-PLAN.md`). **S0-S2 DONE** (S0+S1 critic-passed). **S3a DONE**: roads, junctions, kerbs and pavement. **S3b DONE**: the city - blocks, districts, buildings, signage, neon, props, cars, street furniture, `world.blocks` + `world.blockIndex`. **The 2-scene `#map=graph` boot failure is FIXED** (`generate-mesh-s3b-hotfix.md`); all 7 boot, grid unaffected. **S3c next** |
-| └ `generate-wire` | `surfaceAt` swap, `paths`, `bounds`, harness coords | **r3 CRITIC-FAILED; r4 RUNNING.** r3's provenance split, unweakened WORLD assertions and five clean chains all PASSED; it failed only because the baseline exits green while the driver skips 3 enumerated boundaries. r4 makes that miss fatal and makes the drive happen. r1 and r2 were CRITIC-FAILED; r3 split WORLD from DRIVER provenance and the driver poison now yields 0 WORLD / 9 DRIVER, baseline exit 0. Open: routes shortened to ~130 m, and the driver misses some authored boundaries. `paths.city` PASSES; both blocking findings are on the PROBE - false-red baseline (it confounds driver error with world error) and single-edge routes that cross no junction. **ROUND 3 = fix the probe, not the world.** r1 `d696581` was CRITIC-FAILED; r2 fixed both blocking findings and built `tools/_s3c-drive.mjs`, which **EXISTS, RUNS AND IS RED - 5 failures over 3 districts, poison controls green.** Likely `blocks.js` + `digitise` debt rather than S3c, but **the critic rules that, not the builder and not the orchestrator.** `verdicts/wave-t/generate-mesh-s3c.md` + `-critic.md`. **Do not start a third builder.** Two delegated grok-4.5 attempts died at the CLI with zero edits; it was built in the main agent. **CRITIC-FAILED at r1** (gpt, `verdicts/wave-t/generate-mesh-s3c-critic.md`): the drive probe was omitted and the physics cannot observe it, and `paths.city` runs 164.707 m on `service` edges 323/369 against decision 7. Constant table 16/16 matched. **ROUND 2 NEEDED** |
+| └ `generate-wire` | `surfaceAt` swap, `paths`, `bounds`, harness coords | **r4 LANDED (`a267ad3`), AWAITING CRITIC.** All 5 routes now cross every enumerated boundary; boundary misses are fatal; `BOUNDARY_TOLERANCE` untouched. **r3 CRITIC-FAILED.** r3's provenance split, unweakened WORLD assertions and five clean chains all PASSED; it failed only because the baseline exits green while the driver skips 3 enumerated boundaries. r4 makes that miss fatal and makes the drive happen. r1 and r2 were CRITIC-FAILED; r3 split WORLD from DRIVER provenance and the driver poison now yields 0 WORLD / 9 DRIVER, baseline exit 0. Open: routes shortened to ~130 m, and the driver misses some authored boundaries. `paths.city` PASSES; both blocking findings are on the PROBE - false-red baseline (it confounds driver error with world error) and single-edge routes that cross no junction. **ROUND 3 = fix the probe, not the world.** r1 `d696581` was CRITIC-FAILED; r2 fixed both blocking findings and built `tools/_s3c-drive.mjs`, which **EXISTS, RUNS AND IS RED - 5 failures over 3 districts, poison controls green.** Likely `blocks.js` + `digitise` debt rather than S3c, but **the critic rules that, not the builder and not the orchestrator.** `verdicts/wave-t/generate-mesh-s3c.md` + `-critic.md`. **Do not start a third builder.** Two delegated grok-4.5 attempts died at the CLI with zero edits; it was built in the main agent. **CRITIC-FAILED at r1** (gpt, `verdicts/wave-t/generate-mesh-s3c-critic.md`): the drive probe was omitted and the physics cannot observe it, and `paths.city` runs 164.707 m on `service` edges 323/369 against decision 7. Constant table 16/16 matched. **ROUND 2 NEEDED** |
 | `stream` | chunk build/dispose around the hero | not started; needs `generate` |
 | `rewire` | `traffic.js`, parked ranks, signals, `physics.js` blocks, minimap, spawns | not started; needs `queries` |
 | `skyline` | far LOD / impostors | not started |
