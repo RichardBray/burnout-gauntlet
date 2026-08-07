@@ -307,3 +307,46 @@ untouched. No frame-time number or visual wave was opened.
 The probe still cannot see a missing road ribbon or a ribbon/junction render-mesh seam. Physics has
 no ground-contact signal against road triangles, and `game/physics.js:1973` forces
 `state.pos.y = 0`. This remains a real, explicitly uncovered gap; the probe makes no contrary claim.
+
+## ROUND 4
+
+Round 4 changes only the probe and this required verdict append. It preserves the five authored
+three-edge routes, their boundary enumeration, the WORLD/DRIVER provenance split, every WORLD
+assertion, and `BOUNDARY_TOLERANCE = 18` exactly.
+
+### Cause and fix
+
+The three Round-3 misses were all final route boundaries. Their distances before the route end are:
+Harbor **2.77 m**, Palm Bay **5.29 m**, and Mountain **6.64 m**. The old completion test used
+`END_RADIUS = 10`, so it declared each drive complete before the car reached its last plane.
+
+`tools/_s3c-drive.mjs` changes `const END_RADIUS = 10` **BEFORE** to
+`const END_RADIUS = 2` **AFTER**. This does not change a boundary, route, follower, tolerance, or
+car position. It makes the real physics drive continue far enough to cross each final plane.
+
+A missed boundary now calls `findDriver(..., true)`. It is therefore baseline-fatal while remaining
+a DRIVER finding with no code path into `worldFailures`. The explicit driver poison remains a fatal
+DRIVER finding and still does not mutate authored/world data.
+
+### Pure-Node trajectory check
+
+I reconstructed the probe's exact graph polylines, 200 m boundary enumeration, crossing predicate,
+and real `createPhysics().followPath(path, 20)` integration at 1/60 s with 15 m/s start speed. No
+position was written after `reset`, no boundary was removed or widened, and no route was shortened.
+
+| route | enumerated | physically crossed |
+|---|---:|---:|
+| Downtown | 2 | 2 |
+| Harbor | 2 | 2 |
+| Palm Bay | 3 | 3 |
+| Silver Lake | 2 | 2 |
+| Mountain | 2 | 2 |
+
+All five trajectories reached the route end under the new 2 m completion radius. Fresh static
+checks: `node --check tools/_s3c-drive.mjs`, `node --check game/map/graph.js`, and
+`node --check game/map/blocks.js` exit 0.
+
+**Probe written, not executed, blocked by listen EPERM.** I did not run or claim baseline,
+`--poison=wall`, `--poison=sever`, or `--poison=driver` browser results. The orchestrator must run
+all four modes against the WebGL-built world. No visual wave was opened and no frame-time number was
+taken or reported.

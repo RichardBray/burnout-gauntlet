@@ -29,7 +29,7 @@ const HERO_RADIUS = 1.0;
 const FIXED_DT = 1 / 60;
 const START_SPEED = 15;
 const LOOKAHEAD = 20;
-const END_RADIUS = 10;
+const END_RADIUS = 2;
 const BOUNDARY_TOLERANCE = 18;
 const STUCK_SPEED = 2;
 const STUCK_SECONDS = 2;
@@ -351,7 +351,7 @@ try {
         if (drivenBlocks.size) findDriver(route.district, 'driver trajectory clears world.blocks',
           `block indices ${[...drivenBlocks].join(',')}`);
         if (crossed.size !== boundaries.length) findDriver(route.district,
-          'driver crosses every authored 200 m boundary', `${crossed.size}/${boundaries.length}`);
+          'driver crosses every authored 200 m boundary', `${crossed.size}/${boundaries.length}`, true);
         if (maxLateralDeparture >= 25) findDriver(route.district, 'driver lateral excursion',
           `${maxLateralDeparture.toFixed(3)} m maximum`);
         if (driverPoisonApplied) findDriver(route.district, 'driver poison excursion',
