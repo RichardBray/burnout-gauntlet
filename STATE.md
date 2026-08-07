@@ -60,271 +60,71 @@ Opening a new wave block is the moment to do this, not later.
 
 ### WAVE T — LIVE. THE MAP. `TASKS.md` wave 4, task T3. Opened session 18, 2026-08-07.
 
-**EXACT NEXT ACTION: A CRITIC ON S3c ROUND 4** (`a267ad3`). **THE BLOCKING FINDING IS FIXED AND THE
-FIX TIGHTENED THE RULER RATHER THAN LOOSENING IT.** A missed boundary is now a FATAL DRIVER finding,
-and `END_RADIUS` went **10 -> 2** (`tools/_s3c-drive.mjs:32`) so the follower must actually traverse
-the final boundary instead of stopping short. **`BOUNDARY_TOLERANCE` IS UNCHANGED AT 18**
-(`tools/_s3c-drive.mjs:33`) - the trap this file warned about was not taken.
+**EXACT NEXT ACTION: S3d.** **S3c IS DONE AND CRITIC-PASSED at round 4** (`a267ad3`),
+`verdicts/wave-t/generate-mesh-s3c{,-critic}.md`. `paths`, `heroDist`, `surfaceAt` and `bounds` are
+off the grid and on the graph, and the wave finally has a drive probe.
 
-**ALL FIVE ROUTES NOW CROSS EVERY ENUMERATED BOUNDARY: downtown 2/2, harbor 2/2, palmbay 3/3,
-silverlake 2/2, mountain 2/2.** All four modes, run by the MAIN AGENT:
+**S3d - flip the default to `graph`; delete the grid branch, the LAYOUT-derived generators and
+`roundedRect`** (`tools/WAVE-T-GENERATE-MESH-PLAN.md:866-870`). **This is the step where the seven
+gate frames legitimately show a DIFFERENT CITY - state that plainly rather than claiming parity.**
+`hud-overlay` will show a 1.1 km minimap grid over a 4 km city until `rewire`; declare it. This is
+also where the `daytime-downtown` regression carried since S2 is settled, because the graph city
+replaces that content wholesale - **do not re-roll a salt to improve a grid frame S3d deletes.**
 
-| mode | exit | WORLD | DRIVER |
-|---|---|---|---|
-| baseline | **0** | **0** | 7, all non-fatal |
-| `--poison=wall` | 1 | 1 | 0 |
-| `--poison=sever` | 1 | 3 | 0 |
-| `--poison=driver` | 1 | **0** | 13, **2 of them FATAL** |
+**WHAT S3c LANDED, IN LITERALS:** `bounds` 1400 -> 2000 (`game/physics.js:701`, grid still gets 1400,
+graph derives 2000 from the document extent, `game/main.js:201` passes `world.bounds`);
+`PATH_STEP = 15.0` (`game/world.js:143`); `world.surfaceAt` published (`game/world.js:4360`) and
+injected at `game/main.js:201`; `heroDist`'s `if (GRAPH) return Infinity` replaced by a 900-sample
+scan. `paths.city` is face 124, edges `421,422,435,467,485,500,523,568,593,564,540,507,426`, all
+`arterial`/`street`, **zero service edges**, 998.889 m, largest gap 1.553 m, closure 0.000 m,
+900/900 tarmac. `paths.highway` is 11 edges of the largest motorway component, 1191.265 m, largest
+gap 1.811 m, 900/900 tarmac. 7/7 scenes spawn on tarmac and outside every hero-expanded block.
+Zero new materials.
 
-The driver poison producing 2 FATAL driver findings and still ZERO world failures proves both
-properties at once: the fatal path works, and an excursion still cannot become a map accusation.
+**THE DRIVE PROBE EXISTS: `tools/_s3c-drive.mjs`. RUN IT AS A GATE FROM NOW ON.** Baseline exit 0
+with 0 WORLD failures and every enumerated boundary driven (downtown 2/2, harbor 2/2, palmbay 3/3,
+silverlake 2/2, mountain 2/2); `--poison=wall` 1 WORLD; `--poison=sever` 3 WORLD;
+`--poison=driver` **0 WORLD** and 13 DRIVER of which 2 fatal.
 
-**WHAT THE CRITIC MUST RULE ON: the baseline is green with 7 non-fatal DRIVER findings, and they are
-not nothing.** Palm Bay wanders **116.610 m** laterally with 607 off-tarmac samples; Silver Lake ends
-**29.10 m** short of its route end with 1129 off-tarmac samples, 28.482 m lateral, and 1977 steps
-against downtown's 320. Downtown by contrast is clean - 1.916 m end distance, 4.001 m lateral,
-0 off-tarmac. **The orchestrator's read is that this is the SAME `followPath` wander already named as
-its own debt, correctly attributed to DRIVER and correctly not S3c's to fix - but that is exactly the
-shape of judgement that has been wrong twice in this step, so the critic decides, not the
-orchestrator.** The specific question: can the baseline be called green while `reaches route end`
-fails on a route, given `END_RADIUS` is now 2?
+**WHAT THE PROBE IS WORTH, AND DO NOT OVERSELL IT LATER: it is an authored-corridor,
+block-clearance, junction-route and driven chunk-boundary check. IT IS NOT EVIDENCE OF
+RIBBON/JUNCTION RENDER-MESH CONTINUITY OR GROUND CONTACT**, because `game/physics.js:1973` forces
+`state.pos.y = 0` and there is no ground-contact signal against road triangles. **A ribbon-seam
+check remains genuinely unbuilt and unowned. Give it a piece before the wave closes.**
 
-**THE r3 CRITIC PASSED EVERYTHING EXCEPT ONE THING, AND THAT ONE THING IS WORTH THE ROUND.** Verified
-good and NOT to be disturbed: the WORLD/DRIVER split is genuine IN THE CODE, not just in the output;
-the WORLD assertions were NOT weakened to buy the green baseline; all five chains independently pass
-connectivity, tarmac and block checks; `game/` untouched; the `pos.y = 0` limitation honestly
-disclaimed. **Route length ruled NON-BLOCKING** - about 130 m per district is a useful local seam
-check provided the car actually traverses its junctions and planes. Do not lengthen routes for their
-own sake.
+**THREE DEBTS THIS STEP NAMED AND DID NOT FIX. THEY ARE OWNED, NOT FORGOTTEN:**
 
-**THE BLOCKING FINDING: THE BASELINE EXITS GREEN WHILE THE CAR NEVER DRIVES THREE OF THE BOUNDARIES
-ITS OWN ROUTES ENUMERATE** - harbor 1/2, palmbay 2/3, mountain 1/2. The probe DETECTS the miss at
-`tools/_s3c-drive.mjs:353-354`, but at `:384-392` only `fatal` driver findings affect the exit code
-and boundary misses default to `fatal = false`. **A check cannot close the seam risk at a boundary it
-did not traverse.** Authored geometry crossing a plane is preflight, not a driven seam test.
+1. **`followPath` WANDER.** On a verified-good centreline the follower departs badly: Palm Bay
+   **116.610 m** lateral with 607 off-tarmac samples, Silver Lake **29.10 m** short of its end with
+   1129 off-tarmac samples and 1977 steps against Downtown's 320. Downtown is clean (1.916 m end,
+   4.001 m lateral, 0 off-tarmac), so this is the follower, not the map. Ruled a non-fatal
+   controller diagnostic. **Do not represent Silver Lake's route as fully finishable.**
+2. **`digitise` owns the graph-coverage gap** for the visible untraced street grids, notably in the
+   harbour.
+3. **`generate-blocks`/`blocks.js` owns splitting the 31 frontage AABBs up to 432 m** before they
+   become collision walls.
 
-Minimum to pass, and round 4 is scoped to exactly this: make a missed authored boundary
-BASELINE-FATAL (as a DRIVER failure, never a WORLD accusation, provenance split preserved), and make
-the baseline genuinely drive every enumerated boundary in all five districts. **The trap is getting
-to green by making the boundaries easier to hit** - deleting one from the enumeration, widening
-`BOUNDARY_TOLERANCE` (18) until a miss counts as a hit, shortening a route to dodge a plane, or
-teleporting the car. Any of those fails round 4 outright. **If a boundary genuinely cannot be driven,
-an honest red passes the round; a tolerated miss does not.**
+**FOUR ROUNDS OF PROCESS LESSONS, AND THEY ARE THE REUSABLE PART:**
 
-Superseded: ~~A CRITIC ON S3c ROUND 3~~ (`b0c8f40`). **THE CONFOUND IS FIXED AND THE PROOF IS
-CLEAN.** All four modes run by the MAIN AGENT (a delegate cannot bind a socket; the builder honestly
-declined to claim a run):
+- **OFF-TARMAC SAMPLES MEASURE `followPath` UNLESS THE PROBE FIRST PROVES THE AUTHORED CORRIDOR IS
+  BAD.** r2 reported 5 red failures and the orchestrator recorded them as `blocks.js`/`digitise`
+  debt. **That was wrong**: the authored centrelines were 100% on tarmac with zero block hits, and
+  the blocks the runtime named were **610-1654 m from their routes**. The probe had merged
+  authored-corridor and driven-trajectory hits into one set and lost the provenance. **Split
+  provenance before believing any driven metric.**
+- **A RED POISON CONTROL DOES NOT CURE A FALSE-RED BASELINE.** r2's poisons all fired correctly while
+  the baseline was measuring the wrong thing entirely.
+- **A CHECK CANNOT CLOSE A RISK AT A BOUNDARY IT DID NOT TRAVERSE.** r3 detected its own boundary
+  misses and created them `fatal = false`, so the baseline exited green while failing its central
+  coverage assertion. **Detecting a miss and tolerating it is not a check.**
+- **THE FIX FOR A MISSED TARGET IS TO TIGHTEN THE END CONDITION, NEVER TO WIDEN THE RULER.** r4 got
+  to green with `END_RADIUS` 10 -> 2 and left `BOUNDARY_TOLERANCE` at 18.
 
-| mode | exit | WORLD failures | DRIVER findings |
-|---|---|---|---|
-| baseline | **0** | **0** | 3, all non-fatal |
-| `--poison=wall` | 1 | **1** (`downtown \| world.blocks clears authored corridor`) | **0** |
-| `--poison=sever` | 1 | **3** (chain, centreline tarmac, corridor) | **0** |
-| `--poison=driver` | 1 | **0** | **9** (`reaches route end` 155.34 m away, 1876 off-tarmac samples, blocks 854/860) |
-
-**`--poison=driver` giving 0 WORLD and 9 DRIVER is the exact proof round 3 was asked for**: shoving
-the car off the route can no longer manufacture a statement about the map. World assertions were not
-loosened to get the green baseline - the wall and sever poisons still fire on them.
-
-Routes are now three-edge chains crossing **2 graph junctions** each: downtown `[602,904,903]`,
-harbor `[925,924,792]`, palmbay `[447,431,404]`, silverlake `[126,135,151]`, mountain
-`[806,813,832]`. Pure-data: all five connected, 173/173 samples on tarmac, zero expanded-block
-intersections.
-
-**TWO WEAKNESSES THE CRITIC MUST JUDGE, BOTH VISIBLE IN THE NUMBERS ABOVE:**
-
-1. **The routes got SHORTER, not longer: 125.7-137.7 m each, about 660 m total, against r2's
-   287.7-398.4 m and 1619.7 m.** Junction coverage was bought with length. Is ~130 m per district
-   enough route to be the wave's seam check?
-2. **The baseline's 3 driver findings are all `driver crosses every authored 200 m boundary` failing
-   - harbor 1/2, palmbay 2/3, mountain 1/2.** The car is NOT actually traversing all the boundaries
-   the routes enumerate. They are non-fatal by the builder's choice, but a boundary the driver never
-   crossed is a boundary this probe did not test, which is the whole point of the check.
-
-Superseded: ~~S3c ROUND 3 - FIX THE PROBE.~~ **The r2 critic FAILED r2**
-(`verdicts/wave-t/generate-mesh-s3c-critic.md`, `## ROUND 2`). **`paths.city` IS FIXED AND PASSES** -
-face 124, edges `421,422,435,467,485,500,523,568,593,564,540,507,426`, all `arterial`/`street`, zero
-service, 82 controls, 998.889 m, largest gap 1.553 m, closure 0.000 m, 900/900 tarmac, and
-`crash-cam` now spawns on street edge 435. Its drop from 1978.375 m and two districts to 998.889 m
-and Downtown only is judged **acceptable but weak coverage, NON-BLOCKING**. 7/7 spawns tarmac and
-outside every hero-expanded block. Zero new materials, `POOL = 24`, `NPC_DENSITY = 0.16`, bounds
-2000 graph / 1400 grid: all re-verified.
-
-**TWO BLOCKING FINDINGS, BOTH ON THE PROBE, NEITHER ON THE WORLD:**
-
-1. **The baseline confounds driver error with world error** and is FALSE-RED. See the ruling below.
-2. **The probe is not strong enough to be the wave's seam check.** All five routes are SINGLE EDGES
-   (`tools/_s3c-drive.mjs:34-38`), 287.697-398.397 m, two plane crossings each, so **not one of them
-   ever traverses a graph junction - the most likely seam site.** And the acknowledged `pos.y = 0`
-   limitation means it cannot see a missing ribbon or a render-mesh seam at all. It may be an honest
-   `world.blocks` probe; it is not the map brief's built-surface seam check.
-
-**THE DRIVE PROBE FOUND, ON ITS FIRST REAL RUN, EXACTLY WHAT THIS FILE PREDICTED IT WOULD FIND.**
-`tools/_s3c-drive.mjs`, run from the MAIN AGENT (a delegate cannot bind a socket):
-**baseline exit 1, 5 failures over 3 of 5 districts.** All five routes reach their end - nothing is
-stranded - but:
-
-| district | length | boundaries crossed | offTarmac samples | corridor block hits | steps |
-|---|---|---|---|---|---|
-| downtown | 302.0 m | 2/2 | 0 | 0 | 400 |
-| harbor | 287.7 m | 2/2 | **359 of 854** | **2** (blocks 512, 529) | 854 |
-| palmbay | 294.6 m | 2/2 | 0 | 0 | - |
-| silverlake | 398.4 m | 2/2 | **24** | 0 | - |
-| mountain | 337.0 m | 2/2 | **74** | **1** (block 134) | - |
-
-**Harbor took 854 steps to drive 287.7 m against downtown's 400 for 302.0 m, and spent 42% of them
-off tarmac.** That is the car wandering, and **it is the defect this file already recorded from the
-`generate-blocks` critic**: in the harbour the giant-face slabs "lie over streets that are VISIBLE IN
-THE REFERENCE AND ABSENT FROM THE GRAPH", a `digitise` coverage gap presenting as a collision wall,
-and **"both tarmac oracles are blind to that by construction, because both define tarmac as the
-graph."** The drive probe is the first instrument in this project that is NOT blind to it, because it
-asserts on built `world.blocks` rather than on the graph.
-
-**THAT ATTRIBUTION WAS WRONG AND THE CRITIC DISPROVED IT WITH NUMBERS. THE TABLE ABOVE IS A RECORD
-OF WHAT THE PROBE PRINTED, NOT OF A MAP DEFECT.** The orchestrator suspected `blocks.js`/`digitise`
-and deliberately sent the call to the critic rather than declaring it; the critic ruled **(c),
-probe/controller artefact**, and the evidence is decisive:
-
-- Independent pure-data reconstruction puts **all five authored centrelines 100% on tarmac with ZERO
-  expanded-`world.blocks` intersections** - downtown 76/76, harbor 75/75, palmbay 77/77, silverlake
-  104/104, mountain 87/87.
-- **The blocks the runtime named are nowhere near the routes.** Harbor edge 741 is at least
-  **610.541 m** from block 512 and **727.658 m** from block 529; mountain edge 339 is **1654.247 m**
-  from block 134. Those cannot be frontage walls on the authored corridor - **the follower drove
-  hundreds of metres away and then hit something.**
-- `tools/_s3c-drive.mjs:239-258` seeds `corridorBlocks` from the authored path and then adds every
-  block hit by the DRIVEN trajectory into the same set, **losing provenance**, so its output cannot
-  tell "the route is obstructed" from "the driver left the route". Harbor's 854 steps for 287.7 m is
-  evidence of the excursion, not of an obstruction.
-
-**THE LESSON, AND IT IS THE PLAY BRIEF'S OWN: OFF-TARMAC SAMPLES MEASURE `followPath` UNLESS THE
-PROBE FIRST PROVES THE AUTHORED CORRIDOR IS BAD.** The same rule was already accepted for
-`hud-overlay` ending 14.6 m off-path at 214 km/h and called controller corner-cutting. Here it is
-hundreds of metres and the same rule applies. **A red poison control does not cure a false-red
-baseline** - the probe's own header says baseline must exit 0.
-
-**A SEPARATE REAL DEFECT IS SITTING INSIDE THIS RESULT AND MUST NOT BE LOST: `followPath` WANDERS
-610-1654 m OFF A VERIFIED-GOOD CENTRELINE.** That is not a map bug and not S3c's, but it is not
-nothing, and nothing in the tree was measuring it. Give it a piece.
-
-The pre-existing map debts are still real and are now NAMED AND OWNED rather than inferred:
-**`digitise` owns the graph-coverage gap for the visible untraced street grids, and
-`generate-blocks`/`blocks.js` owns splitting the 31 frontage AABBs up to 432 m before they become
-collision walls.** Neither is evidenced by these five failures and neither turns this probe green.
-
-**THE POISON CONTROLS PASS AND THE PROBE IS NOT VACUOUS:** `--poison=wall` exits 1 with 8 failures,
-adding `downtown | reaches route end` and `downtown | crosses every 200 m boundary` - it detects a
-blocked route. `--poison=sever` exits 1 on `connected edge chain`.
-
-**A WEAKNESS THE CRITIC SHOULD JUDGE: every one of the five authored routes is a SINGLE EDGE**
-(`tools/_s3c-drive.mjs:33-39`), 287-398 m, 2 chunk boundaries each, 1619.7 m and 10 boundaries in
-total. The brief asked for a connected CHAIN per district. A one-edge chain is the weakest thing that
-satisfies the words, and it cannot cross a junction, which is where a seam is most likely.
-
-Superseded: ~~S3c ROUND 2 IS RUNNING.~~
-
-**THE ROUND-2 DRIVE-PROBE DESIGN IS DECIDED IN THE MAIN AGENT AND IS NOT THE BUILDER'S TO RE-OPEN.**
-Because the physics has no road-mesh contact signal, a ribbon-contact probe is NOT buildable in S3c
-and must not be faked. `tools/_s3c-drive.mjs` instead asserts on `world.blocks` - a genuinely BUILT
-artifact from `createBlocks`, and the thing that can strand a car TODAY, given 31 frontage strips are
-single AABBs up to 432 m - along ONE AUTHORED GRAPH ROUTE PER DISTRICT, crossing every 200 m
-boundary, non-zero exit on failure, no teleporting the car back onto the road, and a mandatory
-wall-injection poison control. **The ribbon-mesh contact gap is NOT closed by this and must be
-carried openly as a named debt, not quietly retired.**
-
-**THE MAIN AGENT VERIFIED WHAT THE DELEGATED CRITIC COULD NOT: BOTH MODES BOOT CLEAN.** `#map=grid`
-READY in 7.1 s, and under `#map=graph` `hud-overlay` 8.4 s and `wet-night-asphalt` 8.1 s, all three
-with `{"err":"","ready":true,"game":true}`. **A delegated agent CANNOT bind a socket here
-(`listen EPERM`) and so cannot run any Chromium tool; the main agent CAN.** Run every browser check
-in the main agent and never accept a delegate reporting one as passed.
-
-Superseded: ~~S3c ROUND 2.~~ **THE CRITIC FAILED S3c r1** -
-`verdicts/wave-t/generate-mesh-s3c-critic.md`. Two BLOCKING findings, and the first one is bigger
-than S3c:
-
-**1. THE DRIVE PROBE WAS OMITTED, AND THE PHYSICS CANNOT CURRENTLY OBSERVE THE THING IT IS MEANT TO
-ASSERT ON.** `game/physics.js:1973` forces `state.pos.y = 0`, `airborne` is documented dead state at
-`:718`, and the surface at `:1791-1793` comes from `surfaceAt`, i.e. GRAPH DATA. Physics collides
-with `world.blocks`, cars and the scalar bounds - **never with ribbon or junction triangles**. So a
-"never loses ground contact" assertion **stays green with the road geometry deleted or severed**.
-That is the map brief's third wave-ending failure in its purest form, and it means the probe as the
-brief words it is not buildable without a ground-contact signal against built geometry.
-`tools/_s3c-check.mjs` is NOT that probe: it picks starts from `world.blocks` rather than authored
-graph routes, drives arbitrary +X headings, teleports `pos.z` by up to 6 m to get back on tarmac,
-and **has no failing assertion or non-zero exit at all**.
-
-**2. `paths.city` USES FORBIDDEN ROAD CLASSES.** Decision 7 says arterial/street; the delivered
-circuit carries **164.707 m on `service` edges 323 and 369**, and `crash-cam` spawns on edge 323.
-The path is closed and continuous (largest sample gap 4.069 m, 900/900 on tarmac, endpoint closure
-0.000 m) - it is simply the wrong circuit. Boundary length covers only Palm Bay 857.278 m and
-Downtown 1132.171 m, not five districts.
-
-Non-blocking: `paths.highway` uses 11 of the largest motorway component's 12 edges, 1191.265 m,
-largest gap 1.811 m, declared and teleport-free. That is fine.
-
-**THE CRITIC'S CONSTANT TABLE CAME BACK 16/16 MATCHED** against the tree, each poison-controlled.
-The build is honest; the CHECKS were the gap.
-
-**WHAT THE CRITIC COULD NOT DO, AND IT MATTERS: IT COULD NOT RUN A BROWSER AT ALL.** `tools/shot.mjs`
-and `tools/_s3c-check.mjs` both fail before Chromium launch with `listen EPERM` on `0.0.0.0` and
-`127.0.0.1` in a delegated sandbox. So **the seven-scene grid pixel gate, both-mode boot, the
-render-side `heroDist` cull and the program count are ALL still unverified by anyone but the
-builder.** Verify those in the MAIN AGENT, which can bind a socket; do not hand them to a delegate
-and do not accept a delegate reporting them as passed.
-
-Superseded: ~~A CRITIC ON S3c, THEN S3d.~~ S3c is BUILT and self-verified (`d696581`,
-`verdicts/wave-t/generate-mesh-s3c.md`): `paths.city` is the largest-area downtown planar face
-(face 90, 1978 m), `paths.highway` the longest motorway chain (11 edges, 1190.5 m), `heroDist` is a
-900-sample scan, `world.surfaceAt` is published and injected by `main.js`, and `physics.js` `bounds`
-is 1400 -> 2000. 7/7 scenes spawn on tarmac, both paths 900/900 on tarmac, grid inside its noise
-floor. It has NOT been through a critic.
-
-**THE CRITIC IS RUNNING AND IT WAS POINTED AT ONE THING FIRST: S3c NEVER RAN THE DRIVE PROBE.** Its
-brief required one (`tools/BRIEF-S3C.md` §3.4) and the verdict defers it - "full drive probe across
-chunk boundaries belongs to `stream`/`rewire`". That may be legitimate, but it is the map brief's
-THIRD wave-ending failure mode: the validator and both path checks assert on the graph DATA, and
-**900 samples all on tarmac proves the graph is fine and proves nothing about what was BUILT.** The
-critic is asked to judge the deferral on its merits and to run the probe if it can. Whatever it
-answers, the probe is owed before this wave closes - if the critic rules the deferral legitimate,
-the debt moves to `stream`, it does not disappear.
-
-**AND READ THIS BEFORE STARTING ANYTHING: TWO ORCHESTRATORS WERE RUNNING ON THIS REPO AT ONCE
-DURING SESSION 20 AND IT NEARLY COST THE PIECE.** `tools/_t4-surface.mjs` changed on disk WHILE IT
-WAS BEING RUN, and `tools/BRIEF-S3C.md`, `tools/BRIEF-S3C-CRITIC.md` and `tools/_s3c-check.mjs`
-appeared from a second agent; an `opencode` process was still live. `game/world.js` was saved and
-md5-verified before committing, so the landed build is clean - but that was luck, and two writers on
-`world.js` would have silently destroyed one side. **Those four foreign files are UNCOMMITTED and
-UNVERIFIED in the working tree. Check `ps` for a live `opencode`/`grok`/`codex` before you write to
-`game/`.**
-
-The two-scene boot failure is **FIXED** —
-`verdicts/wave-t/generate-mesh-s3b-hotfix.md`. **It was never a hang.** Shot mode's tick loop at
-`main.js:896` runs BEFORE `window.__ready` and is not wrapped, so one throw inside it leaves a live,
-console-clean page that never signals. The throw was
-`resolve: no finalized instance for pool tlPole index undefined`: `streetLight`, `trafficLight` AND
-`parkedCar` recorded `[handle, handle.count]` for `hide()` instead of the `[descriptor, index]` that
-`push()` returns, and a pool handle is a `THREE.Group` with no `.count`. **That is why all six
-kill-controls "worked" — every one of them moved the hero and so changed whether it drove into a
-pole in the first four simulated seconds.** All seven scenes now boot under `#map=graph`
-(`hud-overlay` and `wet-night-asphalt` in 9.5 s each), grid is inside its own same-tree noise floor
-on all seven, and `tools/_polefall-probe.mjs` asserts the hide on the SUBMITTED INSTANCE MATRICES
-with a poison control that fires on the pre-fix tree. Now
-**S3c - `paths`, `heroDist`, `surfaceAt` and `bounds` under `#map=graph`**,
-`tools/WAVE-T-GENERATE-MESH-PLAN.md:861-865`, decisions 7 and 8.
-
-**SESSION 20 WROTE THE TWO S3c BRIEFS AND THEY ARE REUSABLE IF THIS ROUND IS ALSO KILLED:
-`tools/BRIEF-S3C.md` (builder) and `tools/BRIEF-S3C-CRITIC.md` (critic).** Session 19's builder was
-killed before it wrote anything - no verdict, no commit. The builder brief carries the four
-consumers, the `GRAPH`-flag gating rule, the checks, and the S3b fact that the 52 `motorway` edges
-are TWENTY connected components so `paths.highway` must walk ONE chain. The critic brief carries the
-poison-control requirement on the drive probe and the "already known, not a finding" list.
-
-**S3b IS OTHERWISE DONE** -
-`verdicts/wave-t/generate-mesh-s3b.md`. Two things S3b left for S3c specifically: `heroDist`
-(`game/world.js:3339`) RETURNS `Infinity` UNDER `#map=graph`, so the parked population is not culled
-away from the hero's driving line - it cannot be, because `paths.city` is still the grid's
-`roundedRect` and culling against a ring road the graph does not have would carve a hole 277 m from
-the origin for no reason. And the seven scenes still spawn on grid coordinates under `#map=graph`.
+**AND ONE ABOUT THE MACHINE, WHICH COST REAL TIME: A DELEGATED AGENT CANNOT BIND A SOCKET HERE**
+(`listen EPERM` on `0.0.0.0` and `127.0.0.1`), so it cannot run ANY Chromium tool - no probe, no
+shot, no boot. **The main agent can.** Every browser result in S3c is the orchestrator's. Brief
+delegates to write browser checks and say "written, not executed"; never accept a delegate reporting
+one as passed. All four S3c builders did this correctly when told to.
 
 Superseded next-actions, kept only so the reasoning is not lost:
 
@@ -781,8 +581,8 @@ from it.
 | `queries` | graph spatial index, `surfaceAt` off `LAYOUT` | **DONE.** `verdicts/wave-t/queries.md` |
 | `generate` | graph -> roads, kerbs, junctions, buildings | **SPLIT INTO THREE.** See below. Owns the `surfaceAt` swap |
 | ├ `generate-blocks` | `game/map/blocks.js`, graph faces -> building blocks | **DONE.** 3 rounds. `verdicts/wave-t/generate-blocks{,-critic,-critic-r2}.md` |
-| ├ `generate-mesh` | per-chunk emitters in `world.js` | **DESIGNED** (`tools/WAVE-T-GENERATE-MESH-PLAN.md`). **S0-S2 DONE** (S0+S1 critic-passed). **S3a DONE**: roads, junctions, kerbs and pavement. **S3b DONE**: the city - blocks, districts, buildings, signage, neon, props, cars, street furniture, `world.blocks` + `world.blockIndex`. **The 2-scene `#map=graph` boot failure is FIXED** (`generate-mesh-s3b-hotfix.md`); all 7 boot, grid unaffected. **S3c next** |
-| └ `generate-wire` | `surfaceAt` swap, `paths`, `bounds`, harness coords | **r4 LANDED (`a267ad3`), AWAITING CRITIC.** All 5 routes now cross every enumerated boundary; boundary misses are fatal; `BOUNDARY_TOLERANCE` untouched. **r3 CRITIC-FAILED.** r3's provenance split, unweakened WORLD assertions and five clean chains all PASSED; it failed only because the baseline exits green while the driver skips 3 enumerated boundaries. r4 makes that miss fatal and makes the drive happen. r1 and r2 were CRITIC-FAILED; r3 split WORLD from DRIVER provenance and the driver poison now yields 0 WORLD / 9 DRIVER, baseline exit 0. Open: routes shortened to ~130 m, and the driver misses some authored boundaries. `paths.city` PASSES; both blocking findings are on the PROBE - false-red baseline (it confounds driver error with world error) and single-edge routes that cross no junction. **ROUND 3 = fix the probe, not the world.** r1 `d696581` was CRITIC-FAILED; r2 fixed both blocking findings and built `tools/_s3c-drive.mjs`, which **EXISTS, RUNS AND IS RED - 5 failures over 3 districts, poison controls green.** Likely `blocks.js` + `digitise` debt rather than S3c, but **the critic rules that, not the builder and not the orchestrator.** `verdicts/wave-t/generate-mesh-s3c.md` + `-critic.md`. **Do not start a third builder.** Two delegated grok-4.5 attempts died at the CLI with zero edits; it was built in the main agent. **CRITIC-FAILED at r1** (gpt, `verdicts/wave-t/generate-mesh-s3c-critic.md`): the drive probe was omitted and the physics cannot observe it, and `paths.city` runs 164.707 m on `service` edges 323/369 against decision 7. Constant table 16/16 matched. **ROUND 2 NEEDED** |
+| ├ `generate-mesh` | per-chunk emitters in `world.js` | **DESIGNED** (`tools/WAVE-T-GENERATE-MESH-PLAN.md`). **S0-S2 DONE** (S0+S1 critic-passed). **S3a DONE**: roads, junctions, kerbs and pavement. **S3b DONE**: the city - blocks, districts, buildings, signage, neon, props, cars, street furniture, `world.blocks` + `world.blockIndex`. **The 2-scene `#map=graph` boot failure is FIXED** (`generate-mesh-s3b-hotfix.md`); all 7 boot, grid unaffected. **S3c DONE and critic-passed at r4** (`a267ad3`): `paths`, `heroDist`, `surfaceAt`, `bounds` all off the grid, plus `tools/_s3c-drive.mjs`, the wave's drive probe. **S3d next - flip the default to graph and delete the grid branch** |
+| └ `generate-wire` | `surfaceAt` swap, `paths`, `bounds`, harness coords | **DONE, CRITIC-PASSED at r4** (`a267ad3`). Four rounds. Owns `tools/_s3c-drive.mjs`, the wave's drive probe - run it as a gate. r1-r3 were critic-failed; see the lessons block above. r3's provenance split, unweakened WORLD assertions and five clean chains all PASSED; it failed only because the baseline exits green while the driver skips 3 enumerated boundaries. r4 makes that miss fatal and makes the drive happen. r1 and r2 were CRITIC-FAILED; r3 split WORLD from DRIVER provenance and the driver poison now yields 0 WORLD / 9 DRIVER, baseline exit 0. Open: routes shortened to ~130 m, and the driver misses some authored boundaries. `paths.city` PASSES; both blocking findings are on the PROBE - false-red baseline (it confounds driver error with world error) and single-edge routes that cross no junction. **ROUND 3 = fix the probe, not the world.** r1 `d696581` was CRITIC-FAILED; r2 fixed both blocking findings and built `tools/_s3c-drive.mjs`, which **EXISTS, RUNS AND IS RED - 5 failures over 3 districts, poison controls green.** Likely `blocks.js` + `digitise` debt rather than S3c, but **the critic rules that, not the builder and not the orchestrator.** `verdicts/wave-t/generate-mesh-s3c.md` + `-critic.md`. **Do not start a third builder.** Two delegated grok-4.5 attempts died at the CLI with zero edits; it was built in the main agent. **CRITIC-FAILED at r1** (gpt, `verdicts/wave-t/generate-mesh-s3c-critic.md`): the drive probe was omitted and the physics cannot observe it, and `paths.city` runs 164.707 m on `service` edges 323/369 against decision 7. Constant table 16/16 matched. **ROUND 2 NEEDED** |
 | `stream` | chunk build/dispose around the hero | not started; needs `generate` |
 | `rewire` | `traffic.js`, parked ranks, signals, `physics.js` blocks, minimap, spawns | not started; needs `queries` |
 | `skyline` | far LOD / impostors | not started |
