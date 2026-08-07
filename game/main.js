@@ -15,7 +15,7 @@ import { makeRng, clamp, lerp } from './util.js';
 import { createSsaoPass, createBloomPass, createOutputPass } from './post.js';
 import { createSky } from './sky.js';
 import { createRoadKit } from './road.js';
-import { createWorld, surfaceAt } from './world.js';
+import { createWorld } from './world.js';
 import { createCar } from './car.js';
 import { createPhysics } from './physics.js';
 import { createCamRig } from './camera.js';
@@ -180,17 +180,14 @@ export async function boot() {
   // Measured in verdicts/wave-s/perf-r2.md section 3.
   roadKit.setMainCamera(camera);
   await stage('world', 'building the city');
-  // WAVE T, S3d: THE DEFAULT IS NOW THE GRAPH. The city is built from game/map/paradise.json,
-  // 4000 x 2861 m of digitised Paradise City, and LAYOUT's 1.1 km grid is reachable only by an
-  // explicit `#map=grid`. The seven gate scenes therefore render a DIFFERENT CITY from this commit
-  // on; that is the point of the wave, not a regression. `#map=grid` survives S3d purely so the
-  // deletion step that follows can be proved pixel-identical against it, and S5 deletes it.
+  // WAVE T, S3d: THE MAP IS THE GRAPH, AND IT IS THE ONLY MAP. The city is built from
+  // game/map/paradise.json, 4000 x 2861 m of digitised Paradise City. LAYOUT's 1.1 km grid and
+  // every generator that read it are deleted from world.js, so `#map=grid` is gone as well: it
+  // survived exactly as long as it took to prove the deletion pixel-identical against the flip,
+  // and keeping the URL after that would only hand out a page that throws.
   // The document is fetched here rather than inside createWorld because createWorld is synchronous
   // and every consumer of `world` depends on it having finished.
-  let mapDoc = null;
-  if (!/(?:^|[#&])map=grid(?:&|$)/.test(location.hash || '')) {
-    mapDoc = await (await fetch('./map/paradise.json')).json();
-  }
+  const mapDoc = await (await fetch('./map/paradise.json')).json();
   const world = createWorld(scene, { rng: makeRng(0xC17E), roadKit, mapDoc });
 
   await stage('car', 'assembling the car');
@@ -238,10 +235,12 @@ export async function boot() {
   // A wreck-grade hit surfaces through the existing drainWreck() path below.
   physics.setTrafficBodies(() => traffic.vehicles);
   // T4. The surface class is arithmetic rather than a raycast; physics.js takes it injected so it
-  // stays ignorant of the world layout. S3c: `world.surfaceAt` is the query for the world that was
-  // actually built - the LAYOUT grid's under `#map=grid`, `graph.js`'s under `#map=graph`. The
-  // module-level import stays as the fallback for any world that does not publish one.
-  physics.setSurfaceQuery(world.surfaceAt || surfaceAt);
+  // stays ignorant of the world layout. S3d: there is one query left - `game/map/graph.js`'s,
+  // indexed over the road graph - and `createWorld` publishes it as `world.surfaceAt`. The
+  // module-level grid fallback is deleted along with the grid it answered about, so this is now an
+  // unconditional read: a world that fails to publish a query should throw here rather than
+  // silently fall back to a different city's road network.
+  physics.setSurfaceQuery(world.surfaceAt);
   physics.setParkedBodies(world.parkedCars);
   // Cosmetic side of the same join: sparks + grit at the contact point of a survivable
   // traffic hit. Wreck-grade contacts get the full cinematic through drainWreck() instead,

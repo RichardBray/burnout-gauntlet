@@ -27,57 +27,24 @@ export const LAYOUT = {
 };
 
 // ---- surface classification (T4) -------------------------------------------------------------
-// Which surface the car is standing on, answered from LAYOUT rather than from a raycast. The road
-// network IS the grid, so this is a couple of comparisons against the nearest grid line and one
-// against the interstate ribbon: no geometry query, no per-frame allocation, no dependence on
-// anything world.js built. physics.js takes it as an injected function so it never imports us.
+// S3d: THE GRID `surfaceAt` IS DELETED. It answered from LAYOUT's twelve numbers - two comparisons
+// against the nearest grid line and one against the interstate ribbon - and there is no grid left
+// for it to answer about. The query is now `game/map/graph.js`'s, indexed over the road graph's
+// 2373 segments, identical semantics and the same two return keys, verified against brute force on
+// 10000 probes and measured at 189 ns.
 //
-// PAVED means "the player is not being punished here". That is deliberately WIDER than the painted
-// road: the ribbon is +-roadW/2, the paved shoulder runs to 11.6 m and the kerb face stands at
-// 13 m (see the parked-rank block below), and the acceptance criterion is that clipping a kerb or
-// cutting a junction is still tarmac. So the whole paved corridor out to the kerb face counts, and
-// a junction is covered for free because it is the intersection of two corridors.
-const PAVED_HALF = 13.0;              // m from a road centreline to the kerb face
-const HIGHWAY_HALF = LAYOUT.highwayW / 2 + 2.2;   // to the guardrail line at world.js:2804
-
-/**
- * @returns {'tarmac'|'dirt'} the surface class at a world position.
- *
- * ONLY TWO CLASSES EXIST TODAY, and that is a property of the world, not a shortcut. The ground is
- * a single flat plane (`groundMat`, one colour, one roughness) — there is no grass, no sand and no
- * soil anywhere in the tree to classify. Adding 'grass'/'sand' rows to the table in physics.js
- * before that terrain exists would be configuration nothing can ever return. When T3's map brings
- * real terrain, this function grows the classes and SURFACES grows the matching rows; nothing
- * else has to change, because every caller already switches on the returned key.
- */
-// ---- THE SWAP POINT FOR T3'S MAP. THE SWAP HAS HAPPENED, AT S3c. -----------------------------
-// This function is the GRID world's answer and it stays exactly as it was, because `#map=grid` is
-// still the default and the visual regression gate. The GRAPH world's answer is `graph.js`'s own
-// `surfaceAt`, which has identical semantics and the same two return keys, verified against brute
-// force on 10000 probes and measured at 189 ns/query.
+// SELECTION IS STILL BY PUBLICATION, NOT BY A BRANCH. `createWorld` publishes the query belonging
+// to the world it just built as `world.surfaceAt` and `main.js` injects THAT into physics, which
+// switches on the returned key and needed no edit at any point in this wave.
 //
-// SELECTION IS BY PUBLICATION, NOT BY A BRANCH IN HERE. `createWorld` publishes whichever one
-// belongs to the world it just built as `world.surfaceAt`, and `main.js` injects THAT into
-// physics. This function cannot make the choice itself: it is module scope and has no idea which
-// world was built, and giving it a module-level mutable flag would make the answer depend on
-// construction order. `physics.js` needed no edit either way - it already switches on the key.
+// PAVED means "the player is not being punished here", and it is deliberately WIDER than the
+// painted road: the acceptance criterion is that clipping a kerb or cutting a junction is still
+// tarmac, so the whole paved corridor out to the kerb face counts and a junction is covered for
+// free as the intersection of two corridors. `game/map/graph.js` carries that rule now.
 //
-// The swap could not be made before S3c, and the reason is worth keeping: the graph describes a
-// DIFFERENT city in different coordinates, so pointing the query at it before the graph was the
-// thing on screen would have answered 'dirt' almost everywhere the player actually was, and T4's
-// off-road penalty would have fired on every road in the game.
-export function surfaceAt(x, z) {
-  if (Math.abs(z - LAYOUT.highwayZ) <= HIGHWAY_HALF) return 'tarmac';
-  const EX = LAYOUT.extent;
-  // A grid road along Z is drivable only within the network's extent, and vice versa.
-  if (Math.abs(z) <= EX) {
-    for (const g of LAYOUT.grid) if (Math.abs(x - g) <= PAVED_HALF) return 'tarmac';
-  }
-  if (Math.abs(x) <= EX) {
-    for (const g of LAYOUT.grid) if (Math.abs(z - g) <= PAVED_HALF) return 'tarmac';
-  }
-  return 'dirt';
-}
+// ONLY TWO CLASSES EXIST, and that is a property of the world rather than a shortcut: the ground
+// is a single flat plane with no grass, sand or soil anywhere in the tree to classify. When real
+// terrain arrives the query grows the classes and physics.js's SURFACES grows the matching rows.
 
 // ---------------------------------------------------------------------------
 // paths
@@ -4180,7 +4147,7 @@ export function createWorld(scene, { roadKit, mapDoc = null }) {
     group, LAYOUT, paths, blocks, buildings, neons, lampPositions, lamps,
     // S3c, decision 7's neighbour: the surface query for the world that was ACTUALLY built.
     // `main.js` injects this into physics rather than the module-level grid function.
-    surfaceAt: GRAPH ? graphIdx.surfaceAt : surfaceAt,
+    surfaceAt: graphIdx.surfaceAt,
     // S3c decision 8 (taken early so the drive probe can reach the graph): half-extent clamp.
     bounds,
     // Published for `rewire` (risk 5). `physics.js:922` scans `world.blocks` linearly per collide
