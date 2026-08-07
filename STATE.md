@@ -60,12 +60,21 @@ Opening a new wave block is the moment to do this, not later.
 
 ### WAVE T — LIVE. THE MAP. `TASKS.md` wave 4, task T3. Opened session 18, 2026-08-07.
 
-**EXACT NEXT ACTION: the `generate` piece — build roads, kerbs, junctions and buildings FROM the
+**EXACT NEXT ACTION: finish S3a - write the KERB AND PAVEMENT extrusion from `blocks.js`'s FACE
+polygons, under `#map=graph`.** `game/map/blocks.js` is done and committed and gives you
+`createBlocks(doc)` -> 868 blocks, the face polygons and `buildBlockIndex`. Nothing of the kerb or
+pavement side is implemented - not half-done, untouched. The rule is risk 12 of
+`tools/WAVE-T-GENERATE-MESH-PLAN.md`: **the AABB is inscribed, buildings sit on the AABB, and the
+drawn kerb and pavement follow the FACE polygon and are always OUTSIDE the AABB.** Then S3b.
+
+Superseded next-action from session 18, kept only so the reasoning is not lost:
+
+**~~the `generate` piece — build roads, kerbs, junctions and buildings FROM the
 graph, and in the same commit flip `world.js`'s `surfaceAt` onto `game/map/graph.js`.** The
 graph-backed `surfaceAt` is written, verified and fast; it is deliberately not wired, because the
 world on screen is still the `LAYOUT` grid and the graph is a different city — pointing it at the
 graph before `generate` would answer 'dirt' everywhere the player is and fire T4's off-road penalty
-on every road. `world.js` carries a comment at the swap point saying so.
+on every road. `world.js` carries a comment at the swap point saying so.~~ DONE - that is now S3c.
 
 **`generate` WAS SPLIT IN SESSION 19 AND THE SPLIT IS BINDING: `tools/WAVE-T-GENERATE-PLAN.md`.**
 Read it with the two briefs. It carries the eight design decisions that are already made - per-chunk
@@ -319,6 +328,50 @@ moment cells stream - noted in code for S4; and true per-cell build/dispose/rebu
 until `buildChunk`/`disposeChunk` exist, so what S2 proves is the property they will depend on, not
 the plumbing.
 
+**`generate-mesh` S3a IS PARTIAL** (`3081710`), `verdicts/wave-t/generate-mesh-s3a.md`. Roads and
+junctions are in under `#map=graph`; **kerbs and pavement are NOT WRITTEN**, two of four deliverables
+untouched. `#map=grid` is still the default and all seven scenes are within the noise floor.
+Programs: grid 131, graph 99, zero new materials. The 2 mm z-fight hack is GONE - every ground road
+sits at one `y = 0.03`, exactly as section 4 predicted once ribbons retract and the junction polygon
+owns the gap.
+
+**BOUNDARY BIT-IDENTITY HOLDS, AND THE FIRST VERSION OF THE CHECK WAS VACUOUS.** Within one plan the
+two cells either side of a boundary hold the SAME VERTEX OBJECT, so comparing them proves sharing,
+not agreement. The harness now builds the whole plan TWICE as two separate computations with
+separate object graphs and compares run 1's upstream vertex against run 2's downstream one:
+**301 crossings over the 261 straddling edges, 1505 values, 0 differing, 0 pairs that are the same
+object, 1 ULP poison control caught.** Arclength is carried through a new `v0` argument to
+`ribbonInto` - **without it the vertices match and the join is STILL visible as a texture seam**,
+which the bit-identity check alone would never have caught.
+
+**THE PICTURE FOUND A BUG EVERY NUMBER PASSED, for the fourth time in this wave.** The first
+degree-9 junction render had its mouths torn open while the harness reported 330 polygons all with
+real area. A corner pair is `t +/- n*h` and `n` is the left normal of the edge's own `a->b`
+direction, so an arm TERMINATING at the node contributes its corners in the opposite rotational
+order and the ring zigzagged. The first fix - sort all corners by angle - fixed that node and broke
+others by destroying each arm's corner adjacency. **The correct fix keeps arms sorted by bearing and
+flips only the SIGN of `n` against the outward direction, so corners stay exactly the ribbon's
+terminal vertices.**
+
+Settled by reading rather than guessing: **section 3 option (a) is WRONG for this texture.**
+`road.js:351` draws a centre pair, so a horizontal repeat puts a double yellow line down the middle
+of every lane. Option (b) shipped - marked carriageway at the class spec width, remainder as
+`shoulderMat`.
+
+**Two junction artefacts, honestly reported, both the specified formula behaving as specified, and
+both a judgement for the picture rather than a bug:** a 78 m plaza at node 319 and 15 smaller
+siblings straight out of `SIN_FLOOR = 0.20`; and downtown retreats of 25-40 m putting adjacent
+junction polygons nearly in contact, so it reads as broad merged paving rather than distinct
+intersections. Degree-9 is right; downtown is coarse.
+
+**A PROCESS FAILURE WORTH MORE THAN THE CODE, AND IT IS THE PLAY BRIEF'S OWN RULE.** A
+pattern-matching script wrapped seven grid-only loops and matched the WRONG occurrences, including
+code inside `makeFrondTex` where `GRAPH` is not in scope. **`tools/lint.sh` said `lint ok` and the
+page then hung at boot with NO console error**, costing a full revert of `world.js`. The rule
+"`lint ok` DOES NOT MEAN RUNNABLE - always boot the page" was known, quoted, and not followed. Gates
+are now anchored on unique comments, each verified by printing the line it guards. **Never bulk-edit
+`world.js` by pattern match. Boot the page before handing the tree to the next step.**
+
 Read the chunk contract in the brief BEFORE writing the generator, not after. The rule that decides
 whether this task ships at 3.5 s or 14 s is that **nothing outside the hero's resident chunk set
 may be BUILT during boot** — and it must be asserted on what EXISTS at `__ready`, never inferred
@@ -335,7 +388,7 @@ from it.
 | `queries` | graph spatial index, `surfaceAt` off `LAYOUT` | **DONE.** `verdicts/wave-t/queries.md` |
 | `generate` | graph -> roads, kerbs, junctions, buildings | **SPLIT INTO THREE.** See below. Owns the `surfaceAt` swap |
 | ├ `generate-blocks` | `game/map/blocks.js`, graph faces -> building blocks | **DONE.** 3 rounds. `verdicts/wave-t/generate-blocks{,-critic,-critic-r2}.md` |
-| ├ `generate-mesh` | per-chunk emitters in `world.js` | **DESIGNED** (`tools/WAVE-T-GENERATE-MESH-PLAN.md`). **S0-S2 DONE**, S0+S1 critic-passed. **S3a is NEXT** |
+| ├ `generate-mesh` | per-chunk emitters in `world.js` | **DESIGNED** (`tools/WAVE-T-GENERATE-MESH-PLAN.md`). **S0-S2 DONE** (S0+S1 critic-passed). **S3a PARTIAL: roads+junctions in, KERBS AND PAVEMENT NOT WRITTEN** |
 | └ `generate-wire` | `surfaceAt` swap, `paths`, `bounds`, harness coords | not started; lands with `generate-mesh` |
 | `stream` | chunk build/dispose around the hero | not started; needs `generate` |
 | `rewire` | `traffic.js`, parked ranks, signals, `physics.js` blocks, minimap, spawns | not started; needs `queries` |
