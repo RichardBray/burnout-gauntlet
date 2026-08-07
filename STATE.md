@@ -60,9 +60,48 @@ Opening a new wave block is the moment to do this, not later.
 
 ### WAVE T — LIVE. THE MAP. `TASKS.md` wave 4, task T3. Opened session 18, 2026-08-07.
 
-**EXACT NEXT ACTION: S3c ROUND 2 IS RUNNING** (gpt, `tools/BRIEF-S3C-R2.md`). If this line says
-RUNNING and `verdicts/wave-t/generate-mesh-s3c.md` has no `## ROUND 2` section, that round was
-killed - re-run it from the same brief.
+**EXACT NEXT ACTION: A CRITIC ON S3c ROUND 2** (`dfa3e98`). Round 2 landed both fixes and the drive
+probe now EXISTS, RUNS, and IS RED. Do not "fix" the red by weakening the probe.
+
+**THE DRIVE PROBE FOUND, ON ITS FIRST REAL RUN, EXACTLY WHAT THIS FILE PREDICTED IT WOULD FIND.**
+`tools/_s3c-drive.mjs`, run from the MAIN AGENT (a delegate cannot bind a socket):
+**baseline exit 1, 5 failures over 3 of 5 districts.** All five routes reach their end - nothing is
+stranded - but:
+
+| district | length | boundaries crossed | offTarmac samples | corridor block hits | steps |
+|---|---|---|---|---|---|
+| downtown | 302.0 m | 2/2 | 0 | 0 | 400 |
+| harbor | 287.7 m | 2/2 | **359 of 854** | **2** (blocks 512, 529) | 854 |
+| palmbay | 294.6 m | 2/2 | 0 | 0 | - |
+| silverlake | 398.4 m | 2/2 | **24** | 0 | - |
+| mountain | 337.0 m | 2/2 | **74** | **1** (block 134) | - |
+
+**Harbor took 854 steps to drive 287.7 m against downtown's 400 for 302.0 m, and spent 42% of them
+off tarmac.** That is the car wandering, and **it is the defect this file already recorded from the
+`generate-blocks` critic**: in the harbour the giant-face slabs "lie over streets that are VISIBLE IN
+THE REFERENCE AND ABSENT FROM THE GRAPH", a `digitise` coverage gap presenting as a collision wall,
+and **"both tarmac oracles are blind to that by construction, because both define tarmac as the
+graph."** The drive probe is the first instrument in this project that is NOT blind to it, because it
+asserts on built `world.blocks` rather than on the graph.
+
+**SO THE PROBE BEING RED IS THE PROBE WORKING.** The likely correct attribution is that these five
+failures belong to `blocks.js` / `digitise`, not to S3c - which is exactly what this file already
+says: "if the probe dislikes them the fix belongs in `blocks.js`". **But that attribution is NOT the
+builder's to make and it is not the orchestrator's either** - declaring your own check's failures
+out of scope is how this project has repeatedly shipped a green metric over a broken thing. **The
+critic rules on it.** If the critic agrees, the red becomes a named, owned debt with a piece against
+it; it does not become a passing probe.
+
+**THE POISON CONTROLS PASS AND THE PROBE IS NOT VACUOUS:** `--poison=wall` exits 1 with 8 failures,
+adding `downtown | reaches route end` and `downtown | crosses every 200 m boundary` - it detects a
+blocked route. `--poison=sever` exits 1 on `connected edge chain`.
+
+**A WEAKNESS THE CRITIC SHOULD JUDGE: every one of the five authored routes is a SINGLE EDGE**
+(`tools/_s3c-drive.mjs:33-39`), 287-398 m, 2 chunk boundaries each, 1619.7 m and 10 boundaries in
+total. The brief asked for a connected CHAIN per district. A one-edge chain is the weakest thing that
+satisfies the words, and it cannot cross a junction, which is where a seam is most likely.
+
+Superseded: ~~S3c ROUND 2 IS RUNNING.~~
 
 **THE ROUND-2 DRIVE-PROBE DESIGN IS DECIDED IN THE MAIN AGENT AND IS NOT THE BUILDER'S TO RE-OPEN.**
 Because the physics has no road-mesh contact signal, a ribbon-contact probe is NOT buildable in S3c
