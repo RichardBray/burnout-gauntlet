@@ -322,3 +322,78 @@ the old code it threw halfway through.
 UNDER-BUILDS cells inside the resident island.** An edge runs to 398.4 m against a 200 m cell, and
 the failure mode is lamps or road wear missing near the island's inner border. **Every pass condition
 in section 7 is an upper bound, so a filter that builds too little scores BETTER.** Unexamined.
+
+---
+
+# ROUND 2 CRITIC: FAIL - AND THE FINDING IS REAL, THE ROOT CAUSE IS NOT
+
+`verdicts/wave-t/generate-mesh-s4a-critic-r2.md`. Round 2 confirmed round 1's blocker is **genuinely
+fixed and not fixed by disarming the check** - it verified the `deadDesc` null is by IDENTITY at
+`game/world.js:1600` so a real miss still throws at `:1609`, and that both call sites check.
+`#chunkres=0` builds 1 cell; `#chunkres=abc` falls back to eager 191 cells with no `NaN`.
+
+It then found what I had flagged as the strongest suspicion, and it is REAL: **with the filter on,
+the eight resident cells hold 647 fewer instances than the same eight cells on the default path.**
+Concentrated in cell `-1,1`, which is 581 light.
+
+**ITS STATED ROOT CAUSE IS WRONG, AND I DISPROVED IT BY EXPERIMENT RATHER THAN BY ARGUMENT.**
+Round 2 blamed the per-edge coarse filter at `game/world.js:3694`, claiming an edge passes a broad
+AABB test and then has its content routed to its MIDPOINT cell. That midpoint block
+(`game/world.js:3696-3700`) does not route content anywhere - it increments `rec.stats.edges` for
+section 7's `edgesBuilt` and nothing else. Content is routed by `push()`, from each instance's own
+position.
+
+So I disabled the edge filter outright and rebuilt: **the deficit was 647, unchanged, to the
+instance, with the same per-pool breakdown.** The edge filter contributes nothing to it.
+
+## WHAT IT ACTUALLY IS, MEASURED BY POOL
+
+`chunkStats().poolsPerCell` was added for this - `instancesPerCell` can only say a cell is light,
+not which population is missing from it. The deficit by pool: `gridMesh` 204, `capMesh` 68,
+`paintMesh` 43, `braceMesh` 38, `guardPost` 36, `signFrame` 34, `shopMesh` 30, `strutMesh` 29,
+`acMesh` 28, `awnMesh` 23. Facade grids, cornice caps, bracing, shopfronts, signage, AC units,
+awnings - **building content, not road content.**
+
+That is **plan section 5's block-ownership rule behaving exactly as specified**: a block belongs to
+the single cell containing its CENTRE, is never clipped and never built twice, so a block whose
+centre falls just outside the island does not build, even though part of its mass stands inside a
+resident cell. The plan states the consequence in advance and accepts it: "a large block whose
+centre is just the wrong side of a boundary pops in as a whole when its owner cell loads... it is
+`skyline`'s LOD job to cover it."
+
+## THE TEST THAT SETTLES IT, AND IT WAS DECISIVE
+
+If the deficit is boundary spill from non-resident OWNERS, then widening the island by one ring must
+make the inner nine cells complete, because their spilling neighbours become resident. If it is a
+hole in the filter, widening changes nothing.
+
+**At `#chunkres=2`, all nine inner cells match the default path EXACTLY - `missing 0` for every one
+of them, against 647 at `#chunkres=1`.** 24 resident cells.
+
+**So residency is deciding WHICH cells exist and not what is inside one, which is the invariant I
+asked round 2 to check. The deficit is entirely a one-ring boundary effect that self-heals.**
+
+**MY OWN ACCEPTANCE BAR WAS WRONG AND I SET IT.** I told round 2 the eight cells "should be EQUAL
+cell for cell". Under an ownership rule that assigns a whole block to one cell, that is unachievable
+by construction at the island's edge, and the critic correctly measured a real difference against a
+bar that could not be met. The correct bar is the one now measured: equal except for content owned
+by non-resident cells, and exactly equal one ring in.
+
+**The honest consequence for S4b, stated rather than buried:** at `RES = 1` the outermost ring of
+resident cells is visibly incomplete - a building missing 400-600 m out. That is the artefact plan
+section 5 predicted and assigned to fog and `skyline`. It is not S4a's to fix and it is not a hole.
+
+## TWO THINGS ROUND 2 DID NOT RULE ON. I CHECKED THEM.
+
+- **`chunkGeoms` records no shared prototypes.** `game/world.js:1758` records `mesh.geometry` for a
+  road cell and `:1873` records `g2` for a pavement cell; both are freshly constructed per cell, so
+  there is no shared prototype to double-dispose when S4b tears a cell down.
+- **`mapOccupiedCells` WAS WRONG AND IS NOW FIXED.** It read `pav.cells.size`. Pavement needs a face
+  to extrude a kerb from, so a cell carrying only road ribbon or only a block has no pavement entry:
+  it read **181** against the **191** cells the eager build actually populates. It is now the union
+  of the road-plan cells, the pavement cells and each block's owner cell, and reads **186**.
+  The remaining 5-cell gap is real and is the same spill effect: five cells are populated ONLY by
+  content whose owner sits in a neighbouring cell. Stated rather than tuned away.
+
+Default path after both changes, unchanged: `residentCells 191`, `instances 1191251`, `meshes 8447`,
+`geometries 44`, `chunkGeoms 758`, `overflow 0`, `filtered 0`, `world.blocks 868`.

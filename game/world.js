@@ -1828,7 +1828,21 @@ export function createWorld(scene, { roadKit, mapDoc = null }) {
     const built = graphBuilt = createBlocks(mapDoc);
     graphPath = graphPaths(roadPlan, built.faces);
     const pav = planPavement(mapDoc, built.faces, { chunk: CHUNK, graph: mapGraph });
-    mapOccupiedCells = pav.cells.size;
+    // Cells of the map that hold ANY content, which is what section 7 means by this field and is
+    // NOT the same set as the pavement cells: pavement needs a face to extrude a kerb from, so a
+    // cell carrying only road ribbon or only a block has none. Measured, not assumed - pavement
+    // alone reads 181 against the 191 cells the eager build actually populates. The union is the
+    // road-plan cells (keys are `cx,cz|material`) plus each block's owner cell under section 5's
+    // ownership rule.
+    {
+      const occ = new Set();
+      for (const k of roadPlan.cells.keys()) occ.add(String(k).split('|')[0]);
+      for (const k of pav.cells.keys()) occ.add(String(k).split('|')[0]);
+      for (const b of built.blocks) {
+        occ.add(`${Math.floor(b.cx / CHUNK)},${Math.floor(b.cz / CHUNK)}`);
+      }
+      mapOccupiedCells = occ.size;
+    }
     const mk = (sink, mat, name, cast) => {
       if (sink.idx.length < 3) return;
       const g2 = new THREE.BufferGeometry();
@@ -4245,6 +4259,12 @@ export function createWorld(scene, { roadKit, mapDoc = null }) {
       // Per-cell instance counts, so "resident" can be checked against where the geometry
       // actually is rather than against a cell count that could be 36 empty records.
       instancesPerCell: rc.map((c) => [c.key, c.stats.instances]).sort((a, b) => b[1] - a[1]),
+      // Push-time counts broken down by POOL within each cell. `instancesPerCell` can only say
+      // that a cell is light; this says which population is missing from it, which is the
+      // difference between a diagnosis and a re-run. Cheap: about 60 descriptors per cell.
+      poolsPerCell: Object.fromEntries(rc.map((c) => [c.key,
+        Object.fromEntries([...c.descs].filter(([, d]) => d.count > 0)
+          .map(([h, d]) => [h.name || 'pool', d.count]))])),
       meshes, instances, geometries: geoms.size, tris,
       overflow: { n: dropStats.n, pools: { ...dropStats.pools } },
       map: GRAPH ? 'graph' : 'grid',
