@@ -257,3 +257,68 @@ is still 1531 ms of it. `createBlocks` (351 ms) and `planPavement` (499 ms) stil
 4000 x 2861 m in both configurations, because S4a filters the loops that CONSUME the planner output,
 not the planners themselves. **The load-time win is S4b's, and it needs the planners subsetted too.**
 Anyone reading a flat total here as "streaming is done" has read it exactly backwards.
+
+---
+
+# ROUND 1 CRITIC: FAIL. THE FIX, AND WHAT PROVES IT.
+
+`verdicts/wave-t/generate-mesh-s4a-critic.md` reproduced **all sixteen** of the orchestrator claims
+above, number for number, and failed the piece on one verified blocking finding.
+
+## THE FINDING, AND IT IS THE FIFTH OF ITS CLASS IN THIS PROJECT
+
+**`resolve()` throws on every residency-filtered instance.** A filtered instance gets `[deadDesc, 0]`
+from `pushMat` (`game/world.js:1431`) and the emitters record it in `used` like any other ref. When
+something later hides it - a pole knocked down, a parked car promoted to a live wreck - `resolve()`
+looks `deadDesc` up in `sink.remap`, misses, and **throws by design**: the loud-failure comment at
+`game/world.js:1596-1602` says a miss is a broken invariant rather than a runtime condition. It was
+right until S4a created the one legitimate miss and did not tell it.
+
+Measured by the critic at `#chunkres=1`: **79 of 101 parked cars and 10 of 10 street lights threw on
+`hide()`**. The default path was clean, which is exactly why S4a's own acceptance test could not see
+it - the test that mattered ran with the gate off.
+
+**The spec told the builder to make this path an explicit no-op with a comment and it did not.** The
+dead descriptor was built; the one consumer that had to know about it was not touched.
+
+## THE FIX
+
+`resolve()` returns `null` for the dead descriptor **by identity**, `p === deadDesc`, and the two
+call sites - `hidePoles` (`game/world.js:2963`) and `parkedCar`'s `hide` (`game/world.js:3379`) -
+`continue` on null. Identity, not "not found", is the whole point: **a genuine miss still throws.**
+Turning the throw into a silent `return null` would have traded a crash for the exact silent-failure
+class this file has four recorded incidents of, and would have "fixed" the critic's test while
+disarming the check.
+
+## WHAT PROVES IT, AND THE THIRD ONE IS THE ONE THAT MATTERS
+
+1. **The critic's own repro, re-run**: `#chunkres=1`, `hide()` on all 101 parked cars and all 146
+   poles -> **0 errors and 0 errors**, against 79 and 10.
+2. **The default path still really hides, asserted on the RENDER SIDE**, not on a simulation array:
+   hiding 10 parked cars moves **90 instances** below `y = -500` in the live `instanceMatrix`
+   buffers, `hideErrors 0`.
+3. **THE NO-OP DISCRIMINATES, WHICH IS THE ONLY WAY THIS FIX CAN BE WRONG.** A `resolve()` that
+   returned null for everything would pass finding 1 and pass finding 2's error count while hiding
+   nothing at all. So every call was classified by whether it actually sank an instance. At
+   `#chunkres=1`: **23 of 101 cars and 43 of 146 poles REALLY hide** (411 instances sunk), and 78 and
+   103 no-op. The no-op set is the filtered set and the real set is the resident set. A universal
+   no-op would read 0 and 0.
+
+Note the off-by-one against the critic's 79: **78 cars no-op, not 79.** One car straddles the
+residency boundary with some instances resident and some filtered, so it now hides the instances
+that are actually drawn and skips the ones that never existed. That is correct behaviour, and under
+the old code it threw halfway through.
+
+## REGRESSION SET, RE-RUN AFTER THE FIX
+
+- default path: `residentCells 191`, `instances 1191251`, `meshes 8447`, `geometries 44`,
+  `chunkGeoms 758`, `overflow 0`, `filtered 0`, `world.blocks 868` - unchanged.
+- `node tools/_s3c-drive.mjs` -> `S3C_PROBE_GREEN DRIVER_FINDINGS=7`, exit 0, 0 WORLD.
+- `bash tools/lint.sh` -> `lint ok`.
+
+## STILL OPEN, AND ROUND 2 MUST GO AT IT
+
+**The critic never reached the suspicion I flagged as strongest: whether the per-edge coarse filter
+UNDER-BUILDS cells inside the resident island.** An edge runs to 398.4 m against a 200 m cell, and
+the failure mode is lamps or road wear missing near the island's inner border. **Every pass condition
+in section 7 is an upper bound, so a filter that builds too little scores BETTER.** Unexamined.

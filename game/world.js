@@ -1591,6 +1591,13 @@ export function createWorld(scene, { roadKit, mapDoc = null }) {
    * Writing to the descriptor instead is the bug that left a phantom parked car on screen.
    */
   function resolve(p, i) {
+    // S4a: an instance that residency FILTERED never reached a cell, was never finalized and has
+    // no mesh, so there is nothing on screen to hide and hiding it is a genuine no-op. This is the
+    // ONE legitimate miss, and it is recognised by identity against the single dead descriptor
+    // rather than by "not found" - which is exactly the distinction that keeps the throw below
+    // meaningful. Callers must treat null as "nothing to edit"; there are two, `hidePoles` and
+    // parkedCar's `hide`, and both check.
+    if (p === deadDesc) return null;
     const r = sink.remap.get(p);
     const t = r && r.get(i);
     // NOT `return null`. HEAD's equivalent fell back to writing the source pool, which at least
@@ -2961,7 +2968,9 @@ export function createWorld(scene, { roadKit, mapDoc = null }) {
     dummy.updateMatrix();
     dummy.rotation.order = 'YZX';
     for (const [m, i] of used) {
-      const [tm, ti] = resolve(m, i);
+      const hit = resolve(m, i);
+      if (!hit) continue;                       // residency-filtered: no mesh, nothing to hide
+      const [tm, ti] = hit;
       tm.setMatrixAt(ti, dummy.matrix);
       tm.instanceMatrix.needsUpdate = true;
     }
@@ -3377,7 +3386,9 @@ export function createWorld(scene, { roadKit, mapDoc = null }) {
         // the descriptor is the bug that left a phantom parked car on screen (visible, no
         // collider) while its promoted wreck slid away, so this must go through resolve().
         for (const [m, i] of used) {
-          const [tm, ti] = resolve(m, i);
+          const hit = resolve(m, i);
+          if (!hit) continue;                   // residency-filtered: no mesh, nothing to hide
+          const [tm, ti] = hit;
           tm.setMatrixAt(ti, dummy.matrix);
           tm.instanceMatrix.needsUpdate = true;
         }
