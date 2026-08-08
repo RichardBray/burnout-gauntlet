@@ -397,3 +397,54 @@ section 5 predicted and assigned to fog and `skyline`. It is not S4a's to fix an
 
 Default path after both changes, unchanged: `residentCells 191`, `instances 1191251`, `meshes 8447`,
 `geometries 44`, `chunkGeoms 758`, `overflow 0`, `filtered 0`, `world.blocks 868`.
+
+---
+
+# ROUND 3 CRITIC: **PASS**. S4a IS DONE.
+
+`verdicts/wave-t/generate-mesh-s4a-critic-r3.md`. Round 3 re-ran the decisive tests independently
+rather than taking the orchestrator's word, and its numbers are sharper than mine because it quoted
+all three configurations of the same measurement:
+
+| inner nine cells | instances |
+|---|---|
+| default path | **50,655** |
+| `#chunkres=2` | **50,655** - identical, missing 0 |
+| `#chunkres=1` | **50,008** - missing 647 |
+
+It confirmed the edge filter cannot be the cause (`game/world.js:3697-3708` skips whole edges;
+`:3711-3714` is accounting only; routing is per-instance by position), confirmed the deficit is
+entirely building pools, and ruled on spec-conformance by quoting section 5 lines 465-478 back:
+a block belongs to the single cell containing its centre, is not clipped and is not built twice, and
+the resulting pop 400-600 m out is a declared artefact assigned to fog and `skyline`.
+**Conformant, not a bug.** It also ruled the replacement acceptance bar - equal except for
+non-resident-owned content, exactly equal one ring in - is the correct one.
+
+Also re-verified after all three commits: round 1's blocker stays fixed with **0 errors over 247
+`hide()` calls** and the no-op still discriminating; default path `residentCells 191`,
+`instances 1191251`, `meshes 8447`, `geometries 44`, `chunkGeoms 758`, `overflow 0`, `filtered 0`;
+`node tools/_s3c-drive.mjs` `S3C_PROBE_GREEN` with 0 WORLD failures; lint clean.
+
+## S4a FINAL STATE - THREE ROUNDS, TWO REAL DEFECTS FOUND BY CRITICS
+
+| constant | file:line | BEFORE | AFTER |
+|---|---|---|---|
+| all | | | **zero constants changed value** |
+
+`b6512ed` the piece, `ed6c493` the `resolve()` dead-ref fix, `ded2171` `poolsPerCell` and
+`mapOccupiedCells`. New knobs `#chunkres=N` (default `Infinity`, i.e. off) and `#chunkorigin=x,z`
+(default `0,0`).
+
+## WHAT S4b INHERITS, STATED SO IT IS NOT REDISCOVERED
+
+1. **At `RES = 1` the outermost resident ring is visibly incomplete** - a building missing 400-600 m
+   out. Declared by section 5, covered by fog and `skyline`. Not a hole and not S4b's to fix.
+2. **`chunkGeoms` records no shared prototypes**, so there is no double-dispose waiting.
+3. **`mapOccupiedCells` is 186, and 191 cells are populated.** The five-cell gap is cells populated
+   ONLY by spill from a neighbour's owner.
+4. **The load win is entirely unstarted.** `createBlocks` 351 ms and `planPavement` 499 ms still run
+   over the whole 4000 x 2861 m in every configuration S4a can produce, because S4a filters the
+   loops that CONSUME planner output, not the planners.
+5. **The lesson that cost two rounds: S4a's own strong acceptance test ran with the gate OFF, so it
+   could not see a crash that only exists with the gate ON.** Both critic-found defects were on the
+   gated path. Any piece that ships behind a flag needs its acceptance test run in BOTH states.
