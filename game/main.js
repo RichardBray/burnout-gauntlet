@@ -897,6 +897,10 @@ export async function boot() {
   if (shotMode) {
     hud.resize(window.innerWidth, window.innerHeight);
     renderer.compile(scene, camera);
+    // S4b-2a: binary pre-tick gate. Every resident cell must be fully built/finalized before
+    // the first tick(FIXED_DT). Boot already emits the resident set; settle() asserts that.
+    // An amortised pump (S4b-2c) would leave a half-built world in the seven gate frames.
+    world.settle();
     const steps = Math.max(1, Math.round((cfg.simTime || 4) / FIXED_DT));
     for (let i = 0; i < steps; i++) tick(FIXED_DT);
     // let the HUD land exactly on the final state, no smoothing lag

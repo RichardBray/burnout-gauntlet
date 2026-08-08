@@ -32,7 +32,9 @@ for _ in "${ACCOUNTS[@]}"; do blocked_until+=(0); done
 mkdir -p "$LOGS"
 
 log() {
-  printf '[%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$1" | tee -a "$DRIVER_LOG"
+  # stderr, not stdout: pick_account returns its index on stdout and also logs,
+  # so logging to stdout corrupts the captured account index.
+  printf '[%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$1" | tee -a "$DRIVER_LOG" >&2
 }
 
 # Epoch at which the account that produced this log regains capacity.

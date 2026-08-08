@@ -49,16 +49,17 @@ stall defect** that no p50 fix will touch.
   cannot drift away from the evidence that produced them.
   The visual pieces moved below it under a note saying they are closed.
 
-### WAVE S — LIVE. The playability wave. Pieces, each judged alone by a separate critic.
+### WAVE S — CLOSED at round 5. The playability wave. Pieces, each judged alone by a separate critic.
 
-| piece | owns | state after round 2 |
+| piece | owns | final state, round 5 |
 |---|---|---|
 | `research` | `docs/BURNOUT-HANDLING.md` | **DONE.** Which numbers bind is settled; see below |
 | `fps-harness` | `tools/fps.mjs` | **DONE.** Instrument independently audited and sound |
 | `traffic` | `game/traffic.js` | **PASS** (round 2). Event stream is the wave's best result |
 | `menu` | `game/menu.js`, `game/music.js`, `game/audio.js` | **PASS** (round 2). Soundtrack, two volumes, scene picker |
-| `handling` | `game/physics.js`, `game/camera.js` | **PARTIAL.** Drift fixed; three items open, round 3 live |
-| `perf` | broadest, driven by the profile | **PARTIAL. THE 60 FPS BAR IS NOT MET.** Round 3 live |
+| `handling` | `game/physics.js`, `game/camera.js` | **PASS** (round 3, `b72de30`). Since re-edited BY HAND by the user — see `feel-audit` |
+| `perf` | broadest, driven by the profile | **4 OF 5 CELLS PASS** at `1e060fb`. Only `night-wet` misses (17.90 ms / 47.8 fps / 61.9% long) — a SHADING cost, round 6's target |
+| `feel-audit` | `game/physics.js` | **BUILT, `2c54b2a`.** A fresh critic is verifying it NOW (session 19); replace this cell with its verdict |
 | driver | `game/main.js` (frozen to everyone else) | **DONE.** `da65fcf`, `68c093b` — see the joins below |
 
 **THE ONE NEW CONCURRENCY RULE, AND IT IS SPECIFIC TO THIS ERA.**
@@ -266,6 +267,241 @@ kill-controls behind the disclosure.
 And round 3's own critic caught the shipped comment quoting a kill-control from a variant that was
 never shipped — **rule 5 cuts both ways: a comment quoting the wrong measurement is the same defect
 as a comment claiming a change the code does not make.**
+### ROUND 4 — the HUD. A REFUTATION, and it names the real target.
+
+**`perf-r4` (`598f8db`) + `perf-critic-r4`: the in-frame HUD is SLOWER and does not ship on by
+default.** Round 3's critic had measured a 2.40 ms prize on `cruise` by killing the HUD, and round 4
+tried to collect it by drawing the HUD inside the WebGL frame. Both builder and critic measured the
+same answer at 1280x720 ratio 1 dpr 1 resScale 1, 3 runs a cell, the run THROWING rather than
+printing if the buffer is not exactly that:
+
+| cell (cruise) | p50 | delivered fps | % > 16.7 ms |
+|---|---|---|---|
+| BEFORE `aaa8062` | 15.90 | 59.6 | 24.9% |
+| AFTER, default (what ships) | 15.90 | 61.1 | 20.7% |
+| AFTER `#hudgl=1`, the built change | 16.10 | **56.6** | **41.5%** |
+| DOM layer present, NOT redrawn | 13.40 | 76.0 | 2.3% |
+| DOM layer present AND DIRTIED every frame | 13.50 | 74.3 | 3.0% |
+| no HUD at all | 13.50 | 74.3 | 3.7% |
+
+**THE FINDING, and it is the one round 5 must act on: the HUD's ~2.4 ms is its REDRAW, not its
+layer.** The critic's own missing control — keep the DOM canvas AND dirty it every frame with the
+expensive drawing gone — lands at **13.50 ms, the same as no HUD at all**. So compositing a second
+full-screen layer is free on this machine and the cost is entirely the 2-D drawing work inside
+`hud.js`. `#hudgl=1` ships OFF, lossless, with its price printed in `main.js`.
+Round 4's critic file stops after section 1; the round was cut short there. Sections 0-1 are sound
+and the table above is its own independent measurement, not the builder's.
+
+### THE USER HAND-EDITED THE GAME AFTER ROUND 4. NONE OF IT IS MEASURED.
+
+Commits `f6e677b`, `5b170bb` and PR `ce1c6e2` (Aug 5) are the user's own, not this loop's, and they
+touch the two files the handling piece PASSED on plus four more:
+- `f6e677b` — softer chase-cam turn (`camera.js`), sharper steer, higher base and handbrake turn
+  authority, a mid-corner Space tap kick with stack escalation (`physics.js`, +130 lines).
+- `ce1c6e2` — handbrake tap chain turns past 270 deg; boost denial gets feedback.
+- `5b170bb` — earn popups and `physics.state.earnFeed`, oncoming-lane-only speed earn, boost bar
+  states, NPC horn, tyre smoke in `boost.js`'s trail buffer, and **another -20% on traffic**.
+
+**THE NPC COUNT IS NOW `POOL = 24` (`traffic.js:89`) and `NPC_DENSITY = 0.32` (`world.js:2466`).**
+These are LOWER than the `22`/`0.40` quoted in the session prompt and are the user's own most recent
+cut. **Do not raise either number.** If a critic reports the street reads empty, report it and leave
+the number alone.
+Two consequences for round 5: the round-3 handling numbers no longer describe HEAD, and the new
+per-frame HUD work (`earnFeed`, bar states) lands on exactly the redraw round 4 proved is the cost.
+
+### ROUND 5 — LIVE, session 18. Two scouts landed; a feel builder is running.
+
+Round 5 opened with two STATIC scouts (no browser, so they could run concurrently under the
+frame-time concurrency rule). Both are on disk in full.
+
+**`verdicts/wave-s/perf-r5-scout.md` — the HUD redraw, read line by line, measuring nothing.**
+The number that governs the round: **only 0.95 ms of the HUD's 2.40 is main-thread CPU inside
+`draw()`; ~1.45 ms is raster/transport**, so a plan that only deletes JS is capped at 0.95. Per
+frame the HUD does **7 shadowBlur-enabled fills** (five on shapes that never change), **3
+`ctx.filter` blurs** (the third still blurs a full 559x193 buffer at 720p), ~26 gradients, 90-200
+`measureText` (`hud.js:335` measures per CHARACTER per frame), a **1024x1024 tile blitted to ~638 px
+at `imageSmoothingQuality='high'` under a rotation, every frame**, and ~8000 `Math.sin` for the
+flame contour. `clearRect` of the whole canvas is FREE — round 4's control proves it; do not
+nominate it. The user's `5b170bb` earn popups landed inside the most expensive widget already
+(`hud.js:1085-1096`, ~68 glyph raster ops each, up to 4 live). HUD backing store is confirmed
+1280x720, but `main.js:473` sizes it from CSS pixels, so **the HUD's cost does NOT fall with the
+res slider**. Ranked plan P1-P6 with a per-mechanism kill-control is in the file. It also names a
+control round 5 must re-take: **round 4's 13.50 ms `hud-cheapdraw` floor predates the user's Aug-5
+commits**, and every saving is measured against it.
+`main.js`'s `tick()` was audited for the same defect class and the scout reported **nothing of that
+order rather than inventing a target** — the right answer.
+
+**`verdicts/wave-s/feel-scout-r5.md` — the user's hand-edits audited against the passed round.**
+- **The tap kick is NOT `driftFlick` again.** Its whole output is two lines into `yawAccel`
+  (`physics.js:1255-1256`); it never writes `state.vLat` or `state.speed`. The transport pair is
+  `I + h*r*J` with `J` antisymmetric, so `hypot(speed, vLat)` is conserved in continuous time, shown
+  algebraically. Forward Euler still multiplies |v| by `sqrt(1+r^2h^2)` per substep (**+1.20 %/s
+  while saturated**) and a level-5 chain can now pin `yawRate` at the cap for **1.94 s**, which
+  nothing before could do — disclosed exposure, being metered now.
+- **The sign invariant HOLDS structurally**, traced `main.js:1026` -> `:830` -> `:903` -> `:1415` ->
+  `:1428`; both new sign-carrying terms reuse the shipped `Math.sign(state.steer || 1)`.
+- **The camera cannot out-turn the car more than before** — `camera.js:343-347` still reads
+  `s.yaw - slip*slipAim` and `yawLag 5.4 -> 3.02` makes leading strictly LESS likely. The
+  unmeasured risk inverted: steady LAG at the yaw clamp goes 25.5 -> 45.5 deg (low speed) and
+  16.4 -> 29.4 (vMax), plus up to 18.3 of `slipAim`. `docs/BURNOUT-HANDLING.md` marks every
+  chase-camera figure `NOT FOUND` and retracts its own tail-light measurement, so **no camera
+  constant is scoreable; only the ordering is.**
+- **25 constants changed or introduced, all hand-tuned, none sourced.** Inventory with BEFORE/AFTER
+  in the verdict. **That is legitimate and nothing is to be reverted: the user is the person
+  driving it and overrules the documents and this loop.**
+- **Five rule-5 comment drifts, and two real defects underneath the tuning:** `spinDamp` is provably
+  INERT whenever the e-brake command is live (`handbrakeAssist` was retuned 1.60 -> 6.22 and is
+  reused as a RATE at `physics.js:1391`, putting its floor at 3.421 rad/s above the 2.4 clamp — rule
+  4 exactly), and a single deep tap suppresses round 3's whole drift servo for up to 1.94 s because
+  `:1198` became `if (handbrake || hbCmd > 0.02)`.
+- **The user's own test tool scores an ABSOLUTE heading.** `tools/_hbtap-sharpness.mjs:38` returns
+  `Math.abs(p.state.yaw - yaw0)` and asserts "past 270 deg" off it — it cannot tell a 280 deg carve
+  from a 280 deg pirouette. Being re-scored signed.
+
+### ROUND 5 — `feel-r5` BUILT, `2c54b2a`. A critic has NOT verified it yet.
+
+**The spin damper was firing 0 of 976 substeps.** Reproduced live out of `substep()` with max
+`excess` **-1.062 rad/s**: `handbrakeAssist` was retuned 1.60 -> 6.22 by the user for a different
+job and is reused as a RATE at `physics.js:1391`, putting the damper's floor at
+`0.55*6.22 = 3.421 rad/s`, above the `yawRateMax` clamp of 2.4. It now has its own constant,
+**`spinDampDriftFloor: 0.88`** — the literal in force when the handling piece PASSED at `b72de30`.
+**The user's tuning is untouched and his chain is intact**: 5 taps at 130 km/h go +210.2 -> +208.9
+deg, peak slip 64.89 -> 64.90, speed identical, and his own `_hbtap-sharpness.mjs` still passes.
+What it buys: held brake + full lock at 130 km/h goes 37.16 -> 34.52 deg of peak slip, and the
+kill-control (same floor, `spinDamp` 0) reads **37.22**, so the catch is the damper and not its
+neighbour. Post-fix it fires 111-156 substeps a run.
+
+**The tap's 1.94 s linger shadows round 3's drift-servo branch, but the damage is REFUTED and the
+builder correctly changed nothing.** All three drift orderings hold at HEAD (1.87 / 2.05 / 0.65 s
+against round 3's 2.22 / 2.68 / 0.78), both ordering properties intact, and removing the linger
+moves them **0.00-0.01 s** — because a 0.9 s hold zeroes `hbCmd` on release and only a genuine tap
+lingers. Its own extension, routed not diagnosed: a mid-drift Space tap flattens all three to
+0.62 s, identically with the linger removed, so it is the PRESS and not the linger.
+
+**Six rule-5 comment drifts corrected, one more than the audit found.** The dead
+`handbrakeTapDepthMax` cap is proved dead BY MEASUREMENT (1.80 and 1.60 identical to the decimal,
+1.40 bites); the constant and the user's value are kept and the inertness is documented at the line
+so nobody spends a round kill-controlling it. The stale `MEASURED` block is re-measured rather than
+estimated: peak **76.8 deg/s at 36 km/h on 7.5 m** (was 62.6 / 45 / 11.4).
+`handling-measure.mjs` reads 39 HIT / 2 MISS before and after.
+
+**The user's "past 270 deg" claim SURVIVES a signed instrument** (`tools/_hbtap-signed.mjs`):
+5 of 6 taps carry **+300.3 / +346.9 deg** with course-over-ground tracking the nose at 99% / 97% —
+a carve, not a pirouette. Two qualifications: it does not generalise (+143.9 deg at 200 km/h), and
+there is a **wrong-way yaw component reaching -138 deg/s on a six-tap chain at 200 km/h** that the
+absolute metric could never have shown. Open, routed.
+
+**The forward-Euler energy artefact is metered and closed: 0.2344 m/s** created over a level-5
+chain at 130 km/h (0.3849 at 200) against ordinary cornering's 0.1688 and `driftFlick`'s 6.2173, on
+manoeuvres that bleed 78-141 km/h. **The builder refused to change the integration for 0.8 km/h**
+and wrote the number and the refusal at the line.
+
+**A METHODOLOGY NOTE WORTH CARRYING FORWARD.** Its first live kill-control read as inert because
+**Chromium served the previous variant's `physics.js` out of memory cache despite `no-store`.**
+Every patch set now gets its own URL namespace and the probe prints the constant it actually used,
+so an unapplied patch can no longer be read as a null result. Any future agent that patches a module
+en route to the browser must do the same.
+
+### ROUND 5 — `perf-r5` KILLED MID-FLIGHT, THEN RESUMED AND LANDED. `1e060fb`. FOUR OF FIVE CELLS PASS.
+
+Session 18's round died part-way through with 22 lines of verdict (section 0 only, **zero
+measurements**) and unmeasured, uncommitted edits in `game/hud.js` and `game/main.js`. Session 19
+resumed it, ALONE. What came out is one of the wave's most valuable rounds and almost all of its
+value is refutation.
+
+**THE INHERITED CHANGE WAS FATALLY BROKEN, AND ITS OWN KILL-CONTROL COULD NOT KILL IT.**
+`hud.js` ended up with **two `function advance` declarations in the same scope** — `:137`, the new
+glyph-cache helper, and `:2823`, the HUD's per-frame state step. The later declaration wins. So all
+three call sites ran the STATE STEP with `dt` bound to a font-cache object, got `undefined` back,
+damped `shownSpeed` / `shownBoost` / `crashMix` / `t` to `NaN` about 150 times a frame, and threw
+out of `drawSpeedo` on frame one (`addColorStop 'rgba(120,10,6,NaN)'`). **`tools/lint.sh` passed it.
+The page did not.**
+And the part that matters permanently: **`#hudcache=0` failed IDENTICALLY**, because it guards only
+the first line of a function nothing was calling. A paired A/B through that kill-control would have
+compared two broken builds and reported a clean, confident **"0.00 ms, no effect."**
+**This is permanent rule 3 for the fifth time, in a new shape: a KILL-CONTROL CAN ITSELF BE DEAD.
+Before trusting a null result, prove the control changes observable behaviour** — the resumed
+builder proved this one by counting `measureText` calls per frame, not by reading the flag.
+
+**THE REPAIRED CHANGE PASSED ITS PIXEL GATE PERFECTLY AND WAS REVERTED ANYWAY, ON THE NUMBER.**
+One-token rename (`glyphAdv`) fixed it. `tools/_pr5-hudgate.mjs` then ran the gate the comment had
+set for itself: two HUDs in one page, `textCache` true vs false, identical scripted state,
+`getImageData` over all 921,600 px — **13 of 13 states BYTE-IDENTICAL, diffPx 0**, with the
+mechanism proved live at **129 of 130 `measureText` calls per frame removed**.
+Then the frame time: **UNRESOLVED** — best-of `+0.10 ms`, median `-0.80 ms`, the two estimators
+disagreeing in SIGN against a 9.70-20.30 ms spread — and CPU attribution **0.000 ms**.
+**Reverted. `game/` is clean at HEAD.**
+**P5 is CLOSED with a finding, not a saving: type in this HUD is expensive to RASTERISE and free to
+MEASURE.** That is exactly the redirect the scout designed its kill-control to produce, and it
+retires the scout's headline `hud.js:335` target.
+
+**ROUND 4's 13.50 ms `hud-cheapdraw` FLOOR IS DEAD AND MUST NEVER BE QUOTED AGAIN.**
+Re-taken at HEAD in the same interleaved run: **8.80 ms**. The user's Aug-5 cut (`POOL` 30 -> 24,
+`NPC_DENSITY` 0.40 -> 0.32) moved the machine underneath the HUD.
+**The ENTIRE HUD redraw is now 1.90 ms on cruise, not 2.40** — that is the whole remaining prize for
+P1-P4 and P6 put together. `hud-off` 9.10 > `hud-cheapdraw` 8.80 (wrong sign, i.e. noise), so
+compositing a second full-screen layer is still free, as round 4 found.
+
+**THE BAR AT HEAD — 1280x720 REAL pixels, pixelRatio 1, dpr 1, resScale 1, ran ALONE:**
+
+| scenario | p50 (median of runs) | delivered fps | % over 16.7 ms | verdict |
+|---|---|---|---|---|
+| corner | 10.60 ms | 84.5 | 8.2% | **PASSES** |
+| cruise | 9.80 ms | 96.8 | 3.3% | **PASSES** |
+| city | 12.90 ms | 74.5 | 3.6% | **PASSES** |
+| boost | 14.20 ms | 69.0 | 8.1% | **PASSES** |
+| **night-wet** | **17.90 ms** | **47.8** | **61.9%** | **THE ONLY MISS** |
+
+Four of five cells meet the bar, against the wave's opening baseline of 41.20 ms — a 3-4x speedup.
+**`night-wet` is NOT a HUD problem**: the HUD costs the same 1.90 ms in every scene, and 1.90 off
+17.90 does not reach 16.7. `night-wet` sits **5.0 ms above `city` on the same path** with only time
+of day and `wet 1.0` changed, so it is a shading-path cost. **That is round 6's target.**
+
+A machine-state note the builder handled correctly rather than ignoring: `WindowServer` at 18% and
+Camtasia at 15.6% were resident (the user was screen-recording), so it round-robin interleaved its
+cells and reported best-of-rounds alongside medians instead of pretending the machine was quiet.
+
+### ROUND 5 RESEARCH — THE CHASE CAMERA IS A SPRING, AND WE NOW HAVE REAL DUMPED VALUES.
+
+`verdicts/wave-s/research-camera-r5.md`, appended as section C of `docs/BURNOUT-HANDLING.md`.
+The wave's oldest `NOT FOUND` is partly closed, and it closes it with a THIRD architecture that
+neither the defect report nor round 5's audit considered.
+
+**Paradise's chase camera is a sprung camera with a SEPARATE SPRING COEFFICIENT FOR DRIFTING.**
+Not "yaw plus slip", not velocity-tracking. Corroborated by three independent sources: the
+burnout.wiki attribute dump, the Burnout Paradise decompilation's DWARF dump of
+`BrnDirector::Camera::BehaviourGameplayExternal`, and the BPR Free Camera mod's live-memory sliders.
+Real dumped values for the Hunter Cavalry:
+
+| | chase | bumper |
+|---|---|---|
+| `YawSpring` | **0.08** | **0.7** |
+| `DriftYawSpring` | **0.07** | - |
+| `PitchSpring` | 0.55 | 0.4 |
+| `FieldOfView` | **80** | 80 |
+| `BoostFieldOfView` | **0** (this car authors none) | 105 |
+| `ZAndTiltCutoffSpeedMPH` | 100 | - |
+| `PivotLength`/`Height`/`ZOffset` | 7 / 1 / 1.6 | - |
+
+**Two facts carry it.** The chase camera's yaw spring is authored **8.75x looser** than the rigidly
+bolted bumper camera's. And **`DriftYawSpring` 0.07 is LOWER than `YawSpring` 0.08 — the real game's
+camera converges MORE SLOWLY in a drift, i.e. it lags MORE, exactly where round 5 found our code
+lagging.** Both surviving readings are CONVERGENT: the camera approaches a target it is behind. **An
+additive slip term, which makes the camera LEAD, corresponds to no parameter in the shipped set.**
+So the direction of the user's camera edit is right and the original defect's model is refuted.
+**What is scoreable is the ORDERING — drift convergence slower than non-drift — and NOT any degree
+figure**: no camera-lag figure in degrees exists for any Burnout title, from anyone, so our 45.5 deg
+still has nothing to be scored against.
+`BoostKickAcceleration` 15 against sustained `BoostAcceleration` 12.5 with `BoostKickTime` **0.1 s**
+is the front-loaded boost kick, now with a duration.
+Still `NOT FOUND`: the yaw-target expression, spring units/update law/tick rate, recentre RATE
+(mechanism found — `mfCenteringFactor`, `mbSnapToCar`), the FOV-vs-speed curve, **chase**-camera
+boost FOV (the 80 -> 105 is BUMPER-only and must not be transplanted), boost pull-back in metres,
+shake values (system found: `CameraShakeICEController mBoostShake`), and any Burnout 3/Revenge
+camera figure.
+
+
+
 
 
 ## SESSION 16 ARCHIVE — THE ENTIRE VISUAL-WAVE RECORD, waves P, Q and R.

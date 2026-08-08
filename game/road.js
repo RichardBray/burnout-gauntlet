@@ -2018,7 +2018,9 @@ export function createRoadKit(rng, opts = {}) {
     /** The reflection's own counters, so a harness can assert the gate without reading pixels. */
     reflStats() {
       return { enabled: refl.enabled, renders: refl.renders | 0, skipped: refl.skipped | 0,
-        rt: refl.rt ? `${refl.rtW}x${refl.rtH}` : null };
+        rt: refl.rt ? `${refl.rtW}x${refl.rtH}` : null,
+        // S4b-2a: length of refl.hidden so disposeCells can assert releaseHidden drained it.
+        hidden: refl.hidden.length };
     },
 
     /** 0 = dry, 1 = soaking. Retunes every road material. */

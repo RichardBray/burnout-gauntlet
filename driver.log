@@ -53,3 +53,18 @@
 [2026-08-07 15:15:47] round 1 finished (exit 1, 1990s, .claude)
 [2026-08-07 15:15:47] .claude limited until 20:15:47 - rotating
 [2026-08-07 15:15:47] all 1 accounts limited - sleeping 18060s (until 20:16:47)
+[2026-08-07 20:36:47] round 1 starting on .claude -> /Users/robray/fc/demos/burnout-gauntlet/logs/round-001-20260807-203647.log
+[2026-08-07 21:00:01] round 1 starting on .claude -> /Users/robray/fc/demos/burnout-gauntlet/logs/round-001-20260807-210001.log
+[2026-08-07 21:14:35] round 1 finished (exit 0, 874s, .claude)
+[2026-08-07 21:15:05] round 2 starting on .claude -> /Users/robray/fc/demos/burnout-gauntlet/logs/round-002-20260807-211505.log
+[2026-08-07 22:53:15] round 2 finished (exit 0, 5890s, .claude)
+[2026-08-07 22:53:45] round 3 starting on .claude -> /Users/robray/fc/demos/burnout-gauntlet/logs/round-003-20260807-225345.log
+[2026-08-07 23:14:05] round 3 finished (exit 1, 1220s, .claude)
+[2026-08-07 23:14:05] .claude limited until 04:14:05 - rotating
+[2026-08-07 23:14:05] all 1 accounts limited - sleeping 18060s (until 04:15:05)
+[2026-08-08 04:15:05] round 4 starting on .claude -> /Users/robray/fc/demos/burnout-gauntlet/logs/round-004-20260808-041505.log
+[2026-08-08 05:03:04] round 4 finished (exit 0, 2879s, .claude)
+[2026-08-08 05:03:34] round 5 starting on .claude -> /Users/robray/fc/demos/burnout-gauntlet/logs/round-005-20260808-050334.log
+[2026-08-08 05:54:49] round 5 finished (exit 1, 3075s, .claude)
+[2026-08-08 05:54:49] .claude limited until 10:54:49 - rotating
+[2026-08-08 05:54:49] all 1 accounts limited - sleeping 18060s (until 10:55:49)

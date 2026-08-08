@@ -1340,6 +1340,17 @@ export function createWorld(scene, { roadKit, mapDoc = null }) {
   /** Instances rejected by the fine residency gate (straddling props into a non-resident cell). */
   let filtered = 0;
   /**
+   * S4b-2a: when emitCells re-runs a multi-cell phase (furniture edges span cells), only accept
+   * pushes into this cell key. null means no extra filter (boot path).
+   */
+  let emitOnlyKey = null;
+  /**
+   * S4b-2a: when re-emitting a cell, do not grow map-wide registries (frontages/towers/neons).
+   * Those still hold the boot-time entries; re-running signage/neon reads them. Registry
+   * ownership moves in S4b-2b.
+   */
+  let suppressRegistryPush = false;
+  /**
    * Dead ChunkRec: no-op sink for non-resident cells. Never enters `resident`, never finalized.
    * pushMat counts into `filtered` and returns a disposable desc handle.
    */
@@ -1445,6 +1456,9 @@ export function createWorld(scene, { roadKit, mapDoc = null }) {
     // Fine gate: a straddling edge/prop into a non-resident cell is counted and discarded so it
     // cannot inflate residentCells by creating a one-instance ChunkRec outside RES.
     if (rec.dead) { filtered++; return [deadDesc, 0]; }
+    // S4b-2a re-emit filter: furniture and other multi-cell phases only land instances in the
+    // cell being rebuilt, so neighbouring cells' already-finalized meshes stay untouched.
+    if (emitOnlyKey && rec.key !== emitOnlyKey) { filtered++; return [deadDesc, 0]; }
     const d = descFor(rec, h);
     grow(d);
     mat4.toArray(d.m, d.count * 16);
@@ -1484,8 +1498,17 @@ export function createWorld(scene, { roadKit, mapDoc = null }) {
    * cull, which is why this is frustum culling and NOT a distance cull: the skyline is 800 m away
    * and is supposed to be there.
    */
-  function finalize() {
+  /**
+   * Allocate InstancedMeshes for resident cells.
+   * @param {Iterable<string>|null} onlyKeys if set, only finalize those cells (emitCells path).
+   *   Under finite RES every draw state is cell-owned so disposeCells can tear a cell down
+   *   completely; under RES=Infinity the CHUNK_MIN map-wide path stays (eager full map).
+   */
+  function finalize(onlyKeys = null) {
     let meshes = 0, cellMeshes = 0, globalMeshes = 0, instances = 0, freedBytes = 0;
+    const keySet = onlyKeys ? new Set(onlyKeys) : null;
+    // S4b-2a: streaming residency cannot leave instances in ownerless map-wide meshes.
+    const forceCellOwned = Number.isFinite(RES) || !!keySet;
 
     const stateKey = (h) => `${h._geo.uuid}|${h._mat.uuid}`
       + `|${h.castShadow ? 1 : 0}${h.receiveShadow ? 1 : 0}|${h.renderOrder}`;
@@ -1506,6 +1529,7 @@ export function createWorld(scene, { roadKit, mapDoc = null }) {
       total.set(k, total.get(k) || 0);
     }
     for (const rec of resident.values()) {
+      if (keySet && !keySet.has(rec.key)) continue;
       for (const [h, d] of rec.descs) {
         if (d.count < 1) continue;
         const k = stateKey(h);
@@ -1557,12 +1581,14 @@ export function createWorld(scene, { roadKit, mapDoc = null }) {
     };
 
     // ---- draw states big enough to be worth culling: one mesh per (cell, draw state) --------
+    // Under forceCellOwned every non-empty state is cell-owned (CHUNK_MIN ignored).
     for (const rec of resident.values()) {
+      if (keySet && !keySet.has(rec.key)) continue;
       const byState = new Map();
       for (const [h, d] of rec.descs) {
         if (d.count < 1) continue;
         const k = stateKey(h);
-        if (total.get(k) < CHUNK_MIN) continue;          // handled map-wide below
+        if (!forceCellOwned && total.get(k) < CHUNK_MIN) continue;          // handled map-wide below
         if (!byState.has(k)) byState.set(k, []);
         byState.get(k).push(d);
       }
@@ -1570,17 +1596,19 @@ export function createWorld(scene, { roadKit, mapDoc = null }) {
     }
 
     // ---- draw states too small to cut: one map-wide mesh, never culled ----------------------
-    for (const [k] of handlesOf) {
-      if (total.get(k) >= CHUNK_MIN) continue;
-      const ds = [];
-      for (const rec of resident.values()) {
-        for (const [h, d] of rec.descs) if (d.count > 0 && stateKey(h) === k) ds.push(d);
+    // Skipped under finite RES / emitCells: those instances are already cell-owned above.
+    if (!forceCellOwned) {
+      for (const [k] of handlesOf) {
+        if (total.get(k) >= CHUNK_MIN) continue;
+        const ds = [];
+        for (const rec of resident.values()) {
+          for (const [h, d] of rec.descs) if (d.count > 0 && stateKey(h) === k) ds.push(d);
+        }
+        // NOTE FOR S4: a map-wide mesh has no owning cell, so it is never disposed. That is
+        // correct while the whole world is resident and it is wrong once cells stream. The fix is
+        // to give these an owner too and accept the extra calls (forceCellOwned when RES is finite).
+        if (emit(k, ds, null, false)) globalMeshes++;
       }
-      // NOTE FOR S4: a map-wide mesh has no owning cell, so it is never disposed. That is
-      // correct while the whole world is resident and it is wrong once cells stream. The fix is
-      // to give these an owner too and accept the extra calls, and it belongs to the residency
-      // step, not here - flagged rather than silently inherited.
-      if (emit(k, ds, null, false)) globalMeshes++;
     }
 
     // RELEASE THE SCRATCH. `d.m` and `d.c` are the growable staging buffers; once their contents
@@ -1589,7 +1617,9 @@ export function createWorld(scene, { roadKit, mapDoc = null }) {
     // does not actually free is chunk-contract rule 3's failure, and under streaming it would
     // present as memory creep and be blamed on the streamer rather than on the sink.
     for (const rec of resident.values()) {
+      if (keySet && !keySet.has(rec.key)) continue;
       for (const d of rec.descs.values()) {
+        if (!d.m) continue;
         freedBytes += d.m.byteLength + (d.c ? d.c.byteLength : 0);
         d.m = null; d.c = null; d.cap = 0;
       }
@@ -1682,100 +1712,112 @@ export function createWorld(scene, { roadKit, mapDoc = null }) {
   // its premise as an unverified guess, and it is a bad one: makeRoadTile draws a centre pair at
   // road.js:351, so a horizontal repeat puts a double yellow line down the middle of every lane.
   let roadPlan = null;
-  if (GRAPH) {
-    roadPlan = planRoads(mapDoc, { chunk: CHUNK });
+  /**
+   * ROADS_GRAPH for one cell. S4b-2a: pure per-cell; boot and emitCells share this path.
+   * @param {string} key cell key "cx,cz"
+   */
+  function emitRoadsForKey(key) {
+    if (!GRAPH || !roadPlan) return 0;
+    const cell = roadPlan.cells.get(key);
+    if (!cell) return 0;
     const specOf = (cls) => (cls === 'motorway' ? 'highway' : 'city');
-    // One sink per (cell, class) for the carriageway and one per cell for the shoulder, so a
-    // whole cell's roads are at most three draw calls.
+    // One sink per class for the carriageway and one for the shoulder, so a whole cell's roads
+    // are at most three draw calls.
     const sinks = new Map();
-    const sinkFor = (key) => {
-      let s2 = sinks.get(key);
-      if (!s2) sinks.set(key, s2 = { pos: [], nor: [], uv: [], idx: [], length: 0 });
+    const sinkFor = (sk) => {
+      let s2 = sinks.get(sk);
+      if (!s2) sinks.set(sk, s2 = { pos: [], nor: [], uv: [], idx: [], length: 0 });
       return s2;
     };
+    for (const r of cell.ribbons) {
+      const cls = specOf(r.cls);
+      const spec = roadKit.materials[cls].spec;
+      const carriage = Math.min(r.width, spec.widthM) / 2;
+      // The sub-polyline carries `s`, arclength along the FULL edge, so the tile does not
+      // restart at a chunk boundary.
+      const v0 = r.pts[0].s / spec.tileLenM;
+      const pts = r.pts.map((v) => [v.x, v.z]);
+      const nrm = r.pts.map((v) => [v.nx, v.nz]);
+      // shoulder first, so it sits under the carriageway in submission order exactly as
+      // buildRibbon orders its two meshes
+      if (r.paved > carriage + 1e-6) {
+        roadKit.ribbonInto(sinkFor('shoulder'), pts, nrm, r.paved,
+          ROAD_Y - 0.02, 1, 12, r.pts[0].s / 12);
+      }
+      roadKit.ribbonInto(sinkFor(cls), pts, nrm, carriage,
+        ROAD_Y, (carriage * 2) / spec.widthM, spec.tileLenM, v0);
+    }
 
+    // Junction polygons: a fan from the node centre out to the ring of terminal cross-section
+    // corners. Because those corners ARE the ribbons' terminal vertices there is no coplanar
+    // overlap anywhere in the network, which is what lets every ground road sit at one y and
+    // retires the 2 mm drop the grid world needed at world.js:1185.
+    for (const j of cell.junctions) {
+      const cls = specOf(j.cls);
+      const spec = roadKit.materials[cls].spec;
+      const sk = sinkFor(cls);
+      const base = sk.pos.length / 3;
+      const uvOf = (x, z) => [x / spec.widthM, z / spec.tileLenM];
+      sk.pos.push(j.centre[0], ROAD_Y, j.centre[1]);
+      sk.nor.push(0, 1, 0);
+      sk.uv.push(...uvOf(j.centre[0], j.centre[1]));
+      for (const c of j.ring) {
+        sk.pos.push(c[0], ROAD_Y, c[1]);
+        sk.nor.push(0, 1, 0);
+        sk.uv.push(...uvOf(c[0], c[1]));
+      }
+      // Wind CCW seen from above so the surface faces +Y, the same convention ribbonInto uses.
+      for (let i = 0; i < j.ring.length; i++) {
+        const a = base + 1 + i, b = base + 1 + ((i + 1) % j.ring.length);
+        sk.idx.push(base, b, a);
+      }
+    }
+
+    // Degree-2 taper: the only geometry a degree-2 node produces, and only when the two edges'
+    // paved widths differ. The two cross-sections share a normal (ribbons.js computes a joint
+    // one through the node), so this is a clean trapezoid.
+    for (const t of cell.tapers) {
+      const sk = sinkFor('shoulder');
+      const base = sk.pos.length / 3;
+      for (const side of [t.a, t.b]) {
+        const v = side.v;
+        sk.pos.push(v.x - v.nx * side.paved, ROAD_Y - 0.02, v.z - v.nz * side.paved);
+        sk.pos.push(v.x + v.nx * side.paved, ROAD_Y - 0.02, v.z + v.nz * side.paved);
+        sk.nor.push(0, 1, 0, 0, 1, 0);
+        sk.uv.push(0, 0, 1, 0);
+      }
+      sk.idx.push(base, base + 1, base + 2, base + 1, base + 3, base + 2);
+    }
+
+    const [cx, cz] = key.split(',').map(Number);
+    const rec = chunkAt((cx + 0.5) * CHUNK, (cz + 0.5) * CHUNK);
+    let nMesh = 0;
+    for (const [cls, sk] of sinks) {
+      if (sk.idx.length < 3) continue;
+      const mesh = roadKit.finishRibbon(sk, cls);
+      mesh.name = `road:${key}|${cls}`;
+      roads.add(mesh);
+      // S4a / S4b-2a: record chunk-owned road geometry AND mesh on the cell's ChunkRec so
+      // disposeCells can remove and releaseHidden it.
+      if (!rec.dead) {
+        rec.geoms.push(mesh.geometry);
+        rec.meshes.push(mesh);
+      }
+      nMesh++;
+    }
+    return nMesh;
+  }
+  if (GRAPH) {
+    roadPlan = planRoads(mapDoc, { chunk: CHUNK });
+    let roadMeshes = 0;
     for (const cell of roadPlan.cells.values()) {
       // S4a coarse filter: skip whole road cells outside the resident Chebyshev disk.
-      {
-        const [cx, cz] = cell.key.split(',').map(Number);
-        if (!isResident(cx, cz)) continue;
-      }
-      for (const r of cell.ribbons) {
-        const cls = specOf(r.cls);
-        const spec = roadKit.materials[cls].spec;
-        const carriage = Math.min(r.width, spec.widthM) / 2;
-        // The sub-polyline carries `s`, arclength along the FULL edge, so the tile does not
-        // restart at a chunk boundary.
-        const v0 = r.pts[0].s / spec.tileLenM;
-        const pts = r.pts.map((v) => [v.x, v.z]);
-        const nrm = r.pts.map((v) => [v.nx, v.nz]);
-        // shoulder first, so it sits under the carriageway in submission order exactly as
-        // buildRibbon orders its two meshes
-        if (r.paved > carriage + 1e-6) {
-          roadKit.ribbonInto(sinkFor(`${cell.key}|shoulder`), pts, nrm, r.paved,
-            ROAD_Y - 0.02, 1, 12, r.pts[0].s / 12);
-        }
-        roadKit.ribbonInto(sinkFor(`${cell.key}|${cls}`), pts, nrm, carriage,
-          ROAD_Y, (carriage * 2) / spec.widthM, spec.tileLenM, v0);
-      }
-
-      // Junction polygons: a fan from the node centre out to the ring of terminal cross-section
-      // corners. Because those corners ARE the ribbons' terminal vertices there is no coplanar
-      // overlap anywhere in the network, which is what lets every ground road sit at one y and
-      // retires the 2 mm drop the grid world needed at world.js:1185.
-      for (const j of cell.junctions) {
-        const cls = specOf(j.cls);
-        const spec = roadKit.materials[cls].spec;
-        const sk = sinkFor(`${cell.key}|${cls}`);
-        const base = sk.pos.length / 3;
-        const uvOf = (x, z) => [x / spec.widthM, z / spec.tileLenM];
-        sk.pos.push(j.centre[0], ROAD_Y, j.centre[1]);
-        sk.nor.push(0, 1, 0);
-        sk.uv.push(...uvOf(j.centre[0], j.centre[1]));
-        for (const c of j.ring) {
-          sk.pos.push(c[0], ROAD_Y, c[1]);
-          sk.nor.push(0, 1, 0);
-          sk.uv.push(...uvOf(c[0], c[1]));
-        }
-        // Wind CCW seen from above so the surface faces +Y, the same convention ribbonInto uses.
-        for (let i = 0; i < j.ring.length; i++) {
-          const a = base + 1 + i, b = base + 1 + ((i + 1) % j.ring.length);
-          sk.idx.push(base, b, a);
-        }
-      }
-
-      // Degree-2 taper: the only geometry a degree-2 node produces, and only when the two edges'
-      // paved widths differ. The two cross-sections share a normal (ribbons.js computes a joint
-      // one through the node), so this is a clean trapezoid.
-      for (const t of cell.tapers) {
-        const sk = sinkFor(`${cell.key}|shoulder`);
-        const base = sk.pos.length / 3;
-        for (const side of [t.a, t.b]) {
-          const v = side.v;
-          sk.pos.push(v.x - v.nx * side.paved, ROAD_Y - 0.02, v.z - v.nz * side.paved);
-          sk.pos.push(v.x + v.nx * side.paved, ROAD_Y - 0.02, v.z + v.nz * side.paved);
-          sk.nor.push(0, 1, 0, 0, 1, 0);
-          sk.uv.push(0, 0, 1, 0);
-        }
-        sk.idx.push(base, base + 1, base + 2, base + 1, base + 3, base + 2);
-      }
-    }
-
-    for (const [key, sk] of sinks) {
-      if (sk.idx.length < 3) continue;
-      const cls = key.split('|')[1];
-      const mesh = roadKit.finishRibbon(sk, cls);
-      mesh.name = `road:${key}`;
-      roads.add(mesh);
-      // S4a: record chunk-owned road geometry on the cell's ChunkRec.
-      {
-        const [cx, cz] = key.split('|')[0].split(',').map(Number);
-        const rec = chunkAt((cx + 0.5) * CHUNK, (cz + 0.5) * CHUNK);
-        if (!rec.dead) rec.geoms.push(mesh.geometry);
-      }
+      const [cx, cz] = cell.key.split(',').map(Number);
+      if (!isResident(cx, cz)) continue;
+      roadMeshes += emitRoadsForKey(cell.key);
     }
     roadStats = {
-      cells: roadPlan.cells.size, meshes: sinks.size,
+      cells: roadPlan.cells.size, meshes: roadMeshes,
       ...roadPlan.stats,
     };
   }
@@ -1839,13 +1881,50 @@ export function createWorld(scene, { roadKit, mapDoc = null }) {
   // The drive paths are built HERE and not at the `paths` block near the end of createWorld,
   // because `heroDist` consumes `paths.city` during EMISSION (`tryPark`), which runs first.
   let graphPath = null;
+  /** PAVEMENT_GRAPH plan, hoisted so emitPavementForKey / emitCells can re-run one cell. */
+  let pavementPlan = null;
+  /**
+   * PAVEMENT_GRAPH for one cell. S4b-2a pure per-cell phase.
+   * @param {string} key cell key "cx,cz"
+   */
+  function emitPavementForKey(key) {
+    if (!GRAPH || !pavementPlan) return 0;
+    const cell = pavementPlan.cells.get(key);
+    if (!cell) return 0;
+    const [cx, cz] = key.split(',').map(Number);
+    const rec = chunkAt((cx + 0.5) * CHUNK, (cz + 0.5) * CHUNK);
+    const mkRec = (sink2, mat, name, cast) => {
+      if (sink2.idx.length < 3) return 0;
+      const g2 = new THREE.BufferGeometry();
+      g2.setAttribute('position', new THREE.Float32BufferAttribute(sink2.pos, 3));
+      g2.setAttribute('normal', new THREE.Float32BufferAttribute(sink2.nor, 3));
+      g2.setAttribute('uv', new THREE.Float32BufferAttribute(sink2.uv, 2));
+      g2.setIndex(sink2.idx);
+      g2.computeBoundingSphere();
+      const m = new THREE.Mesh(g2, mat);
+      m.name = name;
+      m.receiveShadow = true;
+      // Same call as the grid world makes: the kerb casts (its 22 cm step is the one hard shadow
+      // in the gutter that grounds the pavement onto the road), the pavement does not (it clears
+      // the kerb top by 2 cm, so all it could contribute is a sub-centimetre acne fringe).
+      m.castShadow = cast;
+      group.add(m);
+      if (!rec.dead) {
+        rec.geoms.push(g2);
+        rec.meshes.push(m);
+      }
+      return 1;
+    };
+    return mkRec(cell.kerb, kerbMat, `kerb:${cell.key}`, true)
+      + mkRec(cell.walk, walkMat, `walk:${cell.key}`, false);
+  }
   if (GRAPH) {
     const mapGraph = graphIdx = createRoadGraph(mapDoc);
     // S4b-1: pass plannerKeep so fill / pavement march only run inside the expanded resident box.
     // Topology (faces for graphPaths, Euler) stays map-wide inside createBlocks.
     const built = graphBuilt = createBlocks(mapDoc, plannerKeep ? { keep: plannerKeep } : {});
     graphPath = graphPaths(roadPlan, built.faces);
-    const pav = planPavement(mapDoc, built.faces, {
+    pavementPlan = planPavement(mapDoc, built.faces, {
       chunk: CHUNK, graph: mapGraph, ...(plannerKeep ? { keep: plannerKeep } : {}),
     });
     // Cells of the map that hold ANY content, which is what section 7 means by this field and is
@@ -1862,59 +1941,19 @@ export function createWorld(scene, { roadKit, mapDoc = null }) {
     } else {
       const occ = new Set();
       for (const k of roadPlan.cells.keys()) occ.add(String(k).split('|')[0]);
-      for (const k of pav.cells.keys()) occ.add(String(k).split('|')[0]);
+      for (const k of pavementPlan.cells.keys()) occ.add(String(k).split('|')[0]);
       for (const b of built.blocks) {
         occ.add(`${Math.floor(b.cx / CHUNK)},${Math.floor(b.cz / CHUNK)}`);
       }
       mapOccupiedCells = occ.size;
     }
-    const mk = (sink, mat, name, cast) => {
-      if (sink.idx.length < 3) return;
-      const g2 = new THREE.BufferGeometry();
-      g2.setAttribute('position', new THREE.Float32BufferAttribute(sink.pos, 3));
-      g2.setAttribute('normal', new THREE.Float32BufferAttribute(sink.nor, 3));
-      g2.setAttribute('uv', new THREE.Float32BufferAttribute(sink.uv, 2));
-      g2.setIndex(sink.idx);
-      g2.computeBoundingSphere();
-      const m = new THREE.Mesh(g2, mat);
-      m.name = name;
-      m.receiveShadow = true;
-      // Same call as the grid world makes: the kerb casts (its 22 cm step is the one hard shadow
-      // in the gutter that grounds the pavement onto the road), the pavement does not (it clears
-      // the kerb top by 2 cm, so all it could contribute is a sub-centimetre acne fringe).
-      m.castShadow = cast;
-      group.add(m);
-    };
-    for (const cell of pav.cells.values()) {
+    for (const cell of pavementPlan.cells.values()) {
       // S4a coarse filter: skip pavement cells outside the resident disk.
-      {
-        const [cx, cz] = cell.key.split(',').map(Number);
-        if (!isResident(cx, cz)) continue;
-      }
-      const rec = (() => {
-        const [cx, cz] = cell.key.split(',').map(Number);
-        return chunkAt((cx + 0.5) * CHUNK, (cz + 0.5) * CHUNK);
-      })();
-      // mk adds the mesh to group; we record the geometry it builds by wrapping.
-      const mkRec = (sink2, mat, name, cast) => {
-        if (sink2.idx.length < 3) return;
-        const g2 = new THREE.BufferGeometry();
-        g2.setAttribute('position', new THREE.Float32BufferAttribute(sink2.pos, 3));
-        g2.setAttribute('normal', new THREE.Float32BufferAttribute(sink2.nor, 3));
-        g2.setAttribute('uv', new THREE.Float32BufferAttribute(sink2.uv, 2));
-        g2.setIndex(sink2.idx);
-        g2.computeBoundingSphere();
-        const m = new THREE.Mesh(g2, mat);
-        m.name = name;
-        m.receiveShadow = true;
-        m.castShadow = cast;
-        group.add(m);
-        if (!rec.dead) rec.geoms.push(g2);
-      };
-      mkRec(cell.kerb, kerbMat, `kerb:${cell.key}`, true);
-      mkRec(cell.walk, walkMat, `walk:${cell.key}`, false);
+      const [cx, cz] = cell.key.split(',').map(Number);
+      if (!isResident(cx, cz)) continue;
+      emitPavementForKey(cell.key);
     }
-    pavementStats = { ...pav.stats, sourceBlocks: built.blocks.length };
+    pavementStats = { ...pavementPlan.stats, sourceBlocks: built.blocks.length };
   }
 
   // ---- sidewalks + kerbs ---------------------------------------------
@@ -2492,164 +2531,193 @@ export function createWorld(scene, { roadKit, mapDoc = null }) {
     return f;
   }
 
-  for (const b of visitOrder(blocks)) {
-    // S4a coarse filter: skip emission for blocks outside the resident disk.
-    // Only this iteration is gated. world.blocks / blockIndex hold every block ONLY while the
-    // planner keep filter is off (S4b-1): under `#chunkres=N` the fill itself is subsetted, so the
-    // collision list is a subset too, and `physics.js:922`, `camera.js:251` and `main.js:223` all
-    // read that same subsetted list. Streaming collision with the origin is S4b-2's.
-    if (!isResident(Math.floor(b.cx / CHUNK), Math.floor(b.cz / CHUNK))) continue;
-    {
-      const rec = chunkAt(b.cx, b.cz);
-      if (!rec.dead) rec.stats.blocks++;
-    }
-      const rb = atRng(b.cx, b.cz, S_BLOCK);
-    const prof = profileOf(b);
-    const innerB = prof.rich;
-    // The mass grid, sized from the block rather than fixed at 2 x 2. On a grid block
-    // (bw = bd = 120) this is exactly 2 x 2 and `n` is exactly the `rngInt(rb, 3, 4)` /
-    // `rngInt(rb, 3, 3)` it replaces, so the draw and the stream are unchanged on the default path.
-    const cols = massGrid(b.bw), rows = massGrid(b.bd);
-    const nCells = cols * rows;
-    const n = rngInt(rb, Math.max(1, Math.round(prof.massFill[0] * nCells)),
-      Math.max(1, Math.round(prof.massFill[1] * nCells)));
-    const cells = [];
-    for (let i = 0; i < cols; i++) for (let j = 0; j < rows; j++) cells.push([i, j]);
-    for (let k = cells.length - 1; k > 0; k--) {
-      const m = Math.floor(rb() * (k + 1)); [cells[k], cells[m]] = [cells[m], cells[k]];
-    }
-    for (let k = 0; k < Math.min(n, cells.length); k++) {
-      const [ci, cj] = cells[k];
-      const cw = b.bw / cols, cd = b.bd / rows;
-      const px = b.cx - b.bw / 2 + cw * (ci + 0.5) + rngRange(rb, -3, 3);
-      const pz = b.cz - b.bd / 2 + cd * (cj + 0.5) + rngRange(rb, -3, 3);
-      const w = cw * rngRange(rb, 0.66, 0.94);
-      const d = cd * rngRange(rb, 0.66, 0.94);
-      const base = prof.towerH(rb);
-      let h = base * (rb() < 0.14 ? 1.65 : 1.0);
-      // SLENDERNESS CLAMP, GRAPH ONLY. A grid block's mass is never narrower than 39.6 m, so a
-      // 40-138 m downtown shaft is at worst 5.75:1 and the ratio never binds; `createBlocks`
-      // produces plots down to 6 m wide, where the same draw is a 138 m needle on a 6 m footprint.
-      // Gated on `b.district` - which only a graph block carries - so the default path cannot
-      // reach it and the seven scenes cannot move. Drawn AFTER `h`, so the stream is untouched.
-      if (b.district) h = Math.min(h, Math.min(w, d) * MAX_SLENDER);
-      const style = rngPick(rb, prof.towerStyles);
-
-      // storefront podium with its own heavy cornice
-      const tm = towerMesh[style];
-      // Painted masses. A glass curtain wall stays near-neutral (the texture's own
-      // blue-grey IS its colour); masonry and rendered concrete take real paint.
-      const shaftPaint = facadePaint(sink, rb, PAINT_CHANCE[style] ?? 0.35);
-      push(podiumMesh, px, PODIUM_H / 2 + 0.2, pz, 0, 0, w + 1.5, PODIUM_H, d + 1.5,
-        facadePaint(sink, rb, 0.55));
-      push(capMesh, px, PODIUM_H + 0.55, pz, 0, 0, w + 3.0, 0.75, d + 3.0);
-      push(capMesh, px, PODIUM_H + 1.05, pz, 0, 0, w + 2.0, 0.35, d + 2.0);
-      storefrontBand(sink, rb, px, pz, w + 1.5, d + 1.5, style, FACES);
-
-      // ---- stepped massing: 1-3 shafts, each setting back from the one below ----
-      const steps = h > 70 ? rngInt(rb, 2, 3) : (h > 34 ? rngInt(rb, 1, 2) : 1);
-      let sy = PODIUM_H, sw = w, sd = d;
-      for (let st = 0; st < steps; st++) {
-        const last = st === steps - 1;
-        const frac = last ? 1 : rngRange(rb, 0.42, 0.66);
-        const top = sy + (h - sy) * frac;
-        push(tm, px, sy + (top - sy) / 2 + 0.2, pz, 0, 0, sw, top - sy, sd, shaftPaint);
-        facadeDetail(sink, rb, px, pz, sw, sd, sy, top, style, innerB && st === 0);
-        facadeGrid(sink, rb, px, pz, sw, sd, sy, top, style, FACES);
-        parapet(px, top + 0.2, pz, sw, sd, last ? rngRange(rb, 1.2, 2.4) : rngRange(rb, 0.9, 1.5),
-          last ? 1.2 : 0.9);
-        if (last) {
-          rooftop(sink, rb, px, top + 0.2, pz, sw, sd, h > 60);
-        } else if (rb() < 0.7) {
-          // the setback terrace carries its own plant so the shoulder is never bare
-          push(plantMesh, px + rngRange(rb, -sw * 0.3, sw * 0.3), top + 1.4,
-            pz + rngRange(rb, -sd * 0.3, sd * 0.3), 0, 0,
-            rngRange(rb, 1.6, 4), rngRange(rb, 1.4, 2.6), rngRange(rb, 1.6, 4));
-        }
-        // record the outer walls as sign frontages before we shrink
-        if (st === 0) {
-          for (const ry of FACES) {
-            const nx = Math.sin(ry), nz = Math.cos(ry);
-            const half = Math.abs(nx) > 0.5 ? sw / 2 : sd / 2;
-            frontages.push(canonFrontage({
-              x: px + nx * half, z: pz + nz * half,
-              ry, along: Math.abs(nx) > 0.5 ? sd : sw, h: top, big: true,
-            }, px, pz));
-          }
-        }
-        sy = top;
-        sw *= rngRange(rb, 0.62, 0.84);
-        sd *= rngRange(rb, 0.62, 0.84);
+  /**
+   * MASS_TOWERS for one block. S4b-2a; boot walks visitOrder and call this, emitCells filters by key.
+   * Global `towers` / `frontages` still receive entries (registry ownership is S4b-2b).
+   */
+  function emitMassTowersForBlock(b) {
+      {
+        const rec = chunkAt(b.cx, b.cz);
+        if (!rec.dead) rec.stats.blocks++;
       }
-      towers.push({ x: px, z: pz, w, d, h, style });
-      // AO skirt where the building meets the pavement. The tower box is axis
-      // aligned, so w and d are already the pad's own half-extents: the old
-      // Math.max() drew a circle CIRCUMSCRIBING the plan and pushed the skirt
-      // out into the road on the short axis. Measured over the whole scene the
-      // 610 building skirts carried 94.8% of all alpha-weighted pad area
-      // (834,580 of 880,139 m2) against 1.9% for the 2667 parked cars, so this
-      // is where the pads actually cover the frame.
-      shadowAt(px, pz, 0.24, w * 0.78, 0.85, 0, d * 0.78);
+      const rb = atRng(b.cx, b.cz, S_BLOCK);
+      const prof = profileOf(b);
+      const innerB = prof.rich;
+      // The mass grid, sized from the block rather than fixed at 2 x 2. On a grid block
+      // (bw = bd = 120) this is exactly 2 x 2 and `n` is exactly the `rngInt(rb, 3, 4)` /
+      // `rngInt(rb, 3, 3)` it replaces, so the draw and the stream are unchanged on the default path.
+      const cols = massGrid(b.bw), rows = massGrid(b.bd);
+      const nCells = cols * rows;
+      const n = rngInt(rb, Math.max(1, Math.round(prof.massFill[0] * nCells)),
+        Math.max(1, Math.round(prof.massFill[1] * nCells)));
+      const cells = [];
+      for (let i = 0; i < cols; i++) for (let j = 0; j < rows; j++) cells.push([i, j]);
+      for (let k = cells.length - 1; k > 0; k--) {
+        const m = Math.floor(rb() * (k + 1)); [cells[k], cells[m]] = [cells[m], cells[k]];
+      }
+      for (let k = 0; k < Math.min(n, cells.length); k++) {
+        const [ci, cj] = cells[k];
+        const cw = b.bw / cols, cd = b.bd / rows;
+        const px = b.cx - b.bw / 2 + cw * (ci + 0.5) + rngRange(rb, -3, 3);
+        const pz = b.cz - b.bd / 2 + cd * (cj + 0.5) + rngRange(rb, -3, 3);
+        const w = cw * rngRange(rb, 0.66, 0.94);
+        const d = cd * rngRange(rb, 0.66, 0.94);
+        const base = prof.towerH(rb);
+        let h = base * (rb() < 0.14 ? 1.65 : 1.0);
+        // SLENDERNESS CLAMP, GRAPH ONLY. A grid block's mass is never narrower than 39.6 m, so a
+        // 40-138 m downtown shaft is at worst 5.75:1 and the ratio never binds; `createBlocks`
+        // produces plots down to 6 m wide, where the same draw is a 138 m needle on a 6 m footprint.
+        // Gated on `b.district` - which only a graph block carries - so the default path cannot
+        // reach it and the seven scenes cannot move. Drawn AFTER `h`, so the stream is untouched.
+        if (b.district) h = Math.min(h, Math.min(w, d) * MAX_SLENDER);
+        const style = rngPick(rb, prof.towerStyles);
+
+        // storefront podium with its own heavy cornice
+        const tm = towerMesh[style];
+        // Painted masses. A glass curtain wall stays near-neutral (the texture's own
+        // blue-grey IS its colour); masonry and rendered concrete take real paint.
+        const shaftPaint = facadePaint(sink, rb, PAINT_CHANCE[style] ?? 0.35);
+        push(podiumMesh, px, PODIUM_H / 2 + 0.2, pz, 0, 0, w + 1.5, PODIUM_H, d + 1.5,
+          facadePaint(sink, rb, 0.55));
+        push(capMesh, px, PODIUM_H + 0.55, pz, 0, 0, w + 3.0, 0.75, d + 3.0);
+        push(capMesh, px, PODIUM_H + 1.05, pz, 0, 0, w + 2.0, 0.35, d + 2.0);
+        storefrontBand(sink, rb, px, pz, w + 1.5, d + 1.5, style, FACES);
+
+        // ---- stepped massing: 1-3 shafts, each setting back from the one below ----
+        const steps = h > 70 ? rngInt(rb, 2, 3) : (h > 34 ? rngInt(rb, 1, 2) : 1);
+        let sy = PODIUM_H, sw = w, sd = d;
+        for (let st = 0; st < steps; st++) {
+          const last = st === steps - 1;
+          const frac = last ? 1 : rngRange(rb, 0.42, 0.66);
+          const top = sy + (h - sy) * frac;
+          push(tm, px, sy + (top - sy) / 2 + 0.2, pz, 0, 0, sw, top - sy, sd, shaftPaint);
+          facadeDetail(sink, rb, px, pz, sw, sd, sy, top, style, innerB && st === 0);
+          facadeGrid(sink, rb, px, pz, sw, sd, sy, top, style, FACES);
+          parapet(px, top + 0.2, pz, sw, sd, last ? rngRange(rb, 1.2, 2.4) : rngRange(rb, 0.9, 1.5),
+            last ? 1.2 : 0.9);
+          if (last) {
+            rooftop(sink, rb, px, top + 0.2, pz, sw, sd, h > 60);
+          } else if (rb() < 0.7) {
+            // the setback terrace carries its own plant so the shoulder is never bare
+            push(plantMesh, px + rngRange(rb, -sw * 0.3, sw * 0.3), top + 1.4,
+              pz + rngRange(rb, -sd * 0.3, sd * 0.3), 0, 0,
+              rngRange(rb, 1.6, 4), rngRange(rb, 1.4, 2.6), rngRange(rb, 1.6, 4));
+          }
+          // record the outer walls as sign frontages before we shrink
+          if (st === 0) {
+            for (const ry of FACES) {
+              const nx = Math.sin(ry), nz = Math.cos(ry);
+              const half = Math.abs(nx) > 0.5 ? sw / 2 : sd / 2;
+              if (!suppressRegistryPush) frontages.push(canonFrontage({
+                x: px + nx * half, z: pz + nz * half,
+                ry, along: Math.abs(nx) > 0.5 ? sd : sw, h: top, big: true,
+              }, px, pz));
+            }
+          }
+          sy = top;
+          sw *= rngRange(rb, 0.62, 0.84);
+          sd *= rngRange(rb, 0.62, 0.84);
+        }
+        if (!suppressRegistryPush) towers.push({ x: px, z: pz, w, d, h, style });
+        // AO skirt where the building meets the pavement. The tower box is axis
+        // aligned, so w and d are already the pad's own half-extents: the old
+        // Math.max() drew a circle CIRCUMSCRIBING the plan and pushed the skirt
+        // out into the road on the short axis. Measured over the whole scene the
+        // 610 building skirts carried 94.8% of all alpha-weighted pad area
+        // (834,580 of 880,139 m2) against 1.9% for the 2667 parked cars, so this
+        // is where the pads actually cover the frame.
+        shadowAt(px, pz, 0.24, w * 0.78, 0.85, 0, d * 0.78);
+      }
+  }
+  function emitMassTowersForKey(key) {
+    const [kcx, kcz] = key.split(',').map(Number);
+    for (const b of visitOrder(blocks)) {
+      if (Math.floor(b.cx / CHUNK) !== kcx || Math.floor(b.cz / CHUNK) !== kcz) continue;
+      emitMassTowersForBlock(b);
     }
+  }
+
+  // S4a coarse filter: skip emission for blocks outside the resident disk.
+  // Only this iteration is gated. world.blocks / blockIndex hold every block ONLY while the
+  // planner keep filter is off (S4b-1): under `#chunkres=N` the fill itself is subsetted, so the
+  // collision list is a subset too, and `physics.js:922`, `camera.js:251` and `main.js:223` all
+  // read that same subsetted list. Streaming collision with the origin is S4b-2c's.
+  // Boot walks visitOrder so frontages/towers push order matches pre-S4b-2a (signage depends on it).
+  for (const b of visitOrder(blocks)) {
+    if (!isResident(Math.floor(b.cx / CHUNK), Math.floor(b.cz / CHUNK))) continue;
+    emitMassTowersForBlock(b);
   }
 
   // ---- perimeter street wall ------------------------------------------------
   // Low-rise infill hugging every block edge so the canyon is a continuous,
   // stepped, greebled wall instead of isolated prisms behind an empty apron.
+  /**
+   * STREET_WALL for one block. S4b-2a pure per-cell phase (via emitStreetWallForKey).
+   */
+  function emitStreetWallForBlock(b) {
+      const rb = atRng(b.cx, b.cz, S_WALL);
+      const prof = profileOf(b);
+      for (const ry of FACES) {
+        const nx = Math.sin(ry), nz = Math.cos(ry);
+        const alongX = Math.abs(nx) < 0.5;
+        const len = alongX ? b.bw : b.bd;
+        const ex = b.cx + nx * b.bw / 2, ez = b.cz + nz * b.bd / 2;
+        const tx = -nz, tz = nx;
+        let t = -len / 2 + rngRange(rb, 1, 6);
+        while (t < len / 2 - 12) {
+          const seg = Math.min(rngRange(rb, 20, 40), len / 2 - t);
+          if (seg < 12) break;
+          // The wall is `dep` deep measured INWARD from the building line. On a grid block the
+          // available depth is 120 m and 13-22 never binds; a graph block's building line can be 6 m
+          // across, and an unclamped 22 m box would come straight out of the far side of the block
+          // and stand in the road. That is risk 12 from the building side and it is the failure the
+          // AABB rule exists to prevent. Clamped AFTER the draw, so the stream does not move.
+          const depAvail = alongX ? b.bd : b.bw;
+          const dep = Math.min(rngRange(rb, 13, 22), Math.max(3.0, depAvail - 1.2));
+          const h = prof.wallH(rb);
+          const cx = ex + tx * (t + seg / 2) - nx * (dep / 2 - 0.6);
+          const cz = ez + tz * (t + seg / 2) - nz * (dep / 2 - 0.6);
+          const ww = alongX ? seg - 1.2 : dep;
+          const dd = alongX ? dep : seg - 1.2;
+          const style = rngPick(rb, prof.wallStyles);
+          push(podiumMesh, cx, PODIUM_H / 2 + 0.2, cz, 0, 0, ww + 0.8, PODIUM_H, dd + 0.8,
+            facadePaint(sink, rb, 0.58));
+          push(capMesh, cx, PODIUM_H + 0.5, cz, 0, 0, ww + 2.4, 0.7, dd + 2.4);
+          // The street wall is the closest architecture to the lens in every downtown
+          // frame, so it carries the higher paint chance of the two mass generators.
+          push(towerMesh[style], cx, PODIUM_H + (h - PODIUM_H) / 2 + 0.2, cz,
+            0, 0, ww, h - PODIUM_H, dd, facadePaint(sink, rb, (PAINT_CHANCE[style] ?? 0.35) * 1.25));
+          facadeDetail(sink, rb, cx, cz, ww, dd, PODIUM_H, h, style, true);
+          // street wall: only the outward face and the two returns are ever seen,
+          // so the fine kit is skipped on the buried inner face.
+          const outFaces = [ry, ry + Math.PI / 2, ry - Math.PI / 2];
+          facadeGrid(sink, rb, cx, cz, ww, dd, PODIUM_H, h, style, outFaces);
+          storefrontBand(sink, rb, cx, cz, ww + 0.8, dd + 0.8, style, outFaces);
+          parapet(cx, h + 0.2, cz, ww, dd, rngRange(rb, 1.0, 2.2), 1.1);
+          rooftop(sink, rb, cx, h + 0.2, cz, ww, dd, false);
+          if (!suppressRegistryPush) frontages.push(canonFrontage({
+            x: ex + tx * (t + seg / 2) + nx * 0.6, z: ez + tz * (t + seg / 2) + nz * 0.6,
+            ry, along: seg, h, big: false,
+          }, cx, cz));
+          // same isotropic bug as the tower skirt, and worse here: a street-wall
+          // segment is `seg` long by `dep` deep, so a circle of radius
+          // max(seg,dep)*0.62 threw the skirt most of the way across the road.
+          shadowAt(cx, cz, 0.24, ww * 0.62, 0.75, 0, dd * 0.62);
+          t += seg + rngRange(rb, 1.5, 9);
+        }
+      }
+  }
+  function emitStreetWallForKey(key) {
+    const [kcx, kcz] = key.split(',').map(Number);
+    for (const b of visitOrder(blocks)) {
+      if (Math.floor(b.cx / CHUNK) !== kcx || Math.floor(b.cz / CHUNK) !== kcz) continue;
+      emitStreetWallForBlock(b);
+    }
+  }
   for (const b of visitOrder(blocks)) {
     // S4a coarse filter: wall emission follows the same residency disk as mass towers.
     if (!isResident(Math.floor(b.cx / CHUNK), Math.floor(b.cz / CHUNK))) continue;
-      const rb = atRng(b.cx, b.cz, S_WALL);
-    const prof = profileOf(b);
-    for (const ry of FACES) {
-      const nx = Math.sin(ry), nz = Math.cos(ry);
-      const alongX = Math.abs(nx) < 0.5;
-      const len = alongX ? b.bw : b.bd;
-      const ex = b.cx + nx * b.bw / 2, ez = b.cz + nz * b.bd / 2;
-      const tx = -nz, tz = nx;
-      let t = -len / 2 + rngRange(rb, 1, 6);
-      while (t < len / 2 - 12) {
-        const seg = Math.min(rngRange(rb, 20, 40), len / 2 - t);
-        if (seg < 12) break;
-        // The wall is `dep` deep measured INWARD from the building line. On a grid block the
-        // available depth is 120 m and 13-22 never binds; a graph block's building line can be 6 m
-        // across, and an unclamped 22 m box would come straight out of the far side of the block
-        // and stand in the road. That is risk 12 from the building side and it is the failure the
-        // AABB rule exists to prevent. Clamped AFTER the draw, so the stream does not move.
-        const depAvail = alongX ? b.bd : b.bw;
-        const dep = Math.min(rngRange(rb, 13, 22), Math.max(3.0, depAvail - 1.2));
-        const h = prof.wallH(rb);
-        const cx = ex + tx * (t + seg / 2) - nx * (dep / 2 - 0.6);
-        const cz = ez + tz * (t + seg / 2) - nz * (dep / 2 - 0.6);
-        const ww = alongX ? seg - 1.2 : dep;
-        const dd = alongX ? dep : seg - 1.2;
-        const style = rngPick(rb, prof.wallStyles);
-        push(podiumMesh, cx, PODIUM_H / 2 + 0.2, cz, 0, 0, ww + 0.8, PODIUM_H, dd + 0.8,
-          facadePaint(sink, rb, 0.58));
-        push(capMesh, cx, PODIUM_H + 0.5, cz, 0, 0, ww + 2.4, 0.7, dd + 2.4);
-        // The street wall is the closest architecture to the lens in every downtown
-        // frame, so it carries the higher paint chance of the two mass generators.
-        push(towerMesh[style], cx, PODIUM_H + (h - PODIUM_H) / 2 + 0.2, cz,
-          0, 0, ww, h - PODIUM_H, dd, facadePaint(sink, rb, (PAINT_CHANCE[style] ?? 0.35) * 1.25));
-        facadeDetail(sink, rb, cx, cz, ww, dd, PODIUM_H, h, style, true);
-        // street wall: only the outward face and the two returns are ever seen,
-        // so the fine kit is skipped on the buried inner face.
-        const outFaces = [ry, ry + Math.PI / 2, ry - Math.PI / 2];
-        facadeGrid(sink, rb, cx, cz, ww, dd, PODIUM_H, h, style, outFaces);
-        storefrontBand(sink, rb, cx, cz, ww + 0.8, dd + 0.8, style, outFaces);
-        parapet(cx, h + 0.2, cz, ww, dd, rngRange(rb, 1.0, 2.2), 1.1);
-        rooftop(sink, rb, cx, h + 0.2, cz, ww, dd, false);
-        frontages.push(canonFrontage({
-          x: ex + tx * (t + seg / 2) + nx * 0.6, z: ez + tz * (t + seg / 2) + nz * 0.6,
-          ry, along: seg, h, big: false,
-        }, cx, cz));
-        // same isotropic bug as the tower skirt, and worse here: a street-wall
-        // segment is `seg` long by `dep` deep, so a circle of radius
-        // max(seg,dep)*0.62 threw the skirt most of the way across the road.
-        shadowAt(cx, cz, 0.24, ww * 0.62, 0.75, 0, dd * 0.62);
-        t += seg + rngRange(rb, 1.5, 9);
-      }
-    }
+    emitStreetWallForBlock(b);
   }
 
   // ---- signage: cantilevered billboards, blades, awnings, gantries ----------
@@ -2811,91 +2879,95 @@ export function createWorld(scene, { roadKit, mapDoc = null }) {
   }
 
   // ---- what hangs off each street frontage ----
-  for (const f of visitOrder(frontages)) {
+  /** SIGNAGE (map-wide accumulators). Re-callable under emitOnlyKey for S4b-2a cycle restore. */
+  function emitSignageGraph() {
+    for (const f of visitOrder(frontages)) {
       const rf = atRng(f.x, f.z, S_FRONT);
-    const nx = Math.sin(f.ry), nz = Math.cos(f.ry);
-    // cantilevered fascia billboard on bracket arms
-    if (rf() < (f.big ? 0.5 : 0.7)) {
-      const w = Math.min(f.along * 0.72, rngRange(rf, 5, 14));
-      placeSign(sink, rf, f.x, rngRange(rf, 9.2, Math.max(10, Math.min(f.h - 2, 17))), f.z, f.ry,
-        w, w * rngRange(rf, 0.34, 0.58),
-        { reach: rngRange(rf, 2.0, 4.6), flood: rf() < 0.5 });
-    }
-    // blade sign: panel turned 90 deg to the wall so it reads down the street
-    if (rf() < 0.86) {
-      const bh = rngRange(rf, 5, Math.min(15, Math.max(6, f.h * 0.55)));
-      const bw = bh * rngRange(rf, 0.28, 0.42);
-      const out = 1.4 + bw / 2;
-      const ox = f.x + nx * out, oz = f.z + nz * out;
-      const by = rngRange(rf, 8.5, Math.max(9.5, Math.min(f.h - bh * 0.5, 20)));
-      // a blade sign hangs perpendicular to the wall, so the camera sees it from
-      // whichever side it drives up on — it MUST be printed both ways round
-      // sep 0.17 clears the 0.3-deep frame box below (half depth 0.15)
-      panelPair(sink, rf, rngInt(rf, 0, GREEN0 - 1), ox, by, oz, f.ry + Math.PI / 2, bw, bh, -1, 0.17);
-      push(signFrame, ox, by, oz, f.ry + Math.PI / 2, 0, bw + 0.4, bh + 0.4, 0.3);
-      push(strutMesh, f.x + nx * out * 0.5, by + bh * 0.42, f.z + nz * out * 0.5,
-        f.ry, 0, 0.16, 0.16, out);
-      push(braceMesh, f.x + nx * out * 0.5, by + bh * 0.42 - out * 0.3,
-        f.z + nz * out * 0.5, f.ry, 0, 1, 1, out * 1.15);
-    }
-    // LOW blade signs, 3.9-7.4 m — the shop-scale hanging signs. The tall blade
-    // above lives at 8.5-20 m, which in a chase-cam frame is already above the
-    // facade measurement band's busiest rows; every reference puts a second, much
-    // smaller tier of perpendicular signs right over the pavement at first-floor
-    // height, and that tier is the one the camera actually passes through.
-    {
-      const lows = rngInt(rf, 1, 3);
-      for (let i = 0; i < lows; i++) {
-        const lh = rngRange(rf, 1.5, 3.0);
-        const lw = lh * rngRange(rf, 0.52, 1.05);
-        const out = 1.5 + lw / 2;
-        const o = rngRange(rf, -f.along * 0.40, f.along * 0.40);
-        const bx = f.x - nz * o, bz = f.z + nx * o;
-        const ly = rngRange(rf, 3.9, 7.4);
-        // sep 0.12 clears the 0.20-deep frame box below (half depth 0.10)
-        panelPair(sink, rf, rngInt(rf, 0, GREEN0 - 1), bx + nx * out, ly, bz + nz * out,
-          f.ry + Math.PI / 2, lw, lh, -1, 0.12);
-        push(signFrame, bx + nx * out, ly, bz + nz * out, f.ry + Math.PI / 2, 0,
-          lw + 0.22, lh + 0.22, 0.20);
-        // bracket arm off the wall plus its diagonal tie — the pair of thin
-        // casters that put a sign's own shadow on the wall it hangs from
-        push(strutMesh, bx + nx * out * 0.5, ly + lh * 0.44, bz + nz * out * 0.5,
-          f.ry, 0, 0.13, 0.13, out);
-        push(braceMesh, bx + nx * out * 0.5, ly + lh * 0.44 - out * 0.30,
-          bz + nz * out * 0.5, f.ry, 0, 1, 1, out * 1.15);
-        push(signFrame, bx + nx * 0.10, ly + lh * 0.44, bz + nz * 0.10, f.ry, 0,
-          0.34, 0.34, 0.22);
+      const nx = Math.sin(f.ry), nz = Math.cos(f.ry);
+      // cantilevered fascia billboard on bracket arms
+      if (rf() < (f.big ? 0.5 : 0.7)) {
+        const w = Math.min(f.along * 0.72, rngRange(rf, 5, 14));
+        placeSign(sink, rf, f.x, rngRange(rf, 9.2, Math.max(10, Math.min(f.h - 2, 17))), f.z, f.ry,
+          w, w * rngRange(rf, 0.34, 0.58),
+          { reach: rngRange(rf, 2.0, 4.6), flood: rf() < 0.5 });
+      }
+      // blade sign: panel turned 90 deg to the wall so it reads down the street
+      if (rf() < 0.86) {
+        const bh = rngRange(rf, 5, Math.min(15, Math.max(6, f.h * 0.55)));
+        const bw = bh * rngRange(rf, 0.28, 0.42);
+        const out = 1.4 + bw / 2;
+        const ox = f.x + nx * out, oz = f.z + nz * out;
+        const by = rngRange(rf, 8.5, Math.max(9.5, Math.min(f.h - bh * 0.5, 20)));
+        // a blade sign hangs perpendicular to the wall, so the camera sees it from
+        // whichever side it drives up on — it MUST be printed both ways round
+        // sep 0.17 clears the 0.3-deep frame box below (half depth 0.15)
+        panelPair(sink, rf, rngInt(rf, 0, GREEN0 - 1), ox, by, oz, f.ry + Math.PI / 2, bw, bh, -1, 0.17);
+        push(signFrame, ox, by, oz, f.ry + Math.PI / 2, 0, bw + 0.4, bh + 0.4, 0.3);
+        push(strutMesh, f.x + nx * out * 0.5, by + bh * 0.42, f.z + nz * out * 0.5,
+          f.ry, 0, 0.16, 0.16, out);
+        push(braceMesh, f.x + nx * out * 0.5, by + bh * 0.42 - out * 0.3,
+          f.z + nz * out * 0.5, f.ry, 0, 1, 1, out * 1.15);
+      }
+      // LOW blade signs, 3.9-7.4 m — the shop-scale hanging signs. The tall blade
+      // above lives at 8.5-20 m, which in a chase-cam frame is already above the
+      // facade measurement band's busiest rows; every reference puts a second, much
+      // smaller tier of perpendicular signs right over the pavement at first-floor
+      // height, and that tier is the one the camera actually passes through.
+      {
+        const lows = rngInt(rf, 1, 3);
+        for (let i = 0; i < lows; i++) {
+          const lh = rngRange(rf, 1.5, 3.0);
+          const lw = lh * rngRange(rf, 0.52, 1.05);
+          const out = 1.5 + lw / 2;
+          const o = rngRange(rf, -f.along * 0.40, f.along * 0.40);
+          const bx = f.x - nz * o, bz = f.z + nx * o;
+          const ly = rngRange(rf, 3.9, 7.4);
+          // sep 0.12 clears the 0.20-deep frame box below (half depth 0.10)
+          panelPair(sink, rf, rngInt(rf, 0, GREEN0 - 1), bx + nx * out, ly, bz + nz * out,
+            f.ry + Math.PI / 2, lw, lh, -1, 0.12);
+          push(signFrame, bx + nx * out, ly, bz + nz * out, f.ry + Math.PI / 2, 0,
+            lw + 0.22, lh + 0.22, 0.20);
+          // bracket arm off the wall plus its diagonal tie — the pair of thin
+          // casters that put a sign's own shadow on the wall it hangs from
+          push(strutMesh, bx + nx * out * 0.5, ly + lh * 0.44, bz + nz * out * 0.5,
+            f.ry, 0, 0.13, 0.13, out);
+          push(braceMesh, bx + nx * out * 0.5, ly + lh * 0.44 - out * 0.30,
+            bz + nz * out * 0.5, f.ry, 0, 1, 1, out * 1.15);
+          push(signFrame, bx + nx * 0.10, ly + lh * 0.44, bz + nz * 0.10, f.ry, 0,
+            0.34, 0.34, 0.22);
+        }
+      }
+      // storefront awnings right over the pavement — one per shop bay, tucked
+      // under the projecting fascia beam so they shade the glazing behind them
+      const bays = Math.max(1, Math.round(f.along / 6.4));
+      for (let i = 0; i < bays; i++) {
+        if (rf() > 0.90) continue;
+        const bwid = f.along / bays;
+        const o = -f.along / 2 + bwid * (i + 0.5);
+        awning(sink, rf, f.x - Math.cos(f.ry) * o, rngRange(rf, 5.0, 5.7),
+          f.z + Math.sin(f.ry) * o, f.ry, bwid * 0.82, rngRange(rf, 2.1, 3.1));
+      }
+      // vertical banner strip up the pier between windows
+      if (f.big && rf() < 0.3) {
+        const bh2 = rngRange(rf, 10, 22);
+        placeSign(sink, rf, f.x, rngRange(rf, 16, Math.max(18, f.h * 0.55)), f.z, f.ry,
+          bh2 * 0.30, bh2, { reach: rngRange(rf, 0.8, 1.8), frame: false });
       }
     }
-    // storefront awnings right over the pavement — one per shop bay, tucked
-    // under the projecting fascia beam so they shade the glazing behind them
-    const bays = Math.max(1, Math.round(f.along / 6.4));
-    for (let i = 0; i < bays; i++) {
-      if (rf() > 0.90) continue;
-      const bwid = f.along / bays;
-      const o = -f.along / 2 + bwid * (i + 0.5);
-      awning(sink, rf, f.x - Math.cos(f.ry) * o, rngRange(rf, 5.0, 5.7),
-        f.z + Math.sin(f.ry) * o, f.ry, bwid * 0.82, rngRange(rf, 2.1, 3.1));
-    }
-    // vertical banner strip up the pier between windows
-    if (f.big && rf() < 0.3) {
-      const bh2 = rngRange(rf, 10, 22);
-      placeSign(sink, rf, f.x, rngRange(rf, 16, Math.max(18, f.h * 0.55)), f.z, f.ry,
-        bh2 * 0.30, bh2, { reach: rngRange(rf, 0.8, 1.8), frame: false });
-    }
-  }
 
-  // rooftop billboards on the tall masses
-  for (const t of visitOrder(towers)) {
+    // rooftop billboards on the tall masses
+    for (const t of visitOrder(towers)) {
       const rt = atRng(t.x, t.z, S_ROOF);
-    if (t.h > 22 && rt() < 0.62) {
-      const ry = rngPick(rt, FACES);
-      const w = Math.min(Math.max(t.w, t.d) * 0.95, rngRange(rt, 10, 22));
-      // freestanding on the roof: legible from the streets on both sides of it
-      placeSign(sink, rt, t.x, t.h + 3.2 + w * 0.16, t.z, ry, w, w * 0.32,
-        { struts: 3, flood: true, both: true });
+      if (t.h > 22 && rt() < 0.62) {
+        const ry = rngPick(rt, FACES);
+        const w = Math.min(Math.max(t.w, t.d) * 0.95, rngRange(rt, 10, 22));
+        // freestanding on the roof: legible from the streets on both sides of it
+        placeSign(sink, rt, t.x, t.h + 3.2 + w * 0.16, t.z, ry, w, w * 0.32,
+          { struts: 3, flood: true, both: true });
+      }
     }
   }
+  emitSignageGraph();
 
   // ---- gantries: signage cantilevered right over the traffic lanes ----------
   const gantryMesh = pool('gantryMesh', boxGeo, poleMat, { recv: false });
@@ -2970,31 +3042,35 @@ export function createWorld(scene, { roadKit, mapDoc = null }) {
     }
     // coloured spill onto the wall behind
     push(spillMesh, x + nx * 0.16, y, z + nz * 0.16, ry, 0, w * 3.2, h * 3.6, 1, col);
-    neons.push({ x, y, z, color: col, w, h });
+    if (!suppressRegistryPush) neons.push({ x, y, z, color: col, w, h });
   }
 
-  for (const t of visitOrder(towers)) {
+  /** NEON (map-wide accumulators). Re-callable under emitOnlyKey for S4b-2a cycle restore. */
+  function emitNeonGraph() {
+    for (const t of visitOrder(towers)) {
       const rn = atRng(t.x, t.z, S_NEON);
-    if (rn() > 0.62) continue;
-    const ry = rngPick(rn, [0, Math.PI / 2, Math.PI, -Math.PI / 2]);
-    const nx = Math.sin(ry), nz = Math.cos(ry);
-    const half = Math.abs(nx) > 0.5 ? t.w / 2 : t.d / 2;
-    const along = Math.abs(nx) > 0.5 ? t.d : t.w;
-    const w = Math.min(along * 0.6, rngRange(rn, 4, 10));
-    const h = w * rngRange(rn, 0.3, 0.7);
-    neonSign(sink, rn, t.x + nx * (half + 0.6), rngRange(rn, 4.2, 6.6), t.z + nz * (half + 0.6), ry, w, h,
-      rngPick(rn, neonColors));
-    // bulb string along the podium cornice
-    if (rn() < 0.7) {
-      const cnt = Math.max(6, Math.floor(along * 0.42));
-      for (let i = 0; i < cnt; i++) {
-        const o = (i / (cnt - 1) - 0.5) * along * 0.92;
-        push(bulbMesh,
-          t.x + nx * (half + 1.5) - nz * o, PODIUM_H + 1.15, t.z + nz * (half + 1.5) + nx * o,
-          0, 0, 0.34, 0.34, 0.34, 0xffc24a);
+      if (rn() > 0.62) continue;
+      const ry = rngPick(rn, [0, Math.PI / 2, Math.PI, -Math.PI / 2]);
+      const nx = Math.sin(ry), nz = Math.cos(ry);
+      const half = Math.abs(nx) > 0.5 ? t.w / 2 : t.d / 2;
+      const along = Math.abs(nx) > 0.5 ? t.d : t.w;
+      const w = Math.min(along * 0.6, rngRange(rn, 4, 10));
+      const h = w * rngRange(rn, 0.3, 0.7);
+      neonSign(sink, rn, t.x + nx * (half + 0.6), rngRange(rn, 4.2, 6.6), t.z + nz * (half + 0.6), ry, w, h,
+        rngPick(rn, neonColors));
+      // bulb string along the podium cornice
+      if (rn() < 0.7) {
+        const cnt = Math.max(6, Math.floor(along * 0.42));
+        for (let i = 0; i < cnt; i++) {
+          const o = (i / (cnt - 1) - 0.5) * along * 0.92;
+          push(bulbMesh,
+            t.x + nx * (half + 1.5) - nz * o, PODIUM_H + 1.15, t.z + nz * (half + 1.5) + nx * o,
+            0, 0, 0.34, 0.34, 0.34, 0xffc24a);
+        }
       }
     }
   }
+  emitNeonGraph();
 
   // ---- street lights (instanced) -------------------------------------------
   const lampMat = new THREE.MeshBasicMaterial({ color: 0xffd9a0, toneMapped: true });
@@ -3175,10 +3251,9 @@ export function createWorld(scene, { roadKit, mapDoc = null }) {
   }
 
   /** walk each block's perimeter dropping street furniture */
-  for (const b of visitOrder(blocks)) {
-    // S4a coarse filter: props only on resident blocks.
-    if (!isResident(Math.floor(b.cx / CHUNK), Math.floor(b.cz / CHUNK))) continue;
-      const rp = atRng(b.cx, b.cz, S_PROP);
+  /** SIDEWALK_PROPS for one block. S4b-2a pure per-cell phase. */
+  function emitSidewalkPropsForBlock(b) {
+    const rp = atRng(b.cx, b.cz, S_PROP);
     // Palm share is the one prop number the districts move: Palm Bay 0.16, the harbour 0,
     // everywhere else the grid world's 0.075 unchanged. Risk 13 says palm density is per
     // kerb-metre and the graph has 6.5x the centreline, so the fronds are an alpha-test fill item
@@ -3242,6 +3317,18 @@ export function createWorld(scene, { roadKit, mapDoc = null }) {
       }
     }
   }
+  function emitSidewalkPropsForKey(key) {
+    const [kcx, kcz] = key.split(',').map(Number);
+    for (const b of visitOrder(blocks)) {
+      if (Math.floor(b.cx / CHUNK) !== kcx || Math.floor(b.cz / CHUNK) !== kcz) continue;
+      emitSidewalkPropsForBlock(b);
+    }
+  }
+  for (const b of visitOrder(blocks)) {
+    // S4a coarse filter: props only on resident blocks.
+    if (!isResident(Math.floor(b.cx / CHUNK), Math.floor(b.cz / CHUNK))) continue;
+    emitSidewalkPropsForBlock(b);
+  }
 
   // ---- pedestrian guard railing along the kerb --------------------------------
   // `daytime-downtown-03` runs a bright railing the full length of the far kerb
@@ -3251,9 +3338,8 @@ export function createWorld(scene, { roadKit, mapDoc = null }) {
   // block edge, so the kerb keeps its gaps for parking and crossings.
   const guardPost = pool('guardPost', boxGeo, railMat, { recv: false });
   const guardRail = pool('guardRail', boxGeo, railMat, { recv: false });
-  for (const b of visitOrder(blocks)) {
-    // S4a coarse filter: guard rails only on resident blocks.
-    if (!isResident(Math.floor(b.cx / CHUNK), Math.floor(b.cz / CHUNK))) continue;
+  /** GUARD_RAIL for one block. S4b-2a pure per-cell phase. */
+  function emitGuardRailForBlock(b) {
     const off = 0.55;   // stand-off from the kerb face, clear of the 22 cm step
     const edges = [
       { x0: b.cx - b.w / 2, z0: b.cz + b.d / 2 - off, ux: 1, uz: 0, len: b.w, ry: 0 },
@@ -3281,6 +3367,18 @@ export function createWorld(scene, { roadKit, mapDoc = null }) {
         }
       }
     }
+  }
+  function emitGuardRailForKey(key) {
+    const [kcx, kcz] = key.split(',').map(Number);
+    for (const b of visitOrder(blocks)) {
+      if (Math.floor(b.cx / CHUNK) !== kcx || Math.floor(b.cz / CHUNK) !== kcz) continue;
+      emitGuardRailForBlock(b);
+    }
+  }
+  for (const b of visitOrder(blocks)) {
+    // S4a coarse filter: guard rails only on resident blocks.
+    if (!isResident(Math.floor(b.cx / CHUNK), Math.floor(b.cz / CHUNK))) continue;
+    emitGuardRailForBlock(b);
   }
 
   // ---- parked cars ----------------------------------------------------------
@@ -3671,7 +3769,11 @@ export function createWorld(scene, { roadKit, mapDoc = null }) {
   // `atRng` keyed on coordinates was the stand-in for exactly this. An id is a better key than a
   // position because it cannot collide when two things sit at the same point.
   let furnitureStats = null;
-  if (GRAPH) {
+  /**
+   * FURNITURE_GRAPH. S4b-2a: whole graph walk; pushMat's emitOnlyKey restricts landing cell on re-emit.
+   */
+  function emitFurnitureGraph() {
+    if (!GRAPH || !roadPlan) return;
     const edgeRng = (e) => makeRng(cellHash(e.id, 0, S_EDGE));
     const nodeRng = (n) => makeRng(cellHash(n.id, 0, S_NODE));
 
@@ -4029,6 +4131,12 @@ export function createWorld(scene, { roadKit, mapDoc = null }) {
     }
     furnitureStats = { ...stat, motorwayEdges: motorways.length, deckSkipped, ...furnitureStats };
   }
+  function emitFurnitureForKey(key) {
+    emitOnlyKey = key;
+    try { emitFurnitureGraph(); }
+    finally { emitOnlyKey = null; }
+  }
+  emitFurnitureGraph();
 
   // ---- contact shadows ------------------------------------------------------
   const contactTex = makeContactTex();
@@ -4220,7 +4328,132 @@ export function createWorld(scene, { roadKit, mapDoc = null }) {
   // triangles, of which 0.19% were within 200 m of the camera and 92% beyond 400 m, ALL
   // submitted, EVERY frame — and not once per frame but three times, because the colour pass,
   // the shadow pass and SSAO's depth/normal prepass each re-submit the whole scene.
-  const buildStats = finalize();
+  let buildStats = finalize();
+
+  /**
+   * disposeCells(keys) - S4b-2a. Tear down cell-owned meshes/geoms for each key.
+   * Does NOT rewrite map-wide registries (towers/frontages/poles/parkedCars) - that is S4b-2b.
+   */
+  function disposeCells(keys) {
+    if (!keys || !keys.length) return { disposed: 0, releasedHidden: 0 };
+    let disposed = 0, releasedHidden = 0;
+    for (const key of keys) {
+      const rec = resident.get(key);
+      if (!rec) continue;
+      // Remove every mesh this cell owns (InstancedMeshes from finalize + road/pavement Meshes).
+      for (const mesh of rec.meshes) {
+        releasedHidden += roadKit.releaseHidden(mesh) | 0;
+        if (mesh.parent) mesh.parent.remove(mesh);
+        // InstancedMesh shares pool geometry/material - NEVER mesh.dispose() (that frees the shared
+        // BufferGeometry and Material). Drop instance attribute refs only.
+        if (mesh.isInstancedMesh) {
+          mesh.instanceMatrix = null;
+          mesh.instanceColor = null;
+        }
+      }
+      // Dispose chunk-owned BufferGeometry (roads, kerbs, pavement). Instanced pool geos are shared
+      // and are NOT listed in rec.geoms.
+      for (const g of rec.geoms) {
+        if (g && typeof g.dispose === 'function') g.dispose();
+      }
+      // Free descriptor staging (already null after finalize; clear remap so resolve() cannot hit ghosts).
+      for (const d of rec.descs.values()) {
+        sink.remap.delete(d);
+        if (d.m) { d.m = null; }
+        if (d.c) { d.c = null; }
+        d.cap = 0;
+        d.count = 0;
+      }
+      rec.meshes.length = 0;
+      rec.geoms.length = 0;
+      rec.descs.clear();
+      resident.delete(key);
+      disposed++;
+    }
+    return { disposed, releasedHidden };
+  }
+
+  /**
+   * emitCells(keys) - S4b-2a. Run the 8 pure per-cell phases for each key and finalize them.
+   * Keys must already be within RES (isResident); otherwise chunkAt returns deadRec.
+   */
+  function emitCells(keys) {
+    if (!keys || !keys.length) return { emitted: 0 };
+    const list = [...keys];
+    suppressRegistryPush = true;
+    try {
+      for (const key of list) {
+        if (resident.has(key)) {
+          // Already present - caller should dispose first. Refuse double-emit into a live cell.
+          continue;
+        }
+        // Ensure ChunkRec exists before phases push into it (chunkAt creates on first touch).
+        const [cx, cz] = key.split(',').map(Number);
+        if (!Number.isFinite(cx) || !Number.isFinite(cz)) continue;
+        if (!isResident(cx, cz)) continue;
+        chunkAt((cx + 0.5) * CHUNK, (cz + 0.5) * CHUNK);
+        // 8 pure per-cell phases (recon section 4) + signage/neon restore under emitOnlyKey
+        // so disposed cell-owned InstancedMeshes come back byte-identical.
+        emitRoadsForKey(key);
+        emitPavementForKey(key);
+        emitMassTowersForKey(key);
+        emitStreetWallForKey(key);
+        emitOnlyKey = key;
+        try {
+          emitSignageGraph();
+          emitNeonGraph();
+        } finally { emitOnlyKey = null; }
+        emitSidewalkPropsForKey(key);
+        emitGuardRailForKey(key);
+        emitFurnitureForKey(key);
+      }
+    } finally {
+      suppressRegistryPush = false;
+      emitOnlyKey = null;
+    }
+    // FINALIZE for just these keys (force cell-owned meshes).
+    const fin = finalize(list);
+    buildStats = {
+      meshes: (buildStats.meshes || 0) + fin.meshes,
+      cells: (buildStats.cells || 0) + fin.cells,
+      globalMeshes: buildStats.globalMeshes,
+      instances: (buildStats.instances || 0) + fin.instances,
+      states: fin.states,
+      residentCells: resident.size,
+      freedBytes: (buildStats.freedBytes || 0) + fin.freedBytes,
+    };
+    return { emitted: list.filter((k) => resident.has(k)).length, finalize: fin };
+  }
+
+  /**
+   * world.settle() - S4b-2a. BINARY pre-tick guarantee: every resident cell is fully
+   * built/finalized before the first tick(FIXED_DT). Boot already emitted the resident set
+   * and called finalize(), so with no streaming queue this is an assert-and-return.
+   * S4b-2c will drain a build queue here.
+   */
+  function settle() {
+    // Every resident ChunkRec must have finished finalize: staging buffers freed (d.m null).
+    let unfinalized = 0;
+    for (const rec of resident.values()) {
+      for (const d of rec.descs.values()) {
+        if (d.m) unfinalized++;
+      }
+    }
+    if (unfinalized > 0) {
+      // Drain: finalize any cell still holding staging (should not happen after boot).
+      finalize();
+    }
+    // Post-condition: all resident cells present and finalized.
+    for (const rec of resident.values()) {
+      for (const d of rec.descs.values()) {
+        if (d.m) throw new Error(`settle: cell ${rec.key} still has unfinalized staging`);
+      }
+    }
+    return {
+      residentCells: resident.size,
+      ok: true,
+    };
+  }
 
   // ---- STATIC TRANSFORMS, AND A SAVING THAT IS NOT BEING DELIVERED ------------------------
   //
@@ -4354,6 +4587,10 @@ export function createWorld(scene, { roadKit, mapDoc = null }) {
     carKit, parkedCounts: parkCounts, parkedCars: parkedBodies, poles,
     /** What the spatial chunking pass did, so a harness can assert it actually ran. */
     chunkStats,
+    // S4b-2a: cell build/dispose API and pre-tick settle gate.
+    emitCells,
+    disposeCells,
+    settle,
     // ---- OBJECTS THE SSAO NORMAL/DEPTH PREPASS MUST NOT SEE -------------------------------
     // Ambient occlusion is a property of SURFACES. These two are additive glow quads lying a few
     // centimetres above the tarmac with `depthWrite: false` in the real frame — the wet lamp/neon

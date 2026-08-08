@@ -1,0 +1,43 @@
+
+== 1. CLAIM A, LIVE: does spinDamp fire inside substep()? Counter injected at the line.
+  --- PRE-FIX floor 3.421 [SERVED floor=3.421 spinDamp=6.0 hbCmdInDriftArm=true probe=true]
+    5-tap chain @130 (D held, 5 x 150 ms Space)
+      DRIFT/E-BRAKE arm: spinDamp fired 0 of 844 substeps | floor in use 3.421 | rAllow max 5.500 | max excess -1.1 rad/s | max impulse 0.00 rad/s
+      ORDINARY-CORNER arm: fired 87 of 122 | max excess +0.0 rad/s | max impulse 0.18
+      -> nose +188.3 deg | course +183.2 | peak signed slip +65.5 | worst wrong-way yaw -27.1 deg/s | 130->37 km/h
+    Space HELD 3 s @250
+      DRIFT/E-BRAKE arm: spinDamp fired 0 of 854 substeps | floor in use 3.421 | rAllow max 5.948 | max excess -1.0 rad/s | max impulse 0.00 rad/s
+      ORDINARY-CORNER arm: fired 9 of 9 | max excess +0.0 rad/s | max impulse 0.01
+      -> nose +100.5 deg | course +44.6 | peak signed slip +67.9 | worst wrong-way yaw -56.3 deg/s | 245->14 km/h
+  --- SHIPPED floor 0.880 [SERVED floor=0.88 spinDamp=6.0 hbCmdInDriftArm=true probe=true]
+    5-tap chain @130 (D held, 5 x 150 ms Space)
+      DRIFT/E-BRAKE arm: spinDamp fired 126 of 844 substeps | floor in use 0.880 | rAllow max 3.016 | max excess +1.2 rad/s | max impulse 7.30 rad/s
+      ORDINARY-CORNER arm: fired 101 of 137 | max excess +0.0 rad/s | max impulse 0.18
+      -> nose +191.9 deg | course +186.6 | peak signed slip +64.7 | worst wrong-way yaw -15.6 deg/s | 130->36 km/h
+    Space HELD 3 s @250
+      DRIFT/E-BRAKE arm: spinDamp fired 148 of 867 substeps | floor in use 0.880 | rAllow max 3.133 | max excess +1.5 rad/s | max impulse 8.94 rad/s
+      ORDINARY-CORNER arm: fired 4 of 4 | max excess +0.0 rad/s | max impulse 0.05
+      -> nose +99.5 deg | course +42.7 | peak signed slip +67.8 | worst wrong-way yaw -38.4 deg/s | 245->15 km/h
+
+== 3. IS THE SECTION-2 KILL-CONTROL ALIVE? A control that changes nothing proves nothing.
+   probe: a LONE 0.15 s Space tap at 130 km/h with D held, then read slip 0.6 s after release
+  HEAD [SERVED floor=0.88 spinDamp=6.0 hbCmdInDriftArm=true probe=false] run1: slip@0.85s 24.74 | slip@1.25s 1.45 | slip@1.85s 3.73 | peak +26.2 | nose +82.6 | drifting frames 34/151
+  HEAD [SERVED floor=0.88 spinDamp=6.0 hbCmdInDriftArm=true probe=false] run2: slip@0.85s 33.38 | slip@1.25s 24.38 | slip@1.85s 8.45 | peak +33.5 | nose +98.4 | drifting frames 116/138
+  KILL hbCmd out of arm [SERVED floor=0.88 spinDamp=6.0 hbCmdInDriftArm=false probe=false] run1: slip@0.85s 28.37 | slip@1.25s 30.13 | slip@1.85s 25.21 | peak +30.8 | nose +112.5 | drifting frames 132/163
+  KILL hbCmd out of arm [SERVED floor=0.88 spinDamp=6.0 hbCmdInDriftArm=false probe=false] run2: slip@0.85s 30.35 | slip@1.25s 31.47 | slip@1.85s 26.37 | peak +32.4 | nose +114.0 | drifting frames 128/153
+
+== 4. CLAIM G, THE SIGN INVARIANT, FROM THE WORLD MATRICES, BOTH DIRECTIONS.
+   D must turn RIGHT (course rotates clockwise seen from above) and the body must lean AWAY
+   from the turn centre (the roof tilts outward). Read off carRoot.matrixWorld.
+  [SERVED floor=0.88 spinDamp=6.0 hbCmdInDriftArm=true probe=false]
+  D = RIGHT: world heading swept -51.4 deg (+ = LEFT/CCW), physics yaw swept -51.4, drawn yaw swept -51.4
+     turn direction CORRECT: YES | state.lean mid-turn 1.068 | state.slip -0.142
+     roof vector world-up 1.0000, roof.x 0.0000, roof.z 0.0000 | rollDot(up.bodyRight) 0.0000 rollDeg 0.00
+     LEAN AWAY FROM THE TURN CENTRE: roof tilt toward the car's own right = 0.0000; outward is the car's LEFT -> WRONG (leans in)
+  A = LEFT: world heading swept +57.3 deg (+ = LEFT/CCW), physics yaw swept +57.3, drawn yaw swept +57.3
+     turn direction CORRECT: YES | state.lean mid-turn -1.096 | state.slip 0.147
+     roof vector world-up 1.0000, roof.x 0.0000, roof.z 0.0000 | rollDot(up.bodyRight) 0.0000 rollDeg 0.00
+     LEAN AWAY FROM THE TURN CENTRE: roof tilt toward the car's own right = 0.0000; outward is the car's RIGHT -> WRONG (leans in)
+
+== console/page errors: 0 (none)
+== render size, verbatim: {"w":1280,"h":720,"cssW":1280,"cssH":720,"internalW":1280,"internalH":720,"maxInternal":[1280,720],"cap":720,"pixelRatio":1,"devicePixelRatio":1}
