@@ -6,6 +6,11 @@ import { fileURLToPath } from 'node:url';
 import { createBlocks } from '../game/map/blocks.js';
 import { planPavement } from '../game/map/pavement.js';
 import { createRoadGraph } from '../game/map/graph.js';
+import { planRoads } from '../game/map/ribbons.js';
+
+// Every assertion that fails lands here, and the process exits non-zero. A check that only prints
+// is not a gate: six stage areas were PRINTED and none ASSERTED in generate-blocks round 1.
+const fails = [];
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.join(__dirname, '..');
@@ -179,35 +184,19 @@ console.log('\n--- map-wide numbers ---');
   // Regenerator assert: constants match keep-OFF full plan.
   const blocksOk = full.blocks.length === MAP_BLOCKS_TOTAL;
   console.log(`MAP_BLOCKS_TOTAL regenerate check: ${blocksOk ? 'PASS' : 'FAIL'} (${full.blocks.length} vs ${MAP_BLOCKS_TOTAL})`);
-  // mapOccupiedCells needs road plan; recompute via a minimal road-cell set from graph edges.
-  // World uses roadPlan.cells + pav + blocks. Here we approximate road cells from edge samples
-  // so the constant can be verified when the harness runs under world — for node-only we assert
-  // the constant against the known S4a measurement by re-deriving from a full union if possible.
-  // Sample every edge into chunk cells the same way ribbons would claim ownership at centreline.
+  if (!blocksOk) fails.push(`MAP_BLOCKS_TOTAL is ${MAP_BLOCKS_TOTAL} but regenerates as ${full.blocks.length}`);
+  // mapOccupiedCells: regenerate it from the SAME THREE INPUTS world.js:1846-1858 unions, which
+  // means the real `planRoads`, not a resampling of the centrelines. The first version of this
+  // check densified the edges itself and read 185, one short of the constant, and then printed the
+  // disagreement and deferred to world.js. That is not a check. `planRoads` claims a cell whenever
+  // any ribbon TRIANGLE lands in it, so a road passing within half a lane width of a cell border
+  // occupies a cell no centreline sample ever enters; that one cell is the whole discrepancy.
   const roadKeys = new Set();
-  for (const e of doc.edges) {
-    const a = doc.nodes.find((n) => n.id === e.a).p;
-    const b = doc.nodes.find((n) => n.id === e.b).p;
-    const pts = [a, ...e.shape, b];
-    for (let i = 0; i < pts.length; i++) {
-      const p = pts[i];
-      roadKeys.add(`${Math.floor(p[0] / CHUNK)},${Math.floor(p[1] / CHUNK)}`);
-      if (i + 1 < pts.length) {
-        // densify so long edges do not skip cells
-        const q = pts[i + 1];
-        const len = Math.hypot(q[0] - p[0], q[1] - p[1]);
-        const n = Math.max(1, Math.ceil(len / (CHUNK * 0.5)));
-        for (let k = 1; k < n; k++) {
-          const t = k / n;
-          const x = p[0] + (q[0] - p[0]) * t, z = p[1] + (q[1] - p[1]) * t;
-          roadKeys.add(`${Math.floor(x / CHUNK)},${Math.floor(z / CHUNK)}`);
-        }
-      }
-    }
-  }
+  for (const k of planRoads(doc, { chunk: CHUNK }).cells.keys()) roadKeys.add(String(k).split('|')[0]);
   const liveOcc = mapOccupiedFrom(roadKeys, pavFull.cells, full.blocks);
-  console.log(`keep OFF mapOccupiedCells (road densify union)=${liveOcc} (constant ${MAP_OCCUPIED_CELLS}; world.js live path is authoritative)`);
-  // World.js live path at S4a measured 186; densify may differ. Constant is locked to world measurement.
+  const occOk = liveOcc === MAP_OCCUPIED_CELLS;
+  console.log(`MAP_OCCUPIED_CELLS regenerate check: ${occOk ? 'PASS' : 'FAIL'} (${liveOcc} vs ${MAP_OCCUPIED_CELLS})`);
+  if (!occOk) fails.push(`MAP_OCCUPIED_CELLS is ${MAP_OCCUPIED_CELLS} but regenerates as ${liveOcc}`);
   for (const RES of [1, 2, 4]) {
     const keep = makeKeep(RES);
     const sub = createBlocks(doc, { keep });
@@ -340,4 +329,9 @@ console.log('\n--- poison control: perturb one face polygon by 1e-4 ---');
   console.log(`poison control ${cFaces.differ > 0 ? 'PASS (comparison FAILS as required)' : 'FAIL (comparison did not fire)'}`);
 }
 
-console.log('\n=== done ===');
+if (fails.length) {
+  console.log(`\n=== FAIL (${fails.length}) ===`);
+  for (const f of fails) console.log(`  ${f}`);
+  process.exit(1);
+}
+console.log('\n=== done, all assertions PASS ===');

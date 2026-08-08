@@ -2494,7 +2494,10 @@ export function createWorld(scene, { roadKit, mapDoc = null }) {
 
   for (const b of visitOrder(blocks)) {
     // S4a coarse filter: skip emission for blocks outside the resident disk.
-    // world.blocks / blockIndex still hold every block (collision); only this iteration is gated.
+    // Only this iteration is gated. world.blocks / blockIndex hold every block ONLY while the
+    // planner keep filter is off (S4b-1): under `#chunkres=N` the fill itself is subsetted, so the
+    // collision list is a subset too, and `physics.js:922`, `camera.js:251` and `main.js:223` all
+    // read that same subsetted list. Streaming collision with the origin is S4b-2's.
     if (!isResident(Math.floor(b.cx / CHUNK), Math.floor(b.cz / CHUNK))) continue;
     {
       const rec = chunkAt(b.cx, b.cz);
