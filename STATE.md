@@ -60,7 +60,38 @@ Opening a new wave block is the moment to do this, not later.
 
 ### WAVE T — LIVE. THE MAP. `TASKS.md` wave 4, task T3. Opened session 18, 2026-08-07.
 
-**EXACT NEXT ACTION: S4b, RE-ENTRANCY.** **S4a IS DONE AND CRITIC-PASSED AT ROUND 3**
+**EXACT NEXT ACTION: S4b-1, THE PLANNERS. S4b WAS SPLIT IN SESSION 19 (round 5) AND THE SPLIT BUYS A
+CHECK, SAME SHAPE AS S3d's AND S4's.** S4b as written is `emitCells`/`disposeCells` + the pump +
+`settle()` + registry ownership + planner subsetting + the default flip, in one diff. The planner
+subsetting is the only half that has a check the OTHER half cannot contaminate: it is measured by
+`node tools/_loadtime.mjs` at `#chunkres=1` against the SAME TREE's default path, with the default
+path required to be unchanged to the instance. Landed together, a planner bug that drops content
+lands inside a re-entrancy diff where every count legitimately moved, and no instrument can see it.
+
+- **S4b-1 - SUBSET THE PLANNERS, still behind `#chunkres`, still DEFAULTING OFF. RUNNING.** Owns the
+  ~850 ms. `createBlocks` 356.7 ms + `planPavement` 531.2 ms (measured this round,
+  `tools/_s4b-recon.mjs`, node, alone) still run over all 4000 x 2861 m in BOTH of S4a's
+  configurations, because S4a filters the CONSUMERS of planner output.
+- **S4b-2 - RE-ENTRANCY AND THE FLIP.** `emitCells`/`disposeCells`, the `update()` pump with
+  hysteresis (build at `RES`, dispose at `RES + 1`), `world.settle()`, per-cell contact and emitter
+  rebuild, cell ownership of the live registries, streaming COLLISION, and the flip of the default
+  to `RES = 1`.
+
+**MEASURED THIS ROUND AND LOAD-BEARING FOR S4b-1 (`tools/_s4b-recon.mjs`, node, no browser):**
+`createRoadGraph` 2.7 ms, `createBlocks` 356.7 ms, `planPavement` 531.2 ms. 240 faces, 868 blocks,
+181 pavement cells. **Face bbox against the resident box filters exactly as the pass table predicts:
+10 of 240 faces and 34 of 868 blocks at `RES=1`** (the table says "about 35 of about 700"), 40 faces
+at `RES=2`, 113 at `RES=4`. **THE TOPOLOGY MUST STAY MAP-WIDE AND ONLY THE FILL MAY BE FILTERED** -
+half-edges, the bearing sort, the face walk and Euler are a GLOBAL computation and `chi = 2` is not a
+property of a subgraph. `b.faces` is also consumed map-wide by `graphPaths(roadPlan, built.faces)`
+(`world.js:1829`), so faces must be untouched. **Two map-wide NUMBERS die with the fill and must be
+handled explicitly, not silently: `blocksTotal` (the pass table's denominator) and
+`mapOccupiedCells` (186, and finding 4 below says do not "fix" it to 191).** **And subsetting the
+fill subsets `world.blocks`, which is COLLISION** (`physics.js:922`) - correct at `RES=1` where the
+hero cannot leave the disk, wrong the moment the hero moves, so streaming collision is S4b-2's and
+must be declared, never assumed.
+
+**S4a IS DONE AND CRITIC-PASSED AT ROUND 3**
 (`b6512ed` the piece, `ed6c493` the `resolve()` fix, `ded2171` `poolsPerCell` + `mapOccupiedCells`;
 `verdicts/wave-t/generate-mesh-s4a{,-critic,-critic-r2,-critic-r3}.md`). **Zero constants changed
 value.** New knobs `#chunkres=N` (default `Infinity`, i.e. OFF) and `#chunkorigin=x,z` (default
