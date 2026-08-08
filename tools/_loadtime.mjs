@@ -36,7 +36,10 @@ const server = createServer(async (req, res) => {
 });
 await new Promise((r) => server.listen(0, '127.0.0.1', r));
 const port = server.address().port;
-const url = `http://127.0.0.1:${port}/index.html#bootlog=1`;
+// `--hash=chunkres=1` appends extra hash params. Default is empty, so the no-argument invocation
+// every previous measurement used is byte-for-byte the same URL it always was.
+const EXTRA = (process.argv.slice(2).find((a) => a.startsWith('--hash=')) || '').slice(7);
+const url = `http://127.0.0.1:${port}/index.html#bootlog=1${EXTRA ? '&' + EXTRA : ''}`;
 
 // The importmap points `three` at esm.sh, so a real first load also pays a CDN fetch this
 // harness cannot see. Report local bytes and let the reader add their own network.

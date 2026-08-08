@@ -68,10 +68,37 @@ subsetting is the only half that has a check the OTHER half cannot contaminate: 
 path required to be unchanged to the instance. Landed together, a planner bug that drops content
 lands inside a re-entrancy diff where every count legitimately moved, and no instrument can see it.
 
-- **S4b-1 - SUBSET THE PLANNERS, still behind `#chunkres`, still DEFAULTING OFF. RUNNING.** Owns the
-  ~850 ms. `createBlocks` 356.7 ms + `planPavement` 531.2 ms (measured this round,
-  `tools/_s4b-recon.mjs`, node, alone) still run over all 4000 x 2861 m in BOTH of S4a's
-  configurations, because S4a filters the CONSUMERS of planner output.
+- **S4b-1 - SUBSET THE PLANNERS, still behind `#chunkres`, still DEFAULTING OFF. BUILT (`51852c0`),
+  ORCHESTRATOR-MEASURED, CRITIC RUNNING.** Owns the ~850 ms and **DELIVERED IT**.
+  `verdicts/wave-t/generate-mesh-s4b1.md`. **Zero constants changed value**; two new full-map
+  denominators `MAP_BLOCKS_TOTAL = 868` and `MAP_OCCUPIED_CELLS = 186` (`game/world.js:1319-1323`).
+  New `opts.keep(x0, x1, z0, z1)` bbox predicate on `createBlocks` and `planPavement`, `undefined`
+  by default.
+
+**THE LOAD WIN IS REAL AND IS THE FIRST ONE THIS WAVE HAS BANKED. MEASURED BY THE ORCHESTRATOR,
+ALONE, BOTH RUNS ON THE SAME TREE:** default path (no map param, the filter OFF) cold **4706 ms**
+median (5502, 4570, 4706), stages sky 46 / road 581 / **world 1551** / car 195 / sim 95 / post 50 /
+warm 1686. At `#chunkres=1`: cold **3269 ms** median (3845, 3269, 3245), stages sky 45 / road 551 /
+**world 473** / car 178 / sim 91 / post 26 / warm 1484. **`boot world` 1551 -> 473 ms, a 1078 ms
+cut, and it is the planners: `createBlocks` 330 -> 199 ms and `planPavement` 692 -> 127 ms** (node,
+`tools/_s4b1-check.mjs`, medians of 3). The default path is unchanged within its own spread - S4a
+read 4531 median across 4514-5203 with world 1531. **`tools/_loadtime.mjs` GAINED AN OPTIONAL
+`--hash=` ARGUMENT**; with no argument the URL is byte-for-byte what every previous measurement
+used, so the numbers stay comparable.
+
+**AND THE PASS TABLE CLEARS AT `#chunkres=1`, ON THE BUILT SCENE GRAPH** (`tools/probe.mjs --scene
+daytime-downtown --hash chunkres=1`, orchestrator, alone): `residentCells` **8** <= 9, `areaKm2`
+**0.32** <= 0.36, `edges` **27**/929 = 0.029 <= 0.15, `blocks` **33**/868 = 0.038 <= 0.15,
+`chunkGeoms` **37** <= 6 * 8 = 48, `overflow` **0**, `mapOccupied` **186**. The unfiltered default
+boot on the same tree reads `residentCells` 191 and computes `mapOccupiedCells` **186 live**, which
+is what makes `MAP_OCCUPIED_CELLS = 186` an observed value rather than an asserted one.
+
+**THE WEAK JOINT, NAMED BEFORE THE CRITIC FINDS IT: NOTHING REGENERATES THE TWO CONSTANTS.**
+`tools/_s4b1-check.mjs` re-derives `MAP_BLOCKS_TOTAL` correctly (868 vs 868, PASS) but its own
+reconstruction of the occupied-cell union reads **185**, and the tool prints that beside the
+constant and defers to `world.js`. The constant IS right - the live unfiltered path says 186 - but a
+number that disagrees with its own regenerator by one is exactly this repo's recurring failure mode
+and the critic is briefed on it specifically.
 - **S4b-2 - RE-ENTRANCY AND THE FLIP.** `emitCells`/`disposeCells`, the `update()` pump with
   hysteresis (build at `RES`, dispose at `RES + 1`), `world.settle()`, per-cell contact and emitter
   rebuild, cell ownership of the live registries, streaming COLLISION, and the flip of the default
