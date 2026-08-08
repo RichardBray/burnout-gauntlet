@@ -1315,6 +1315,22 @@ export function createWorld(scene, { roadKit, mapDoc = null }) {
   function isResident(cx, cz) {
     return Math.max(Math.abs(cx - ORIGIN_CX), Math.abs(cz - ORIGIN_CZ)) <= RES;
   }
+  // S4b-1: full-map denominators for the pass table when the residency keep filter subsets the
+  // planners. Regenerated (and asserted) by tools/_s4b1-check.mjs against a keep-OFF plan.
+  // Do not "fix" mapOccupiedCells to 191 - the 5-cell gap is known and deliberate (S4a finding).
+  const MAP_BLOCKS_TOTAL = 868;
+  const MAP_OCCUPIED_CELLS = 186;
+  /**
+   * Bbox-overlap keep for createBlocks / planPavement. Resident disk expanded by one cell
+   * (RES + 1) so a face straddling the outer ring still fills. undefined when RES is Infinity
+   * so the planners take today's keep-everything path with no predicate at all.
+   */
+  const plannerKeep = Number.isFinite(RES) ? (() => {
+    const r = RES + 1;
+    const loX = (ORIGIN_CX - r) * CHUNK, hiX = (ORIGIN_CX + r + 1) * CHUNK;
+    const loZ = (ORIGIN_CZ - r) * CHUNK, hiZ = (ORIGIN_CZ + r + 1) * CHUNK;
+    return (x0, x1, z0, z1) => x1 >= loX && x0 <= hiX && z1 >= loZ && z0 <= hiZ;
+  })() : undefined;
 
   // name -> pool HANDLE. A handle is declared once, carries the draw state, and owns nothing.
   // The instances live in per-cell descriptors hanging off it.
@@ -1825,16 +1841,25 @@ export function createWorld(scene, { roadKit, mapDoc = null }) {
   let graphPath = null;
   if (GRAPH) {
     const mapGraph = graphIdx = createRoadGraph(mapDoc);
-    const built = graphBuilt = createBlocks(mapDoc);
+    // S4b-1: pass plannerKeep so fill / pavement march only run inside the expanded resident box.
+    // Topology (faces for graphPaths, Euler) stays map-wide inside createBlocks.
+    const built = graphBuilt = createBlocks(mapDoc, plannerKeep ? { keep: plannerKeep } : {});
     graphPath = graphPaths(roadPlan, built.faces);
-    const pav = planPavement(mapDoc, built.faces, { chunk: CHUNK, graph: mapGraph });
+    const pav = planPavement(mapDoc, built.faces, {
+      chunk: CHUNK, graph: mapGraph, ...(plannerKeep ? { keep: plannerKeep } : {}),
+    });
     // Cells of the map that hold ANY content, which is what section 7 means by this field and is
     // NOT the same set as the pavement cells: pavement needs a face to extrude a kerb from, so a
     // cell carrying only road ribbon or only a block has none. Measured, not assumed - pavement
     // alone reads 181 against the 191 cells the eager build actually populates. The union is the
     // road-plan cells (keys are `cx,cz|material`) plus each block's owner cell under section 5's
     // ownership rule.
-    {
+    //
+    // S4b-1: when keep subsets fill and pavement, this union would silently shrink. Publish the
+    // full-map constant instead (MAP_OCCUPIED_CELLS); when keep is off, recompute live as before.
+    if (plannerKeep) {
+      mapOccupiedCells = MAP_OCCUPIED_CELLS;
+    } else {
       const occ = new Set();
       for (const k of roadPlan.cells.keys()) occ.add(String(k).split('|')[0]);
       for (const k of pav.cells.keys()) occ.add(String(k).split('|')[0]);
@@ -1911,6 +1936,9 @@ export function createWorld(scene, { roadKit, mapDoc = null }) {
   const blockIndex = graphBuilt.index;
   for (const b of graphBuilt.blocks) blocks.push(b);
   blocks.sort((p, q) => (p.cx - q.cx) || (p.cz - q.cz));
+  // S4b-1: pass-table denominator stays map-wide when keep subsets the fill. blocks.length is the
+  // collision list (subset under #chunkres); blocksTotal must remain the full-map count.
+  const blocksTotal = plannerKeep ? MAP_BLOCKS_TOTAL : blocks.length;
 
   // ---- buildings ------------------------------------------------------
   const styles = ['glass', 'office', 'brick', 'concrete'];
@@ -4249,7 +4277,7 @@ export function createWorld(scene, { roadKit, mapDoc = null }) {
       edgesBuilt: rc.reduce((a, c) => a + c.stats.edges, 0),
       edgesTotal: 929,
       blocksBuilt: rc.reduce((a, c) => a + c.stats.blocks, 0),
-      blocksTotal: blocks.length,
+      blocksTotal,
       chunkGeoms: rc.reduce((a, c) => a + c.geoms.length, 0),
       filtered,
       drawStates: buildStats.states,

@@ -179,7 +179,10 @@ function offsetCorner(p, dPrev, hPrev, dNext, hNext) {
  *
  * @param {object} doc    parsed paradise.json (only `extent` is read; widths come from `graph`)
  * @param {Array}  faces  `createBlocks(doc).faces` — each carries `polygon`, the source face ring
- * @param {object} opts   `chunk` (200), `graph` (a `createRoadGraph(doc)`), `shoulder` (3.0)
+ * @param {object} opts   `chunk` (200), `graph` (a `createRoadGraph(doc)`), `shoulder` (3.0),
+ *   optional `keep(x0,x1,z0,z1)=>boolean` — when set, skip the per-face cross-section march for
+ *   faces whose polygon AABB does not overlap the keep region. `undefined` = march everything =
+ *   today's behaviour exactly (S4b-1).
  * @returns {{cells: Map, stats: object}} `cells` maps a cell key to `{kerb, walk}` sinks, each
  *   `{pos, nor, uv, idx}` of plain numbers ready for a `BufferGeometry`.
  */
@@ -194,6 +197,8 @@ export function planPavement(doc, faces, opts = {}) {
   const bandDepth = opts.band ?? BAND;
   const kerbTopW = opts.kerbTopW ?? KERB_TOP_W;
   const chordMax = opts.chordMax ?? CHORD_MAX;
+  // S4b-1: residency filter on the per-face march only. Face list stays map-wide from createBlocks.
+  const keep = typeof opts.keep === 'function' ? opts.keep : undefined;
 
   const cells = new Map();
   const cellFor = (k) => {
@@ -218,7 +223,19 @@ export function planPavement(doc, faces, opts = {}) {
   // the chunk split - the split changes which cell owns a triangle, never which triangles exist.
   const runsOut = [];
 
+  let facesMarchSkipped = 0;
   for (const f of faces) {
+    // S4b-1: skip the expensive per-face march when the face AABB misses the keep region.
+    // Topology and the face list remain map-wide; only this face's stations/cells are omitted.
+    if (keep) {
+      let x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity;
+      for (const p of f.polygon) {
+        if (p[0] < x0) x0 = p[0]; if (p[0] > x1) x1 = p[0];
+        if (p[1] < z0) z0 = p[1]; if (p[1] > z1) z1 = p[1];
+      }
+      if (!keep(x0, x1, z0, z1)) { facesMarchSkipped++; continue; }
+    }
+
     // ---- 1. the ring, deduplicated and subdivided ---------------------------------------------
     const raw = [];
     for (const p of f.polygon) {
@@ -623,6 +640,8 @@ export function planPavement(doc, faces, opts = {}) {
     stats: {
       faces: faces.length,
       facesWithKerb,
+      // S4b-1: only published when a keep filter ran (clause 4 no-filter identity).
+      ...(keep ? { facesMarchSkipped } : {}),
       stations,
       stationsDropped,
       stationsPushedOffTarmac: pushed,

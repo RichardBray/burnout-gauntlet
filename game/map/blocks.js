@@ -108,6 +108,10 @@ const RING_DEPTH = 40.0;
  *
  * @param {object} doc  the parsed graph document
  * @param {object} [opts] overrides for any constant above, for a harness that wants to sweep them
+ * @param {function} [opts.keep] optional `(x0, x1, z0, z1) => boolean` bbox-overlap predicate.
+ *   When set, only faces whose polygon AABB overlaps the keep region run the rectangle FILL;
+ *   topology (half-edges, face walk, Euler) is always map-wide. `undefined` = keep everything =
+ *   today's behaviour exactly (S4b-1).
  * @returns {{blocks: Array, faces: Array, stats: object}}
  *   `blocks` is the published `{cx, cz, w, d, bw, bd}` shape plus optional `district`/`faceId`.
  *   `faces` carries the source polygon so a critic can re-derive every block from it.
@@ -125,6 +129,8 @@ export function createBlocks(doc, opts = {}) {
   const bigFaceArea = opts.bigFaceArea ?? BIG_FACE_AREA;
   const ringDepth = opts.ringDepth ?? RING_DEPTH;
   const doSplit = opts.split !== false;
+  // S4b-1: residency filter on the FILL only. Topology stays map-wide (clause 2).
+  const keep = typeof opts.keep === 'function' ? opts.keep : undefined;
 
   // `bw = w - 2 * walkW`, so this is the invariant that keeps the published building line positive.
   // Nothing stated it in round 1; the coupling was real and only guarded by two constants happening
@@ -262,6 +268,7 @@ export function createBlocks(doc, opts = {}) {
   let droppedTiny = 0, droppedTinyArea = 0, insetArea = 0, blockArea = 0, buildArea = 0;
   let ringFaces = 0, ringInteriorArea = 0;
 
+  let facesFillSkipped = 0;
   for (let i = 0; i < walks.length; i++) {
     if (areas[i] < 0) continue;                       // the outer face
     const ring = rings[i];
@@ -272,9 +279,21 @@ export function createBlocks(doc, opts = {}) {
     const district = majorityDistrict(doc, walks[i], H);
     // A big face gets a frontage RING, not a slab. See BIG_FACE_AREA and RING_DEPTH.
     const big = area >= bigFaceArea;
-    const fill = fillFace(ring, corridor, pitch, minSide, big ? ringDepth : 0);
+
+    // Face polygon AABB. Topology already closed this face map-wide; only the fill may skip.
+    let fx0 = Infinity, fx1 = -Infinity, fz0 = Infinity, fz1 = -Infinity;
+    for (const p of ring) {
+      if (p[0] < fx0) fx0 = p[0]; if (p[0] > fx1) fx1 = p[0];
+      if (p[1] < fz0) fz0 = p[1]; if (p[1] > fz1) fz1 = p[1];
+    }
+    // `keep` undefined = keep everything = identical to the pre-S4b-1 path (no branch into empty fill).
+    const doFill = !keep || keep(fx0, fx1, fz0, fz1);
+    const fill = doFill
+      ? fillFace(ring, corridor, pitch, minSide, big ? ringDepth : 0)
+      : { rects: [], freeArea: 0, fillableArea: 0 };
+    if (!doFill) facesFillSkipped++;
     insetArea += fill.freeArea;
-    if (big) ringFaces++, ringInteriorArea += fill.freeArea - fill.fillableArea;
+    if (big && doFill) ringFaces++, ringInteriorArea += fill.freeArea - fill.fillableArea;
 
     const faceBlocks = [];
     for (const r of fill.rects) {
@@ -382,7 +401,13 @@ export function createBlocks(doc, opts = {}) {
       ringFaces,
       ringInteriorArea,
       // constants, published so a harness asserts on the real value and not on a docstring
-      params: { shoulder, kerbMargin, walkW, minFaceArea, pitch, minSide, bigFaceArea, ringDepth, split: doSplit },
+      // `keep` is omitted from params when undefined so the no-filter stats object matches HEAD (clause 4).
+      params: keep
+        ? { shoulder, kerbMargin, walkW, minFaceArea, pitch, minSide, bigFaceArea, ringDepth, split: doSplit, keep: true }
+        : { shoulder, kerbMargin, walkW, minFaceArea, pitch, minSide, bigFaceArea, ringDepth, split: doSplit },
+      // S4b-1: faces whose fill was skipped by opts.keep (topology still published for each).
+      // Only present when a keep filter ran, so the no-filter path's stats stay bit-identical to HEAD.
+      ...(keep ? { facesFillSkipped } : {}),
       buildMs,
       // Split, because a 260 ms total that is 95% raster fill and a 260 ms total that is 95% face
       // traversal want completely different work if this ever needs to be faster.
