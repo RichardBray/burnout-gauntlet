@@ -60,7 +60,44 @@ Opening a new wave block is the moment to do this, not later.
 
 ### WAVE T — LIVE. THE MAP. `TASKS.md` wave 4, task T3. Opened session 18, 2026-08-07.
 
-**EXACT NEXT ACTION: S4b-1, THE PLANNERS. S4b WAS SPLIT IN SESSION 19 (round 5) AND THE SPLIT BUYS A
+**EXACT NEXT ACTION: S4b-2, RE-ENTRANCY AND THE DEFAULT FLIP. S4b-1 IS DONE AND CRITIC-PASSED AT
+ROUND 1** (`51852c0` the piece, `7e5e966` the two critic fixes;
+`verdicts/wave-t/generate-mesh-s4b1{,-critic}.md`).
+
+**FOUR THINGS S4b-2 INHERITS FROM THE CRITIC. THEY ARE MEASURED AND EACH COSTS A ROUND IF
+REDISCOVERED:**
+
+1. **`world.blocks` AND `blockIndex` ARE READ BY THREE CONSUMERS, NOT ONE.** The piece declared
+   `physics.js:922`; the critic found **`camera.js:251` and `main.js:223` read the same list**. All
+   three get the subset under `#chunkres=N`. Streaming collision with the origin is S4b-2's whole
+   inheritance and it is three call sites, not one.
+2. **DO NOT TRUST THE FACE-AABB `keep` FOR STRICT RESIDENT COLLISION.** At `RES=1` it keeps **334 of
+   868 blocks**, not the ~34 a strict per-block centre test keeps, because one giant face's AABB is
+   enormous and the whole face fills: **40 faces produce 334 rects and 196 of those centres are
+   outside even the expanded box.** The filter is deliberately generous and that is correct for
+   MESHES; it is wrong as a residency answer.
+3. **THE RESIDUAL PLANNER COST IS LARGE-FACE FILL, NOT TOPOLOGY.** `createBlocks` only falls
+   330 -> 199 ms while `planPavement` falls 692 -> 127 ms, and the critic measured why: the topology
+   half-edges/walk/Euler is about **5 ms**, and the ~178-184 ms that remains with the filter ON is
+   still FILL, of the giant faces finding 2 describes. If S4b-2 wants more, that is where it is.
+4. **`blockIndex.at()` MISSES FAR BLOCKS UNDER THE FILTER** - a block at (1778, -334) returns 4 hits
+   on the full plan and **0** on the subset. Correct, and exactly the shape of the bug that will be
+   blamed on streaming.
+
+**AND THE CRITIC'S TWO LOW FINDINGS ARE ALREADY FIXED, IN `7e5e966`:** `tools/_s4b1-check.mjs`
+rebuilt the occupied-cell union by **densifying the centrelines itself**, read 185, printed the
+disagreement with the constant's 186 and deferred to `world.js`. It now unions the real
+`planRoads(doc, {chunk})` cells - the same input `world.js:1846-1858` uses - and **reproduces 186
+exactly**. `planRoads` claims a cell whenever any ribbon TRIANGLE lands in it, so a road passing
+within half a lane width of a cell border occupies a cell no centreline sample ever enters; that one
+cell was the whole discrepancy. **Both regenerate checks now push onto a failure list and the tool
+exits non-zero**, so it is a gate and not a report - `node tools/_s4b1-check.mjs` exits 0 today. The
+stale comment at `world.js:2495` claiming `world.blocks` holds every block is corrected and now
+names all three consumers.
+
+Superseded, kept so the split's reasoning is not lost:
+
+**~~S4b-1, THE PLANNERS.~~ DONE. S4b WAS SPLIT IN SESSION 19 (round 5) AND THE SPLIT BUYS A
 CHECK, SAME SHAPE AS S3d's AND S4's.** S4b as written is `emitCells`/`disposeCells` + the pump +
 `settle()` + registry ownership + planner subsetting + the default flip, in one diff. The planner
 subsetting is the only half that has a check the OTHER half cannot contaminate: it is measured by
@@ -68,8 +105,8 @@ subsetting is the only half that has a check the OTHER half cannot contaminate: 
 path required to be unchanged to the instance. Landed together, a planner bug that drops content
 lands inside a re-entrancy diff where every count legitimately moved, and no instrument can see it.
 
-- **S4b-1 - SUBSET THE PLANNERS, still behind `#chunkres`, still DEFAULTING OFF. BUILT (`51852c0`),
-  ORCHESTRATOR-MEASURED, CRITIC RUNNING.** Owns the ~850 ms and **DELIVERED IT**.
+- **S4b-1 - SUBSET THE PLANNERS, still behind `#chunkres`, still DEFAULTING OFF. DONE,
+  CRITIC-PASSED AT ROUND 1.** Owns the ~850 ms and **DELIVERED IT**.
   `verdicts/wave-t/generate-mesh-s4b1.md`. **Zero constants changed value**; two new full-map
   denominators `MAP_BLOCKS_TOTAL = 868` and `MAP_OCCUPIED_CELLS = 186` (`game/world.js:1319-1323`).
   New `opts.keep(x0, x1, z0, z1)` bbox predicate on `createBlocks` and `planPavement`, `undefined`
