@@ -1295,24 +1295,60 @@ export function createWorld(scene, { roadKit, mapDoc = null }) {
   const CHUNK = 200;
   const cellKey = (x, z) => `${Math.floor(x / CHUNK)},${Math.floor(z / CHUNK)}`;
 
+  // S4a: residency FILTER. Default RES = Infinity means OFF - the whole map still builds, so the
+  // seven gate frames and the drive probe stay green. `#chunkres=1` is the 3x3 island the pass
+  // table measures; `#chunkorigin=x,z` shifts the Chebyshev centre (cell coords, default 0,0).
+  // S4b flips the default to 1 and adds re-entrancy. Coarse filters on blocks / road cells /
+  // pavement cells / edges / nodes skip work; the fine gate in chunkAt rejects a straddling
+  // instance that would otherwise create a non-resident ChunkRec.
+  const RES = hashNum('chunkres', Infinity);
+  let ORIGIN_CX = 0, ORIGIN_CZ = 0;
+  if (typeof location !== 'undefined') {
+    const m = /(?:^|[#&])chunkorigin=([^&]+)/.exec(location.hash || '');
+    if (m) {
+      const parts = decodeURIComponent(m[1]).split(',');
+      const ox = parseFloat(parts[0]), oz = parseFloat(parts[1]);
+      if (Number.isFinite(ox)) ORIGIN_CX = ox;
+      if (Number.isFinite(oz)) ORIGIN_CZ = oz;
+    }
+  }
+  function isResident(cx, cz) {
+    return Math.max(Math.abs(cx - ORIGIN_CX), Math.abs(cz - ORIGIN_CZ)) <= RES;
+  }
+
   // name -> pool HANDLE. A handle is declared once, carries the draw state, and owns nothing.
   // The instances live in per-cell descriptors hanging off it.
   const sink = { handles: [], remap: new Map() };
   /** cellKey -> ChunkRec. The resident set. */
   const resident = new Map();
+  /** Instances rejected by the fine residency gate (straddling props into a non-resident cell). */
+  let filtered = 0;
+  /**
+   * Dead ChunkRec: no-op sink for non-resident cells. Never enters `resident`, never finalized.
+   * pushMat counts into `filtered` and returns a disposable desc handle.
+   */
+  const deadRec = {
+    key: 'dead', cellX: 0, cellZ: 0, dead: true,
+    minX: 0, maxX: 0, minZ: 0, maxZ: 0,
+    descs: new Map(), meshes: [], geoms: [],
+    stats: { instances: 0, edges: 0, nodes: 0, blocks: 0 },
+  };
+  const deadDesc = { handle: null, rec: deadRec, count: 0, cap: 0, m: null, c: null };
 
   function chunkAt(x, z) {
-    const key = cellKey(x, z);
+    const cx = Math.floor(x / CHUNK), cz = Math.floor(z / CHUNK);
+    if (!isResident(cx, cz)) return deadRec;
+    const key = `${cx},${cz}`;
     let rec = resident.get(key);
     if (!rec) {
-      const [cx, cz] = key.split(',').map(Number);
       resident.set(key, rec = {
         key, cellX: cx, cellZ: cz,
         minX: cx * CHUNK, maxX: (cx + 1) * CHUNK,
         minZ: cz * CHUNK, maxZ: (cz + 1) * CHUNK,
         descs: new Map(),          // handle -> descriptor
         meshes: [],                // everything finalize() allocated for this cell
-        stats: { instances: 0 },
+        geoms: [],                 // chunk-owned BufferGeometry (roads, kerbs, pavement, ...)
+        stats: { instances: 0, edges: 0, nodes: 0, blocks: 0 },
       });
     }
     return rec;
@@ -1389,7 +1425,11 @@ export function createWorld(scene, { roadKit, mapDoc = null }) {
    */
   function pushMat(h, mat4, color) {
     const e = mat4.elements;
-    const d = descFor(chunkAt(e[12], e[14]), h);
+    const rec = chunkAt(e[12], e[14]);
+    // Fine gate: a straddling edge/prop into a non-resident cell is counted and discarded so it
+    // cannot inflate residentCells by creating a one-instance ChunkRec outside RES.
+    if (rec.dead) { filtered++; return [deadDesc, 0]; }
+    const d = descFor(rec, h);
     grow(d);
     mat4.toArray(d.m, d.count * 16);
     if (color !== undefined) {
@@ -1632,6 +1672,11 @@ export function createWorld(scene, { roadKit, mapDoc = null }) {
     };
 
     for (const cell of roadPlan.cells.values()) {
+      // S4a coarse filter: skip whole road cells outside the resident Chebyshev disk.
+      {
+        const [cx, cz] = cell.key.split(',').map(Number);
+        if (!isResident(cx, cz)) continue;
+      }
       for (const r of cell.ribbons) {
         const cls = specOf(r.cls);
         const spec = roadKit.materials[cls].spec;
@@ -1699,6 +1744,12 @@ export function createWorld(scene, { roadKit, mapDoc = null }) {
       const mesh = roadKit.finishRibbon(sk, cls);
       mesh.name = `road:${key}`;
       roads.add(mesh);
+      // S4a: record chunk-owned road geometry on the cell's ChunkRec.
+      {
+        const [cx, cz] = key.split('|')[0].split(',').map(Number);
+        const rec = chunkAt((cx + 0.5) * CHUNK, (cz + 0.5) * CHUNK);
+        if (!rec.dead) rec.geoms.push(mesh.geometry);
+      }
     }
     roadStats = {
       cells: roadPlan.cells.size, meshes: sinks.size,
@@ -1756,6 +1807,8 @@ export function createWorld(scene, { roadKit, mapDoc = null }) {
   // blocks that would be 1736 unshared geometries), where this emits ONE batched extrusion per
   // cell per material, which is what plan section 2's six-geometries-per-chunk cap requires.
   let pavementStats = null;
+  /** Occupied pavement cells (full map). Hoisted so chunkStats can publish mapOccupiedCells. */
+  let mapOccupiedCells = 0;
   // Hoisted out of the pavement block at S3b: `createBlocks` costs 351 ms and S3b needs the same
   // result for `blocks` / `world.blocks` / `world.blockIndex`. Calling it twice would be 351 ms of
   // boot for a second copy of an identical answer.
@@ -1768,6 +1821,7 @@ export function createWorld(scene, { roadKit, mapDoc = null }) {
     const built = graphBuilt = createBlocks(mapDoc);
     graphPath = graphPaths(roadPlan, built.faces);
     const pav = planPavement(mapDoc, built.faces, { chunk: CHUNK, graph: mapGraph });
+    mapOccupiedCells = pav.cells.size;
     const mk = (sink, mat, name, cast) => {
       if (sink.idx.length < 3) return;
       const g2 = new THREE.BufferGeometry();
@@ -1786,8 +1840,33 @@ export function createWorld(scene, { roadKit, mapDoc = null }) {
       group.add(m);
     };
     for (const cell of pav.cells.values()) {
-      mk(cell.kerb, kerbMat, `kerb:${cell.key}`, true);
-      mk(cell.walk, walkMat, `walk:${cell.key}`, false);
+      // S4a coarse filter: skip pavement cells outside the resident disk.
+      {
+        const [cx, cz] = cell.key.split(',').map(Number);
+        if (!isResident(cx, cz)) continue;
+      }
+      const rec = (() => {
+        const [cx, cz] = cell.key.split(',').map(Number);
+        return chunkAt((cx + 0.5) * CHUNK, (cz + 0.5) * CHUNK);
+      })();
+      // mk adds the mesh to group; we record the geometry it builds by wrapping.
+      const mkRec = (sink2, mat, name, cast) => {
+        if (sink2.idx.length < 3) return;
+        const g2 = new THREE.BufferGeometry();
+        g2.setAttribute('position', new THREE.Float32BufferAttribute(sink2.pos, 3));
+        g2.setAttribute('normal', new THREE.Float32BufferAttribute(sink2.nor, 3));
+        g2.setAttribute('uv', new THREE.Float32BufferAttribute(sink2.uv, 2));
+        g2.setIndex(sink2.idx);
+        g2.computeBoundingSphere();
+        const m = new THREE.Mesh(g2, mat);
+        m.name = name;
+        m.receiveShadow = true;
+        m.castShadow = cast;
+        group.add(m);
+        if (!rec.dead) rec.geoms.push(g2);
+      };
+      mkRec(cell.kerb, kerbMat, `kerb:${cell.key}`, true);
+      mkRec(cell.walk, walkMat, `walk:${cell.key}`, false);
     }
     pavementStats = { ...pav.stats, sourceBlocks: built.blocks.length };
   }
@@ -2365,6 +2444,13 @@ export function createWorld(scene, { roadKit, mapDoc = null }) {
   }
 
   for (const b of visitOrder(blocks)) {
+    // S4a coarse filter: skip emission for blocks outside the resident disk.
+    // world.blocks / blockIndex still hold every block (collision); only this iteration is gated.
+    if (!isResident(Math.floor(b.cx / CHUNK), Math.floor(b.cz / CHUNK))) continue;
+    {
+      const rec = chunkAt(b.cx, b.cz);
+      if (!rec.dead) rec.stats.blocks++;
+    }
       const rb = atRng(b.cx, b.cz, S_BLOCK);
     const prof = profileOf(b);
     const innerB = prof.rich;
@@ -2459,6 +2545,8 @@ export function createWorld(scene, { roadKit, mapDoc = null }) {
   // Low-rise infill hugging every block edge so the canyon is a continuous,
   // stepped, greebled wall instead of isolated prisms behind an empty apron.
   for (const b of visitOrder(blocks)) {
+    // S4a coarse filter: wall emission follows the same residency disk as mass towers.
+    if (!isResident(Math.floor(b.cx / CHUNK), Math.floor(b.cz / CHUNK))) continue;
       const rb = atRng(b.cx, b.cz, S_WALL);
     const prof = profileOf(b);
     for (const ry of FACES) {
@@ -3034,6 +3122,8 @@ export function createWorld(scene, { roadKit, mapDoc = null }) {
 
   /** walk each block's perimeter dropping street furniture */
   for (const b of visitOrder(blocks)) {
+    // S4a coarse filter: props only on resident blocks.
+    if (!isResident(Math.floor(b.cx / CHUNK), Math.floor(b.cz / CHUNK))) continue;
       const rp = atRng(b.cx, b.cz, S_PROP);
     // Palm share is the one prop number the districts move: Palm Bay 0.16, the harbour 0,
     // everywhere else the grid world's 0.075 unchanged. Risk 13 says palm density is per
@@ -3108,6 +3198,8 @@ export function createWorld(scene, { roadKit, mapDoc = null }) {
   const guardPost = pool('guardPost', boxGeo, railMat, { recv: false });
   const guardRail = pool('guardRail', boxGeo, railMat, { recv: false });
   for (const b of visitOrder(blocks)) {
+    // S4a coarse filter: guard rails only on resident blocks.
+    if (!isResident(Math.floor(b.cx / CHUNK), Math.floor(b.cz / CHUNK))) continue;
     const off = 0.55;   // stand-off from the kerb face, clear of the 22 cm step
     const edges = [
       { x0: b.cx - b.w / 2, z0: b.cz + b.d / 2 - off, ux: 1, uz: 0, len: b.w, ry: 0 },
@@ -3568,6 +3660,34 @@ export function createWorld(scene, { roadKit, mapDoc = null }) {
     // cannot share one number.
     const LAMP_PITCH = 62, LAMP_PITCH_HW = 70, LAMP_OFF = 2.4;
     for (const e of visitOrder(roadPlan.edges)) {
+      // S4a coarse filter: keep edge if its world bbox intersects the resident box expanded by 1 cell.
+      {
+        let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
+        for (const v of e.vs) {
+          if (v.x < minX) minX = v.x;
+          if (v.x > maxX) maxX = v.x;
+          if (v.z < minZ) minZ = v.z;
+          if (v.z > maxZ) maxZ = v.z;
+        }
+        const c0x = Math.floor(minX / CHUNK), c1x = Math.floor(maxX / CHUNK);
+        const c0z = Math.floor(minZ / CHUNK), c1z = Math.floor(maxZ / CHUNK);
+        let hit = false;
+        for (let cx = c0x; cx <= c1x && !hit; cx++) {
+          for (let cz = c0z; cz <= c1z; cz++) {
+            if (Math.max(Math.abs(cx - ORIGIN_CX), Math.abs(cz - ORIGIN_CZ)) <= RES + 1) {
+              hit = true;
+              break;
+            }
+          }
+        }
+        if (!hit) continue;
+      }
+      {
+        // Attribute the built edge to the midpoint cell (section 7 edgesBuilt).
+        const a = e.vs[0], b = e.vs[e.vs.length - 1];
+        const rec = chunkAt((a.x + b.x) * 0.5, (a.z + b.z) * 0.5);
+        if (!rec.dead) rec.stats.edges++;
+      }
       const re = edgeRng(e);
       const half = e.width / 2;
       const rA = retreatAt(e, true), rB = retreatAt(e, false);
@@ -3614,7 +3734,13 @@ export function createWorld(scene, { roadKit, mapDoc = null }) {
 
     // ---- per node of degree 3 or more: signals, crossings, gantries, one queue -------------
     for (const nd of visitOrder(roadPlan.nodes)) {
+      // S4a coarse filter: skip nodes outside the resident disk.
+      if (!isResident(Math.floor(nd.p[0] / CHUNK), Math.floor(nd.p[1] / CHUNK))) continue;
       if (nd.deg < 3) continue;
+      {
+        const rec = chunkAt(nd.p[0], nd.p[1]);
+        if (!rec.dead) rec.stats.nodes++;
+      }
       const rj = nodeRng(nd);
       const [vx, vz] = nd.p;
       // arm directions, from the node toward the first interior point of each incident polyline
@@ -4093,6 +4219,14 @@ export function createWorld(scene, { roadKit, mapDoc = null }) {
       cell: CHUNK,
       residentCells: rc.length,
       residentKeys: rc.map((c) => c.key).sort(),
+      mapOccupiedCells,
+      // Counted off the chunk records that EXIST, not off a running total (section 7).
+      edgesBuilt: rc.reduce((a, c) => a + c.stats.edges, 0),
+      edgesTotal: 929,
+      blocksBuilt: rc.reduce((a, c) => a + c.stats.blocks, 0),
+      blocksTotal: blocks.length,
+      chunkGeoms: rc.reduce((a, c) => a + c.geoms.length, 0),
+      filtered,
       drawStates: buildStats.states,
       cellMeshes: buildStats.cells,
       globalMeshes: buildStats.globalMeshes,
