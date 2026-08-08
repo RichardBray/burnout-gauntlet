@@ -60,8 +60,52 @@ Opening a new wave block is the moment to do this, not later.
 
 ### WAVE T — LIVE. THE MAP. `TASKS.md` wave 4, task T3. Opened session 18, 2026-08-07.
 
-**EXACT NEXT ACTION: S4b-2, RE-ENTRANCY AND THE DEFAULT FLIP. S4b-1 IS DONE AND CRITIC-PASSED AT
-ROUND 1** (`51852c0` the piece, `7e5e966` the two critic fixes;
+**EXACT NEXT ACTION: S4b-2a, THE CELL BUILD/DISPOSE API AND `settle()`.** Recon is done and written:
+`verdicts/wave-t/generate-mesh-s4b2-recon.md`. **S4b-2 IS SPLIT IN THREE AND EACH SUB-PIECE HAS A
+CHECK THE OTHERS CANNOT CONTAMINATE:**
+
+- **S4b-2a - `emitCells` / `disposeCells` / `world.settle()`, for the geometry and pools that are
+  ALREADY cell-owned.** Calls `roadKit.releaseHidden` on dispose; `settle()` wired into the shot
+  path after create and BEFORE the tick loop. **Its solo check is the strongest one available and
+  the plan already asks for it (section 7): boot at `#chunkres=1`, `settle()`, snapshot the instance
+  matrices, `disposeCells` one key, `emitCells` the same key, snapshot again - BYTE-IDENTICAL.** That
+  is checkable with no pump, no registry move and no default flip anywhere near it. Add the
+  `refl.hidden` length before and after as a leak assert.
+- **S4b-2b - REGISTRY OWNERSHIP, and the contact and emitter rebuild.** Moves the global accumulators
+  onto the `ChunkRec` and rebuilds `contactMesh` and `emitters` from resident cells only. **Solo
+  check: dispose a cell and the published lengths drop by exactly that cell's counts; re-emit and
+  they come back.**
+- **S4b-2c - THE PUMP, THE COLLISION STREAM AND THE DEFAULT FLIP to `RES = 1`.** Hysteresis, build at
+  `RES` and dispose at `RES + 1`. **Solo check: drive across a cell boundary, `residentCells` follows
+  the hysteresis rule without thrashing on the line, and collision still answers near the hero.**
+
+**THREE RECON FACTS THAT CHANGE HOW S4b-2 IS BUILT. EACH COSTS A ROUND IF REDISCOVERED:**
+
+1. **THERE IS NO DISPOSE PATH AT ALL, AND `releaseHidden` IS ALREADY BUILT AND UNCALLED.** It exists
+   at `game/road.js:1960-1970` (S0 built it) and its ONLY caller is `road.js:2141`, the wet-smear
+   probe teardown. Nothing in `world.js` calls it, because `world.js` has no disposal. `disposeCells`
+   is greenfield and owns the whole teardown contract.
+2. **ALL ELEVEN MAJOR REGISTRIES ARE GLOBAL ARRAYS, NOT CELL-OWNED, AND FOUR ARE HELD BY REFERENCE
+   OUTSIDE `world.js`.** Current lines, re-grepped because the ones in the plan are stale:
+   `contacts` :1252, `blocks` :1930, `towers` :2470, `frontages` :2471, `neons` :2930,
+   `lampPositions` :3001, `poles` :3007, `signalLights` :3076, `parkedBodies` :3359, `emitters`
+   :4147, `lightPool` :4133. Only `resident` (:1339) is per-cell. **The outside holders are the
+   landmine: `world.blocks` -> `main.js:201` physics and `main.js:223` traffic; `world.poles` ->
+   `main.js:207` into `polefall.js:26,91` which scans it forever; `world.parkedCars` ->
+   `main.js:244` and `main.js:259` and the crash-shell scan at `main.js:681`; `world.paths` ->
+   `scenes.js:10,132,204`.** Re-creating any of those arrays per cell while `main.js` holds the old
+   reference is a silent failure, which is why 2b is its own piece.
+3. **THE SHOT PATH TICKS THE SIM AT `main.js:901`, NOT 886, AND `window.__ready` IS SET AT
+   `main.js:921`.** So `settle()` cannot be "tick a few more times to drain a queue" - **the
+   guarantee is binary**: every cell the shot needs is complete before the first `tick(FIXED_DT)`,
+   or all seven gate frames contain a half-built world. `settle()` is a pre-tick gate, not a pump.
+
+**AND ONE CORRECTION TO THE PLAN'S OWN PHASE MAP:** only 8 of the 24 emission phases are purely
+per-cell (`ROADS_GRAPH`, `PAVEMENT_GRAPH`, `MASS_TOWERS`, `STREET_WALL`, `SIDEWALK_PROPS`,
+`GUARD_RAIL`, `FURNITURE_GRAPH`, `FINALIZE`). `SIGNAGE` and `NEON` are map-wide ONLY because they
+read the `frontages` / `towers` accumulators, which is exactly what 2b converts.
+
+**S4b-1 IS DONE AND CRITIC-PASSED AT ROUND 1** (`51852c0` the piece, `7e5e966` the two critic fixes;
 `verdicts/wave-t/generate-mesh-s4b1{,-critic}.md`).
 
 **FOUR THINGS S4b-2 INHERITS FROM THE CRITIC. THEY ARE MEASURED AND EACH COSTS A ROUND IF
