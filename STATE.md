@@ -60,7 +60,84 @@ Opening a new wave block is the moment to do this, not later.
 
 ### WAVE T — LIVE. THE MAP. `TASKS.md` wave 4, task T3. Opened session 18, 2026-08-07.
 
-**EXACT NEXT ACTION: S3d PART 2, THE CUT.** **S3d PART 1, THE FLIP, IS DONE** (`b52a253`),
+**EXACT NEXT ACTION: S4b, RE-ENTRANCY - once S4a's critic reports.** **S4a IS LANDED** (`b6512ed`,
+`verdicts/wave-t/generate-mesh-s4a.md`) and its critic (gpt) is running; if the critic fails it, fix
+S4a first and do not start S4b on top of a failed piece.
+
+**S4 WAS SPLIT IN TWO AND THE SPLIT BUYS A CHECK RATHER THAN COSTING ONE - THIS IS THE REUSABLE
+PART, AND IT IS THE SAME SHAPE AS S3d's.** Recon found the emitter feeds **grow-only accumulators a
+later phase reads** - `frontages`/`towers` declared at `world.js:2342-2343`, pushed by the two block
+loops at `:2367` and `:2461`, read by the signage loop at `:2673`; then one `contactMesh` allocated
+once at `:3873` and one `emitters` list built at `:3965` from the finished global lists. **So making
+the emitter re-entrant is the expensive half of S4, and the pass table does not ask for it.** The
+pass table asks what EXISTS at `__ready`, and that is bought by filtering the emitter's INPUTS.
+
+- **S4a - the FILTER, behind `#chunkres=N`, DEFAULTING OFF. DONE.** The knob defaults off precisely
+  so the acceptance test can be **the default path unchanged to the instance**, measured in the same
+  tree, while `#chunkres=1` is measured against the pass table on the same boot path. With the filter
+  on by default, the gate frames and the drive probe would legitimately go red and NEITHER world
+  could be certified - a combined S4 has no check at all.
+- **S4b - RE-ENTRANCY, AND IT OWNS THE LOAD WIN.** `emitCells`/`disposeCells`, the `update()` pump
+  with hysteresis (build at `RES`, dispose at `RES + 1`), `world.settle()` for the shot path
+  (risk 7 - shot mode ticks the sim before `__ready` at `main.js` ~886, so an amortised queue puts a
+  half-built world in all seven gate frames), per-cell contact and emitter rebuild, cell ownership of
+  the live registries, and the flip of the default to `RES = 1`. **It must also subset the PLANNERS**:
+  `createBlocks` 351 ms and `planPavement` 499 ms still run over the whole 4000 x 2861 m in both of
+  S4a's configurations, and until they are subsetted `boot world` stays at ~1531 ms.
+
+**DO NOT READ S4a's FLAT COLD LOAD AS A PROBLEM OR AS PROGRESS. 4531 ms median measured alone
+(5203, 4531, 4514), stages sky 41 / road 552 / world 1531 / car 199 / sim 78 / post 31 / warm 1628.**
+The default path is still the eager build; nothing was supposed to move.
+
+**S3d IS DONE, BOTH PARTS.** **`generate-mesh` S3 IS COMPLETE.**
+
+**S4 - boot builds a 3x3 resident set and `update()` pumps the rest**
+(`tools/WAVE-T-GENERATE-MESH-PLAN.md` step S4). **THE WHOLE MAP IS STILL BUILT EAGERLY AT BOOT AND
+NOTHING IN S3d REDUCED THAT.** `boot world` is 1562 ms of the 4590 ms cold load, `createBlocks` 351 ms
+and `planPavement` 499 ms both run over all 4000 x 2861 m. `planPavement` already takes the cell size
+and restricts trivially. **ASSERT ON WHAT EXISTS AT `__ready`, NEVER ON A FRAME TIME** - the pass
+table is `tools/WAVE-T-GENERATE-MESH-PLAN.md:696-706`: `residentCells <= 9`, `areaKm2 <= 0.36`,
+`edges/edgesTotal <= 0.15`, `blocks/blocksTotal <= 0.15`, `chunkGeoms <= 6 * residentCells`,
+`overflow === 0`, `progs` unchanged. An eager build scores 176 / 7.04 / 929 of 929 / all / 1000+ and
+satisfies every functional criterion in T3 while turning the load into ~14 s. Two known S4 inputs
+already recorded: `finalize()` never frees `p._m`/`p._c` (18.45 MB + 2.05 MB over 67 descriptors),
+which will present as memory creep blamed on streaming; and a map-wide mesh under `CHUNK_MIN` has no
+owning cell and therefore no dispose path, which is correct now and wrong the moment cells stream.
+
+**A RIBBON-SEAM CHECK IS STILL GENUINELY UNBUILT AND UNOWNED. GIVE IT A PIECE BEFORE THE WAVE
+CLOSES.** `tools/_s3c-drive.mjs` is an authored-corridor, block-clearance, junction-route and driven
+chunk-boundary check; it is NOT evidence of ribbon/junction render-mesh continuity or ground contact,
+because `game/physics.js:1973` forces `state.pos.y = 0`.
+
+**S3d PART 2, THE CUT, IS DONE** - `e19c761` (2a), `ffdc9d9` (2b), `a81c4c6` (2c), `f538a1d` (tidy),
+`verdicts/wave-t/generate-mesh-s3d-cut.md`. **274 net lines deleted from `world.js` + `main.js`, and
+the whole diff is deletion - no constant changed value and zero materials were added.** Gone: the
+nine dead `!GRAPH` blocks (the 2400 m highway ribbon and slip road, the highway gantries, billboards,
+lamps, the 2400 m rail, 480 posts, 240 barriers, the 1400 m deck, the 44-pier row); `G` and the ten
+`LAYOUT.grid` loops (grid ribbons, the 6x6 block construction, block gantries, lamps, signals, kerb
+ranks, signal queues, crossings, road wear); `roundedRect` and the grid `paths` fallback;
+`PAVED_HALF`, `HIGHWAY_HALF` and the exported grid `surfaceAt`; `EX`; `HZ`; and `#map=grid` itself.
+`HALF = LAYOUT.roadW / 2` SURVIVES with its value unchanged - `PARK_OFF` and two optional `half =`
+arguments still read it.
+
+**THE PIER CONSTANTS SURVIVED, AND THEY WERE THE PLAN'S OWN RISK 16 - the item most likely to be
+quietly dropped.** The grid's 44-pier row is deleted but `0.75 / 0.85`, 11.6 m and the 60 m pitch are
+unchanged, and the comment deriving them was rewritten to say what it is now for rather than deleted
+with the row it was measured on. **The rationale is the deliverable, not the row.**
+
+**`#map=grid` WENT AHEAD OF S5 ON PURPOSE.** The plan puts it in S5, but after the grid `surfaceAt`
+is deleted the flag no longer selects between two worlds - it selects between a world and a page that
+throws. It survived exactly as long as it was worth something, which was long enough to certify 2a
+and 2b. The URL is now inert, not broken: it boots the graph city, READY in 3.9 s.
+
+**WHAT S5 STILL OWES, AND IT IS NOT NOTHING:** `GRAPH` is still read at `game/world.js` :1146, :1622,
+:1768, :3327, :3528, :3999, :4107, :4139 and every one is now always-true (`:4107` publishes a mode
+string that can only be `'graph'`); `createWorld`'s `rng` argument is passed and read by nothing.
+**`LAYOUT` survives and should** - decision 6, it carries `carKit` (`game/world.js:3187`) and
+`hud.js` reads it. Only `LAYOUT.roadW` is read inside `world.js` now. **Deleting `LAYOUT.grid` and
+`LAYOUT.extent` is `rewire`'s, because the minimap still draws them.**
+
+**S3d PART 1, THE FLIP, IS DONE** (`b52a253`),
 `verdicts/wave-t/generate-mesh-s3d-flip.md`. **THE GRAPH IS NOW THE DEFAULT MAP.** `game/main.js:191`
 fetches `paradise.json` unless the URL says `#map=grid`; `game/world.js` has ZERO diff in that commit
 and `GRAPH = !!mapDoc` (`game/world.js:1197`) is unchanged.
@@ -73,18 +150,22 @@ that is already 100% different and no instrument can see it. Flipped alone, **th
 `shots/t-s3d/` become the baseline and the cut gets a real acceptance test - PIXEL IDENTITY against
 them, at each scene's own same-tree noise floor.** The combined step had no assertion at all.
 
-**S3d PART 2 - delete the grid branch, the LAYOUT-derived generators and `roundedRect`.** The gates
-to remove are the `if (!GRAPH)` blocks at `game/world.js` :1770, :2890, :2896, :3055, :3663, :3673,
-:3683, :3692, :3713, plus `roundedRect` at `game/world.js:316` and its call at `:4235`.
+**AND THE SPLIT'S TEST EARNED ITS KEEP ON ITS FIRST RUN. `wet-night-asphalt` CAME BACK ABOVE ITS
+RECORDED FLOOR AND WAS MEASURED RATHER THAN ARGUED.** It read maxd 31 at 0.0123% against a recorded
+floor of maxd 29 at 0.0056%. Rather than wave it through: same-tree noise was re-measured on that
+tree, two renders back to back, at **maxd 27 at 0.0081%**; a second cross-tree render gave maxd 30 at
+0.0112%; so the cross-tree figure is 1.1x the same-tree magnitude and 1.4x its pixel share, inside
+the band and at the top of it. **What made a structural change implausible rather than merely
+unproven was the rest of the column** - every other scene maxd <= 1 and `car-paint-closeup` exactly
+0 - **and then decisively that the next commit, touching entirely different code, read the same
+maxd 30 at 0.0130%. That is what a noise floor looks like and what a drift does not.**
+**RECORD THE NEW FLOOR: `wet-night-asphalt` same-tree is maxd 27 at 0.0081%.** In a combined S3d this
+whole question would have been invisible.
 
-- **THE ACCEPTANCE TEST IS PIXEL IDENTITY AGAINST `shots/t-s3d/`, NOT AGAINST THE GRID FRAMES.** Use
-  each scene's own same-tree noise floor. `wet-night-asphalt`'s floor is **maxd 29 at 0.0056%**, not
-  maxd 4.
-- **NEVER BULK-EDIT `world.js` BY PATTERN MATCH.** S3a lost a full revert of the file to exactly
-  that; `lint ok` and the page hung at boot with no console error. Anchor on unique comments, print
-  the line each edit guards, boot the page.
-- `#map=grid` stops working at the cut. S5 then removes the flag itself, which is where the plan
-  already puts it.
+**NEVER BULK-EDIT `world.js` BY PATTERN MATCH** - S3a lost a full revert of the file to exactly that,
+with `lint ok` and the page hanging at boot with no console error. The cut was done as four commits,
+each anchored on unique text, each linted AND BOOTED, each pixel-checked. `lint ok` still does not
+mean runnable.
 
 **THE `daytime-downtown` REGRESSION ROW CARRIED SINCE S2 IS SETTLED, AND IN THE DIRECTION S2
 PREDICTED.** The graph city puts a full signed corner - awning, glazed shopfront, neon fascia, a
@@ -631,7 +712,7 @@ from it.
 | `queries` | graph spatial index, `surfaceAt` off `LAYOUT` | **DONE.** `verdicts/wave-t/queries.md` |
 | `generate` | graph -> roads, kerbs, junctions, buildings | **SPLIT INTO THREE.** See below. Owns the `surfaceAt` swap |
 | ├ `generate-blocks` | `game/map/blocks.js`, graph faces -> building blocks | **DONE.** 3 rounds. `verdicts/wave-t/generate-blocks{,-critic,-critic-r2}.md` |
-| ├ `generate-mesh` | per-chunk emitters in `world.js` | **DESIGNED** (`tools/WAVE-T-GENERATE-MESH-PLAN.md`). **S0-S2 DONE** (S0+S1 critic-passed). **S3a DONE**: roads, junctions, kerbs and pavement. **S3b DONE**: the city - blocks, districts, buildings, signage, neon, props, cars, street furniture, `world.blocks` + `world.blockIndex`. **The 2-scene `#map=graph` boot failure is FIXED** (`generate-mesh-s3b-hotfix.md`); all 7 boot, grid unaffected. **S3c DONE and critic-passed at r4** (`a267ad3`): `paths`, `heroDist`, `surfaceAt`, `bounds` all off the grid, plus `tools/_s3c-drive.mjs`, the wave's drive probe. **S3d PART 1 (THE FLIP) DONE** (`b52a253`, `generate-mesh-s3d-flip.md`): **the graph is the DEFAULT map**, `game/main.js:191`, zero `world.js` diff; seven gate frames in `shots/t-s3d/` are the new baseline; cold load 4590 ms alone; drive probe exit 0, 0 WORLD. **S3d PART 2 (THE CUT) NEXT - delete the grid branch, the LAYOUT generators and `roundedRect`, and it must be PIXEL-IDENTICAL to `shots/t-s3d/`** |
+| ├ `generate-mesh` | per-chunk emitters in `world.js` | **DESIGNED** (`tools/WAVE-T-GENERATE-MESH-PLAN.md`). **S0-S2 DONE** (S0+S1 critic-passed). **S3a DONE**: roads, junctions, kerbs and pavement. **S3b DONE**: the city - blocks, districts, buildings, signage, neon, props, cars, street furniture, `world.blocks` + `world.blockIndex`. **The 2-scene `#map=graph` boot failure is FIXED** (`generate-mesh-s3b-hotfix.md`); all 7 boot, grid unaffected. **S3c DONE and critic-passed at r4** (`a267ad3`): `paths`, `heroDist`, `surfaceAt`, `bounds` all off the grid, plus `tools/_s3c-drive.mjs`, the wave's drive probe. **S3d DONE, BOTH PARTS - S3 IS COMPLETE.** Part 1, the flip (`b52a253`, `generate-mesh-s3d-flip.md`): **the graph is the ONLY map**; seven gate frames in `shots/t-s3d/` are the new baseline; cold load 4590 ms alone. Part 2, the cut (`e19c761`/`ffdc9d9`/`a81c4c6`/`f538a1d`, `generate-mesh-s3d-cut.md`): **274 net lines deleted, all of `LAYOUT.grid`'s consumers, the grid `surfaceAt`, `roundedRect` and `#map=grid`**, pixel-identical to `shots/t-s3d/` at four checkpoints, `_t4-surface.mjs` `T4 OK`, drive probe exit 0 / 0 WORLD. **S4 (RESIDENCY) IS THE LIVE STEP, session 19.** BEFORE row measured on the live page and written to `verdicts/wave-t/generate-mesh-s4.md`: `residentCells 191`, `areaKm2 7.64`, `instances 1191251`, `meshes 8447`, `overflow 0` - against a pass of `<= 9` and `<= 0.36`. **AND `chunkStats()` DOES NOT IMPLEMENT THE SECTION 7 CONTRACT YET**: `mapOccupiedCells`, `edgesBuilt`, `edgesTotal`, `blocksBuilt`, `blocksTotal`, `chunkGeoms` all come back `undefined`, so **four of the seven pass conditions are unmeasurable today** and adding those six fields is inside S4. **S4 IS NOW SPLIT IN TWO** (rationale in that verdict): **S4a** = the residency FILTER behind `#chunkres=N` defaulting OFF, plus the six missing `chunkStats()` fields, emitter still runs once; **S4b** = re-entrancy, `emitCells`/`disposeCells`, the `update()` pump, `world.settle()`, and the flip to `RES = 1`. The split exists because recon showed the emitter feeds **grow-only accumulators a later phase reads** (`frontages`/`towers` at `world.js:2342-2343` pushed at `:2367`/`:2461` and read at `:2673`; one `contactMesh` at `:3873`; `emitters` at `:3965`), so re-entrancy is the expensive half and **the pass table does not need it** - it asks what EXISTS at `__ready`, which input filtering alone delivers. **S4a IS LANDED** (`b6512ed`, `verdicts/wave-t/generate-mesh-s4a.md`) **AND ITS CRITIC IS RUNNING** (gpt). All seven section 7 pass conditions pass at `#chunkres=1` - `residentCells 8`, `areaKm2 0.32`, `edges 27/929`, `blocks 33/868`, `chunkGeoms 37` of 48, `overflow 0`, `progs 128 = 128` - while the DEFAULT path is unchanged to the instance (191 / 1191251 / 8447 / `filtered 0` / `world.blocks` 868). Drive probe exit 0, 0 WORLD. **Cold load 4531 ms is UNCHANGED and that is correct, not a win**: the default is still eager and `createBlocks` + `planPavement` still run map-wide, because S4a filters the loops that CONSUME the planner output, not the planners. **S4b OWNS THE LOAD WIN.** |
 | └ `generate-wire` | `surfaceAt` swap, `paths`, `bounds`, harness coords | **DONE, CRITIC-PASSED at r4** (`a267ad3`). Four rounds. Owns `tools/_s3c-drive.mjs`, the wave's drive probe - run it as a gate. r1-r3 were critic-failed; see the lessons block above. r3's provenance split, unweakened WORLD assertions and five clean chains all PASSED; it failed only because the baseline exits green while the driver skips 3 enumerated boundaries. r4 makes that miss fatal and makes the drive happen. r1 and r2 were CRITIC-FAILED; r3 split WORLD from DRIVER provenance and the driver poison now yields 0 WORLD / 9 DRIVER, baseline exit 0. Open: routes shortened to ~130 m, and the driver misses some authored boundaries. `paths.city` PASSES; both blocking findings are on the PROBE - false-red baseline (it confounds driver error with world error) and single-edge routes that cross no junction. **ROUND 3 = fix the probe, not the world.** r1 `d696581` was CRITIC-FAILED; r2 fixed both blocking findings and built `tools/_s3c-drive.mjs`, which **EXISTS, RUNS AND IS RED - 5 failures over 3 districts, poison controls green.** Likely `blocks.js` + `digitise` debt rather than S3c, but **the critic rules that, not the builder and not the orchestrator.** `verdicts/wave-t/generate-mesh-s3c.md` + `-critic.md`. **Do not start a third builder.** Two delegated grok-4.5 attempts died at the CLI with zero edits; it was built in the main agent. **CRITIC-FAILED at r1** (gpt, `verdicts/wave-t/generate-mesh-s3c-critic.md`): the drive probe was omitted and the physics cannot observe it, and `paths.city` runs 164.707 m on `service` edges 323/369 against decision 7. Constant table 16/16 matched. **ROUND 2 NEEDED** |
 | `stream` | chunk build/dispose around the hero | not started; needs `generate` |
 | `rewire` | `traffic.js`, parked ranks, signals, `physics.js` blocks, minimap, spawns | not started; needs `queries` |
