@@ -65,7 +65,8 @@ Opening a new wave block is the moment to do this, not later.
 CHECK THE OTHERS CANNOT CONTAMINATE:**
 
 - **S4b-2a - `emitCells` / `disposeCells` / `world.settle()`, for the geometry and pools that are
-  ALREADY cell-owned.** Calls `roadKit.releaseHidden` on dispose; `settle()` wired into the shot
+  ALREADY cell-owned. BUILDER RUNNING (round 5).** Scope is deliberately narrow: the 8 per-cell
+  phases only, registries stay global, no pump, and **`RES` STAYS `Infinity`** - 2c flips it. Calls `roadKit.releaseHidden` on dispose; `settle()` wired into the shot
   path after create and BEFORE the tick loop. **Its solo check is the strongest one available and
   the plan already asks for it (section 7): boot at `#chunkres=1`, `settle()`, snapshot the instance
   matrices, `disposeCells` one key, `emitCells` the same key, snapshot again - BYTE-IDENTICAL.** That
